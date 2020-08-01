@@ -204,5 +204,5 @@ def build_quran() -> Chapter:
 
 def init_quran():
 	quran = build_quran()
-	insert_chapter(quran)
+	insert_chapter(quran) 
 	# insert_verse_content(db_session, quran)
