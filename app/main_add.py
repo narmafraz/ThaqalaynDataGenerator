@@ -1,7 +1,6 @@
 import logging
 
 from app.books import init_books
-from app.db.session import db_session
 from app.kafi import init_kafi
 from app.quran import init_quran
 
@@ -10,9 +9,9 @@ logger = logging.getLogger(__name__)
 
 
 def init():
-    init_books(db_session)
-    init_quran(db_session)
-    init_kafi(db_session)
+    init_books()
+    init_quran()
+    init_kafi()
 
 
 def main():

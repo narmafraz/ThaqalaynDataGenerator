@@ -4,30 +4,20 @@ import logging
 import math
 import os
 import re
-import sqlite3
 import xml.etree.ElementTree
 from pprint import pprint
-from sqlite3 import Error
 from typing import Dict, List
 
 from bs4 import BeautifulSoup, NavigableString, Tag
-from fastapi.encoders import jsonable_encoder
-from sqlalchemy.orm import Session
 
-from app import crud
-from app.core import config
 # make sure all SQL Alchemy models are imported before initializing DB
 # otherwise, SQL Alchemy might fail to initialize relationships properly
 # for more details: https://github.com/tiangolo/full-stack-fastapi-postgresql/issues/28
-from app.db import base
-from app.db.base import Base
-from app.db.session import engine
-from app.schemas.book_part import BookPartCreate
 from app.kafi_corrections import file_correction
 from app.lib_db import insert_chapter
 from app.lib_model import SEQUENCE_ERRORS, set_index
-from app.models import (Chapter, Crumb, Language, PartType, Quran,
-                         Translation, Verse)
+from app.models import (
+    Chapter, Crumb, Language, PartType, Quran, Translation, Verse)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -558,12 +548,9 @@ def build_kafi() -> Chapter:
 
 	return kafi
 
-def init_kafi(db_session: Session):
+def init_kafi():
 	book = build_kafi()
 
-	with open(get_path('kafi.json'), 'w', encoding='utf-8') as f:
-		json.dump(jsonable_encoder(book), f, ensure_ascii=False, indent=2, sort_keys=True)
-
-	insert_chapter(db_session, book)
+	insert_chapter(book)
 
 	pprint(SEQUENCE_ERRORS)

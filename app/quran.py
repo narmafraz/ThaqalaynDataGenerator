@@ -1,26 +1,16 @@
 import json
 import logging
 import os
-import sqlite3
 import xml.etree.ElementTree
-from sqlite3 import Error
 from typing import Dict, List
 
-from sqlalchemy.orm import Session
-
-from app import crud
-from app.core import config
 # make sure all SQL Alchemy models are imported before initializing DB
 # otherwise, SQL Alchemy might fail to initialize relationships properly
 # for more details: https://github.com/tiangolo/full-stack-fastapi-postgresql/issues/28
-from app.db import base
-from app.db.base import Base
-from app.db.session import engine
-from app.schemas.book_part import BookPartCreate
 from app.lib_db import index_from_path, insert_chapter
 from app.lib_model import set_index
-from app.models import (Chapter, Crumb, Language, PartType, Quran,
-                         Translation, Verse)
+from app.models import (
+    Chapter, Crumb, Language, PartType, Quran, Translation, Verse)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -200,19 +190,19 @@ def build_quran() -> Chapter:
 
 	return q
 
-def insert_verse_content(db: Session, quran: Quran):
-	for chapter in quran.chapters:
-		for verse in chapter.verses:
-			obj_in = BookPartCreate (
-				index = index_from_path(chapter.path) + ":" + str(verse.local_index),
-				kind = "verse_content",
-				data = verse,
-				last_updated_id = 1
-			)
-			book = crud.book_part.upsert(db, obj_in=obj_in)
-			logger.info("Inserted Quran verse content into book_part ID %i with index %s", book.id, book.index)
+# def insert_verse_content(db: Session, quran: Quran):
+# 	for chapter in quran.chapters:
+# 		for verse in chapter.verses:
+# 			obj_in = BookPartCreate (
+# 				index = index_from_path(chapter.path) + ":" + str(verse.local_index),
+# 				kind = "verse_content",
+# 				data = verse,
+# 				last_updated_id = 1
+# 			)
+# 			book = crud.book_part.upsert(db, obj_in=obj_in)
+# 			logger.info("Inserted Quran verse content into book_part ID %s with index %s", book.id, book.index)
 
-def init_quran(db_session: Session):
+def init_quran():
 	quran = build_quran()
-	insert_chapter(db_session, quran)
+	insert_chapter(quran)
 	# insert_verse_content(db_session, quran)

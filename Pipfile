@@ -4,8 +4,12 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 
 [dev-packages]
+pylint = "*"
 
 [packages]
+beautifulsoup4 = "*"
+pprint = "*"
+fastapi = "*"
 
 [requires]
 python_version = "3.8"
