@@ -1,4 +1,4 @@
 class Translation():
 	name: str
-	text: str
+	id: str
 	lang: str

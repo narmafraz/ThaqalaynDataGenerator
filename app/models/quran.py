@@ -11,16 +11,18 @@ class Verse():
 	index: int
 	local_index: int
 	path: str
-	text: str
+	text: List[str]
 	chain_text: str
 	sajda_type: str
-	translations: List[Translation]
+	translations: Dict[str, List[str]]
 	part_type: PartType
 
 class Chapter():
 	verses: List[Verse]
 	chapters: List[Chapter]
 	index: int
+	verse_translations: List[Translation]
+	default_verse_translation_id: str
 	local_index: int
 	path: str
 	verse_count: int

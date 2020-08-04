@@ -42,6 +42,11 @@ def build_alhassanain_baabs(file) -> List[Chapter]:
 	baabs: List[Chapter] = []
 	logger.info("Adding Al-Kafi file %s", file)
 
+	translation = Translation()
+	translation.name = "HubeAli.com"
+	translation.lang = Language.EN.value
+	translation.id = HUBEALI_TRANSLATION_ID
+
 	with open(file, 'r', encoding='utf8') as qfile:
 		inner_html = qfile.read()
 		sections = inner_html.split("<br clear=all>")
@@ -84,6 +89,7 @@ def build_alhassanain_baabs(file) -> List[Chapter]:
 				chapter = Chapter()
 				chapter.part_type = PartType.Chapter
 				chapter.titles = chapter_titles
+				chapter.verse_translations = [translation]
 				chapter.verses = []
 
 				baab.chapters.append(chapter)
@@ -106,19 +112,13 @@ def build_alhassanain_baabs(file) -> List[Chapter]:
 						
 						verse = Verse()
 						verse.part_type = PartType.Hadith
-						translation = Translation()
-						translation.name = "hubeali"
-						translation.lang = Language.EN.value
-						translation.text = None
-						verse.translations = [translation]
+						verse.translations = {}
+						verse.translations[HUBEALI_TRANSLATION_ID] = []
 
-						verse.text = last_element.get_text(strip=True)
+						verse.text = [last_element.get_text(strip=True)]
 
 					if is_tag and 'libNormal' in last_element['class']:
-						if verse.translations[0].text:
-							verse.translations[0].text = verse.translations[0].text + "\n" + last_element.get_text(strip=True)
-						else:
-							verse.translations[0].text = last_element.get_text(strip=True)
+						verse.translations[HUBEALI_TRANSLATION_ID].append(last_element.get_text(strip=True))
 
 					last_element = last_element.next_sibling
 
@@ -128,6 +128,7 @@ def build_alhassanain_baabs(file) -> List[Chapter]:
 	
 	return baabs
 
+HUBEALI_TRANSLATION_ID = "en.hubeali"
 VOLUME_HEADING_PATTERN = re.compile("^AL-KAFI VOLUME")
 TABLE_OF_CONTENTS_PATTERN = re.compile("^TABLE OF CONTENTS")
 WHITESPACE_PATTERN = re.compile(r"^\s*$")
@@ -135,6 +136,11 @@ V8_HADITH_TITLE_PATTERN = re.compile(r"^H \d+")
 V8_HADITH_BEGINNING_PATTERN = re.compile(r"^-? ?(1\d+)-?")
 END_OF_HADITH_PATTERN = re.compile(r"<sup>\[\d+\]</sup>\s*$")
 END_OF_HADITH_CLEANUP_PATTERN = re.compile(r'<a id="[^"]+"/?>(</a>)?<sup>\[\d+\]</sup>\s*$')
+
+hubbeali_translation = Translation()
+hubbeali_translation.name = "HubeAli.com"
+hubbeali_translation.lang = Language.EN.value
+hubbeali_translation.id = HUBEALI_TRANSLATION_ID
 
 def we_dont_care(heading):
 	if heading is None:
@@ -181,18 +187,12 @@ def is_newline(element) -> bool:
 def add_hadith(chapter: Chapter, hadith_ar: List[str], hadith_en: List[str], part_type: PartType = PartType.Hadith):
 	hadith = Verse()
 	hadith.part_type = part_type
-	hadith.text = join_texts(hadith_ar)
+	hadith.text = hadith_ar
 
-	text_en = join_texts(hadith_en)
-	text_en = END_OF_HADITH_CLEANUP_PATTERN.sub('', text_en)
-	if END_OF_HADITH_PATTERN.search(text_en):
-		raise Exception(text_en)
+	text_en = [END_OF_HADITH_CLEANUP_PATTERN.sub('', txt) for txt in hadith_en]
 	
-	translation = Translation()
-	translation.name = "hubeali"
-	translation.lang = Language.EN.value
-	translation.text = text_en
-	hadith.translations = [translation]
+	hadith.translations = {}
+	hadith.translations[HUBEALI_TRANSLATION_ID] = text_en
 	
 	chapter.verses.append(hadith)
 
@@ -202,7 +202,6 @@ def build_hubeali_books(dirname) -> List[Chapter]:
 	logger.info("Adding Al-Kafi dir %s", dirname)
 
 	cfiles = glob.glob(dirname + "c*.xhtml")
-
 
 	book = None
 	chapter = None
@@ -250,6 +249,7 @@ def build_hubeali_books(dirname) -> List[Chapter]:
 				chapter.titles[Language.AR.value] = chapter_title_ar
 				chapter.titles[Language.EN.value] = heading_en
 				chapter_title_ar = None
+				chapter.verse_translations = [hubbeali_translation]
 				chapter.verses = []
 
 				book.chapters.append(chapter)
@@ -376,6 +376,7 @@ def build_hubeali_book_8(dirname) -> List[Chapter]:
 					chapter.titles[Language.EN.value] = "In the name of Allah, the Beneficent, the Merciful"
 				chapter_title_ar = None
 				chapter.verses = []
+				chapter.verse_translations = [hubbeali_translation]
 
 				book.chapters.append(chapter)
 			elif is_hadith_title:
