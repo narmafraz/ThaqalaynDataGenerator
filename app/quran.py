@@ -67,7 +67,10 @@ def build_chapters(file: str, verses: List[Verse], verse_translations: List[Tran
 		sura.rukus=rukus
 		sura.verses=verses[start:ayas+start]
 		sura.verse_translations = verse_translations
-		sura.default_verse_translation = "en.qarai"
+		sura.default_verse_translation_ids = {
+			"en": "en.qarai",
+			"fa": "fa.makarem"
+		}
 
 		# set verse path
 		# for verse in sura.verses:
@@ -184,7 +187,7 @@ def build_quran() -> Chapter:
 	}
 	q.chapters=chapters
 	q.verse_translations = verse_translations
-	q.default_verse_translation_id = {
+	q.default_verse_translation_ids = {
 		"en": "en.qarai",
 		"fa": "fa.makarem"
 	}

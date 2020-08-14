@@ -22,7 +22,7 @@ class Chapter():
 	chapters: List[Chapter]
 	index: int
 	verse_translations: List[Translation]
-	default_verse_translation_id: str
+	default_verse_translation_ids: Dict[str, str]
 	local_index: int
 	path: str
 	verse_count: int
