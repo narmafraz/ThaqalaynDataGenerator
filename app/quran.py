@@ -108,7 +108,7 @@ def build_verses(file):
 				verse = Verse()
 				verse.part_type = PartType.Verse
 				# verse.index=index
-				verse.text=text
+				verse.text=[text]
 				verse.translations={}
 
 				verses.append(verse)
