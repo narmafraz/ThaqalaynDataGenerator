@@ -35,10 +35,13 @@ def add_chapter_content(chapter, filepath, hadith_index = 0):
 
 	with open(filepath, 'r', encoding='utf8') as qfile:
 		file_html = qfile.read()
-		# file_soup = BeautifulSoup(file_html, 'html.parser')
 
-		# card_body = file_soup.find('div', 'card-body')
-		# chapter_title = get_contents(card_body.find('h3'))
+		if not 'en' in chapter['titles']:
+			file_soup = BeautifulSoup(file_html, 'html.parser')
+
+			card_body = file_soup.find('div', 'card-body')
+			chapter_title = get_contents(card_body.find('h3'))
+			chapter['titles']['en'] = chapter_title
 
 		##### Processing each hadith separately
 
@@ -174,8 +177,8 @@ def add_kafi_sarwar():
 	# add_content(kafi['chapters'][1], get_path("chapter\\2\\"))
 	# add_content(kafi['chapters'][2], get_path("chapter\\3\\"))
 	# add_content(kafi['chapters'][3], get_path("chapter\\4\\"))
-	add_content(kafi['chapters'][4], get_path("chapter\\5\\"))
-	# add_content(kafi['chapters'][5], get_path("chapter\\6\\"))
+	# add_content(kafi['chapters'][4], get_path("chapter\\5\\"))
+	add_content(kafi['chapters'][5], get_path("chapter\\6\\"))
 	# add_content(kafi['chapters'][6], get_path("chapter\\7\\"))
 	# add_content(kafi['chapters'][7], get_path("chapter\\8\\"))
 	# insert_chapter_dict(kafi)
