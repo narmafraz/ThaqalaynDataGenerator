@@ -9,8 +9,7 @@ from typing import Dict, List
 # for more details: https://github.com/tiangolo/full-stack-fastapi-postgresql/issues/28
 from app.lib_db import index_from_path, insert_chapter
 from app.lib_model import set_index
-from app.models import (
-    Chapter, Crumb, Language, PartType, Quran, Translation, Verse)
+from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

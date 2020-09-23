@@ -8,6 +8,7 @@ from typing import Dict, List
 # make sure all SQL Alchemy models are imported before initializing DB
 # otherwise, SQL Alchemy might fail to initialize relationships properly
 # for more details: https://github.com/tiangolo/full-stack-fastapi-postgresql/issues/28
+from app.basair import BOOK_INDEX as BASAIR_INDEX
 from app.kafi import BOOK_INDEX as KAFI_INDEX
 from app.lib_db import write_file
 from app.models import Language
@@ -42,6 +43,14 @@ def init_books():
 				"titles": {
 					Language.EN.value: "Al-Kafi",
 					Language.AR.value: "الكافي"
+				}
+			},
+			{
+				"index": BASAIR_INDEX,
+				"path": BOOK_PATH + BASAIR_INDEX,
+				"titles": {
+					Language.EN.value: "Basa'ir ad-Darajat",
+					Language.AR.value: "بَصَائِر ٱلدَّرَجَات"
 				}
 			},
 		]

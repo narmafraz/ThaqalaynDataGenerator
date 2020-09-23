@@ -3,10 +3,11 @@ import json
 import logging
 import os
 
+import jsons
 from fastapi.encoders import jsonable_encoder
 
 from app.lib_model import has_chapters, has_verses
-from app.models import Chapter, Language, Quran, Translation, Verse
+from app.models import Chapter, Language, Translation, Verse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,30 +29,38 @@ def insert_chapter(chapter: Chapter):
 	if has_verses(chapter):
 		insert_chapter_content(chapter)
 
-def insert_chapters_list(chapter: Chapter):
+def insert_chapter_dict(chapter):
+	if 'chapters' in chapter:
+		insert_chapters_list(chapter)
+
+	if 'verses' in chapter:
+		insert_chapter_content(chapter)
+
+def insert_chapters_list(chapter):
 	chapter_data = jsonable_encoder(chapter)
 	for subchapter in chapter_data['chapters']:
 		subchapter.pop('chapters', None)
 		subchapter.pop('verses', None)
 
 	obj_in = {
-		"index": index_from_path(chapter.path),
+		"index": index_from_path(chapter_data['path']),
 		"kind": "chapter_list",
 		"data": chapter_data
 	}
-	chapter_part = write_file(chapter.path, obj_in)
+	chapter_part = write_file(chapter_data['path'], obj_in)
 	logger.info("Inserted chapter list into chapter_part ID %s with index %s", chapter_part.id, chapter_part.index)
 
-	for subchapter in chapter.chapters:
-		insert_chapter(subchapter)
+	for subchapter in chapter_data['chapters']:
+		insert_chapter_dict(subchapter)
 
-def insert_chapter_content(chapter: Chapter):
+def insert_chapter_content(chapter):
+	chapter_data = jsonable_encoder(chapter)
 	obj_in = {
-		"index": index_from_path(chapter.path),
+		"index": index_from_path(chapter_data['path']),
 		"kind": "verse_list",
-		"data": jsonable_encoder(chapter)
+		"data": chapter_data
 	}
-	book = write_file(chapter.path, obj_in)
+	book = write_file(chapter_data['path'], obj_in)
 	logger.info("Inserted chapter content into book_part ID %s with index %s", book.id, book.index)
 
 def get_dest_path(filename: str) -> str:
@@ -76,3 +85,8 @@ def write_file(path: str, obj):
 		result.id = f.name
 	
 	return result
+
+def load_chapter(path: str) :
+	with open(ensure_dir(get_dest_path(path)), 'r', encoding='utf-8') as f:
+		return json.load(f)
+		# return jsons.load(chdict, Chapter)

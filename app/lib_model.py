@@ -2,8 +2,7 @@ import copy
 import re
 from typing import Dict, List
 
-from app.models import (Chapter, Crumb, Language, PartType, Quran,
-                         Translation, Verse)
+from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
 
 CHAPTER_TITLE_PATTERN = re.compile("Chapter (\d+)")
 

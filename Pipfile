@@ -10,6 +10,9 @@ pylint = "*"
 beautifulsoup4 = "*"
 pprint = "*"
 fastapi = "*"
+marshmallow-dataclass = "*"
+marshmallow-enum = "*"
+jsons = "*"
 
 [requires]
 python_version = "3.8"

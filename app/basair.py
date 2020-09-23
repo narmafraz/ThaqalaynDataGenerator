@@ -8,127 +8,22 @@ import xml.etree.ElementTree
 from pprint import pprint
 from typing import Dict, List
 
-import fastapi
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 # make sure all SQL Alchemy models are imported before initializing DB
 # otherwise, SQL Alchemy might fail to initialize relationships properly
 # for more details: https://github.com/tiangolo/full-stack-fastapi-postgresql/issues/28
-from app.kafi_corrections import file_correction
-from app.lib_bs4 import get_contents, is_rtl_tag, is_tag
-from app.lib_db import insert_chapter, write_file
+from app.lib_db import insert_chapter
 from app.lib_model import SEQUENCE_ERRORS, set_index
 from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOOK_INDEX = "al-kafi"
+BOOK_INDEX = "basair"
 BOOK_PATH = "/books/" + BOOK_INDEX
 
 TITLE_NUMBERING = re.compile(r' \(\d+\)')
-
-def extract_headings(headings):
-	assert len(headings) > 0, "Did not find headings in " + str(headings)
-	names = {}
-	if len(headings) > 1:
-		names[Language.AR.value] = headings[0].get_text(strip=True)
-		names[Language.EN.value] = TITLE_NUMBERING.sub('', headings[1].get_text(strip=True))
-	else:
-		names[Language.EN.value] = TITLE_NUMBERING.sub('', headings[0].get_text(strip=True))
-	return names
-
-
-def build_alhassanain_baabs(file) -> List[Chapter]:
-	baabs: List[Chapter] = []
-	logger.info("Adding Al-Kafi file %s", file)
-
-	translation = Translation()
-	translation.name = "HubeAli.com"
-	translation.lang = Language.EN.value
-	translation.id = HUBEALI_TRANSLATION_ID
-
-	with open(file, 'r', encoding='utf8') as qfile:
-		inner_html = qfile.read()
-		sections = inner_html.split("<br clear=all>")
-		for section in sections:
-			section_soup = BeautifulSoup(section, 'html.parser')
-			
-			headings = section_soup.select(".Heading1Center")
-			if not headings:
-				continue
-			
-			# process "the book of" chapter
-			baab_titles = extract_headings(headings)
-			
-			en_title = baab_titles[Language.EN.value]
-			
-			baab = None
-			for existing_baab in baabs:
-				if existing_baab.titles[Language.EN.value] == en_title:
-					baab = existing_baab
-			
-			if not baab:
-				baab = Chapter()
-				baab.part_type = PartType.Book
-				baab.titles = baab_titles
-				baab.chapters = []
-
-				baabs.append(baab)
-
-			# process chapters
-			chapters = section_soup.select(".Heading2Center")
-			chapters_len = len(chapters)
-			for subchapter_index in range(math.ceil(chapters_len / 2)):
-				subchapter_heading_index = subchapter_index * 2
-				
-				remaining_chapters = chapters[subchapter_heading_index:]
-				if len(remaining_chapters) > 1:
-					remaining_chapters = remaining_chapters[:2]
-				chapter_titles = extract_headings(remaining_chapters)
-
-				chapter = Chapter()
-				chapter.part_type = PartType.Chapter
-				chapter.titles = chapter_titles
-				chapter.verse_translations = [translation]
-				chapter.verses = []
-
-				baab.chapters.append(chapter)
-
-				last_element = remaining_chapters[-1]
-				last_element = last_element.next_sibling
-
-				verse: Verse = None
-				while (last_element is not None
-					and (isinstance(last_element, NavigableString) 
-						or ( is_tag(last_element) and 'Heading2Center' not in last_element['class'])
-						)
-					):
-					is_tag = is_tag(last_element)
-					if is_tag and 'libAr' in last_element['class']:
-						
-						# push the last verse if its not the start of chapter
-						if verse != None:
-							chapter.verses.append(verse)
-						
-						verse = Verse()
-						verse.part_type = PartType.Hadith
-						verse.translations = {}
-						verse.translations[HUBEALI_TRANSLATION_ID] = []
-
-						verse.text = [last_element.get_text(strip=True)]
-
-					if is_tag and 'libNormal' in last_element['class']:
-						verse.translations[HUBEALI_TRANSLATION_ID].append(last_element.get_text(strip=True))
-
-					last_element = last_element.next_sibling
-
-				if verse != None:
-					chapter.verses.append(verse)
-
-	
-	return baabs
-
 HUBEALI_TRANSLATION_ID = "en.hubeali"
 VOLUME_HEADING_PATTERN = re.compile("^AL-KAFI VOLUME")
 TABLE_OF_CONTENTS_PATTERN = re.compile("^TABLE OF CONTENTS")
@@ -157,8 +52,14 @@ def table_of_contents(heading):
 	htext = heading.get_text(strip=True).upper()
 	return TABLE_OF_CONTENTS_PATTERN.match(htext)
 
+def get_contents(element):
+	return "".join([str(x) for x in element.contents])
+
 def join_texts(texts: List[str]) -> str:
 	return "\n".join([text for text in texts])
+
+def is_arabic_tag(element: Tag) -> bool:
+	return element.has_attr('dir') and element['dir'] == 'rtl'
 
 def is_section_break_tag(element: Tag) -> bool:
 	return element.has_attr('class') and 'section-break' in element['class']
@@ -262,10 +163,10 @@ def build_hubeali_books(dirname) -> List[Chapter]:
 					last_element = last_element.next_sibling
 					continue
 
-				is_tag = is_tag(last_element)
+				is_tag = isinstance(last_element, Tag)
 				is_paragraph = is_tag and last_element.name == 'p'
 				is_not_section_break_paragraph = is_paragraph and not is_section_break_tag(last_element)
-				is_arabic = is_rtl_tag(last_element)
+				is_arabic = is_arabic_tag(last_element)
 
 				element_content = get_contents(last_element)
 				element_content = element_content.replace('style="font-style: italic; font-weight: bold"', 'class="ibTxt"')
@@ -385,10 +286,10 @@ def build_hubeali_book_8(dirname) -> List[Chapter]:
 					last_element = last_element.next_sibling
 					continue
 
-				is_tag = is_tag(last_element)
+				is_tag = isinstance(last_element, Tag)
 				is_paragraph = is_tag and last_element.name == 'p'
 				is_not_section_break_paragraph = is_paragraph and not is_section_break_tag(last_element)
-				is_arabic = is_rtl_tag(last_element)
+				is_arabic = is_arabic_tag(last_element)
 
 				element_content = get_contents(last_element)
 				element_content = element_content.replace('style="font-style: italic; font-weight: bold"', 'class="ibTxt"')
@@ -429,126 +330,41 @@ def build_hubeali_book_8(dirname) -> List[Chapter]:
 
 	return [book]
 
-def build_volume(file, title_en: str, title_ar: str, description: str, last_volume: bool = False) -> Chapter:
-	volume = Chapter()
-	volume.titles = {
-		Language.EN.value: title_en,
-		Language.AR.value: title_ar
-	}
-	volume.descriptions = {
-			Language.EN.value: description
-	}
-	if last_volume:
-		volume.chapters = build_hubeali_book_8(file)
-	else:
-		volume.chapters = build_hubeali_books(file)
-	volume.part_type = PartType.Volume
-
-	return volume
-
 def get_path(file):
 	return os.path.join(os.path.dirname(__file__), "raw\\" + file)
 
 
-def build_kafi() -> Chapter:
+def build_book() -> Chapter:
 	kafi = Chapter()
-	kafi.index = BOOK_INDEX
-	kafi.path = BOOK_PATH
-	kafi.titles = {
-		Language.EN.value: "Al-Kafi",
-		Language.AR.value: "الكافي"
+	book.index = BOOK_INDEX
+	book.path = BOOK_PATH
+	book.titles = {
+		Language.EN.value: "Basa'ir ad-Darajat",
+		Language.AR.value: "بَصَائِر ٱلدَّرَجَات"
 	}
-	kafi.descriptions = {
-			Language.EN.value: "Of the majestic narrator and the scholar, the jurist, the Sheykh Muhammad Bin Yaqoub Al-Kulayni Well known as ‘The trustworthy of Al-Islam Al-Kulayni’ Who died in the year 329 H"
+	book.descriptions = {
+			Language.EN.value: "Baṣāʾir ad-Darajāt Fī ʿUlūm ʾĀl Muḥammad wa-Mā Khaṣṣahum ʾAllāh Bihī (Arabic: بَصَائِر ٱلدَّرَجَات فِي عُلُوم آل مُحَمَّد وَمَا خَصَّهُم ٱلله بِهِ‎), alternatively known as Baṣaʾir ad-Darajāt al-Kubrā Fī Faḍāʾil ʾĀl Muḥammad (Arabic: بَصَائِر ٱلدَّرَجَات ٱلْكُبْرَىٰ فِي فَضَائِل آل مُحَمَّد‎), is a Hadith compilation considered to be one of the oldest books in Hadith among Shias. The book's author is Abū Jaʿfar (or Abūl-Hasan) Muḥammad ibn al-Hasan ibn Farrūkh al-ʾAʿraj (Arabic: ‌أبو جعفر [أو أبو الحسن] محمد بن الحسن بن فروخ الأعرج‎), popularly known as Sheikh aṣ-Ṣaffār al-Qummī (Arabic: ‌الشيخ الصفار القمي‎) (d. 290 AH / 902-903 CE) "
 	}
-	kafi.chapters = []
-
-	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-1\\"),
-		"Volume One",
-		"الجزء الأول‏",
-		"First volume of Al-Kafi"))
-
-	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-2\\"),
-		"Volume Two",
-		"الجزء الثاني‏",
-		"Second volume of Al-Kafi"))
-
-	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-3\\"),
-		"Volume Three",
-		"الجزء الثالث‏",
-		"Third volume of Al-Kafi"))
-
-	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-4\\"),
-		"Volume Four",
-		"الجزء الرابع‏",
-		"Forth volume of Al-Kafi"))
-
-	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-5\\"),
-		"Volume Five",
-		"الجزء الخامس‏",
-		"Fifth volume of Al-Kafi"))
-
-	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-6\\"),
-		"Volume Six",
-		"الجزء السادس‏",
-		"Sixth volume of Al-Kafi"))
-
-	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-7\\"),
-		"Volume Seven",
-		"الجزء السابع‏",
-		"Seventh volume of Al-Kafi"))
-
-	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-8\\"),
-		"Volume Eight",
-		"الجزء الثامن‏",
-		"Eighth volume of Al-Kafi", True))
-
-	# kafi.chapters.append(build_volume(
-	# 	get_path("alhassanain_org\\hubeali_com_usul_kafi_v_01_ed_html\\usul_kafi_v_01_ed.htm"),
-	# 	"Volume 1",
-	# 	"جلد اول",
-	# 	"First volume of Al-Kafi"))
-
-	# kafi.chapters.append(build_volume(
-	# 	get_path("alhassanain_org\\hubeali_com_usul_kafi_v_02_ed_html\\usul_kafi_v_02_ed.htm"),
-	# 	"Volume 2",
-	# 	"جلد 2",
-	# 	"Second volume of Al-Kafi"))
-
-	# kafi.chapters.append(build_volume(
-	# 	get_path("alhassanain_org\\hubeali_com_usul_kafi_v_03_ed_html\\usul_kafi_v_03_ed.htm"),
-	# 	"Volume 3",
-	# 	"جلد 3",
-	# 	"Third volume of Al-Kafi"))
+	book.chapters = build_hubeali_books(get_path("hubeali_com\\BasaairAlDarajaat-Full\\"))
 
 	# post_processor(kafi)
-	kafi.verse_start_index = 0
-	kafi.index = BOOK_INDEX
-	kafi.path = BOOK_PATH
+	book.verse_start_index = 0
+	book.index = BOOK_INDEX
+	book.path = BOOK_PATH
 	
 	crumb = Crumb()
-	crumb.titles = kafi.titles
-	crumb.indexed_titles = kafi.titles
-	crumb.path = kafi.path
-	kafi.crumbs = [crumb]
+	crumb.titles = book.titles
+	crumb.indexed_titles = book.titles
+	crumb.path = book.path
+	book.crumbs = [crumb]
 
-	set_index(kafi, [0, 0, 0, 0], 0)
+	set_index(book, [0, 0, 0, 0], 0)
 
-	return kafi
+	return book
 
 def init_kafi():
-	book = build_kafi()
+	book = build_book()
 
 	insert_chapter(book)
-
-	write_file("/books/complete/al-kafi", fastapi.encoders.jsonable_encoder(book))
 
 	pprint(SEQUENCE_ERRORS)
