@@ -148,6 +148,19 @@ def get_adjusted_chapter(volume, book, cfile, chapter_index):
 			if chapter_index == 189:
 				replace_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c190.json", book, chapter_index)
 
+	if volume['index'] == 6:
+		if book['local_index'] == 2:
+			if chapter_index == 0:
+				book['chapters'].insert(28, create_chapter("بَابُ الْفَرْقِ بَيْنَ مَنْ طَلَّقَ عَلَى غَيْرِ السُّنَّةِ وَ بَيْنَ الْمُطَلَّقَةِ إِذَا خَرَجَتْ وَ هِيَ فِي عِدَّتِهَا أَوْ أَخْرَجَهَا زَوْجُهَا"))
+		# thaqalayn.net is missing a whole book on slavery: https://thaqalayn.netlify.app/#/books/al-kafi:6:3
+		# so we skip adding translation to this book
+		if book['local_index'] >= 3:
+			book = volume['chapters'][book['local_index']]
+		if book['local_index'] == 6:
+			# reserve missing chapter from beginning since we parse chapter file 159 before 82 and cause index out of bound
+			if chapter_index == 0:
+				book['chapters'].insert(86, create_chapter("بَابُ أَلْبَانِ الْإِبِل‏"))
+
 	return (book['chapters'][chapter_index], hadith_index)
 	
 def add_book_content(book, dirname, volume):
