@@ -4,10 +4,12 @@ import os
 import xml.etree.ElementTree
 from typing import Dict, List
 
+import fastapi
+
 # make sure all SQL Alchemy models are imported before initializing DB
 # otherwise, SQL Alchemy might fail to initialize relationships properly
 # for more details: https://github.com/tiangolo/full-stack-fastapi-postgresql/issues/28
-from app.lib_db import index_from_path, insert_chapter
+from app.lib_db import index_from_path, insert_chapter, write_file
 from app.lib_model import set_index
 from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
 
@@ -216,4 +218,5 @@ def build_quran() -> Chapter:
 def init_quran():
 	quran = build_quran()
 	insert_chapter(quran) 
+	write_file("/books/complete/quran", fastapi.encoders.jsonable_encoder(quran))
 	# insert_verse_content(db_session, quran)
