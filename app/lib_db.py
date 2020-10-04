@@ -50,8 +50,8 @@ def insert_chapters_list(chapter):
 	chapter_part = write_file(chapter_data['path'], obj_in)
 	logger.info("Inserted chapter list into chapter_part ID %s with index %s", chapter_part.id, chapter_part.index)
 
-	for subchapter in chapter_data['chapters']:
-		insert_chapter_dict(subchapter)
+	for subchapter in chapter.chapters:
+		insert_chapter(subchapter)
 
 def insert_chapter_content(chapter):
 	chapter_data = jsonable_encoder(chapter)
