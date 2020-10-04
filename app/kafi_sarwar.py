@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 SARWAR_TRANSLATION_ID = "en.sarwar"
 sarwar_translation = Translation()
-sarwar_translation.name = "Shaykh Muhammad Sarwar (via Thaqalayn.net)"
+sarwar_translation.name = "Shaykh Muhammad Sarwar (from Thaqalayn.net)"
 sarwar_translation.lang = Language.EN.value
 sarwar_translation.id = SARWAR_TRANSLATION_ID
 sarwar_translation = jsonable_encoder(sarwar_translation)
@@ -58,6 +58,7 @@ def add_chapter_content(chapter, filepath, hadith_index = 0):
 			hadith_ar = get_contents(all_paras[0])
 			hadith_en = get_contents(all_paras[1])
 
+
 			if hadith_index >= len(verses):
 				verse = {}
 				verse['text'] = [hadith_ar]
@@ -70,6 +71,11 @@ def add_chapter_content(chapter, filepath, hadith_index = 0):
 				# TODO: create new verse if the verse at this index doesn't match the one being inserted
 				# perhaps use https://github.com/ztane/python-Levenshtein or https://pypi.org/project/jellyfish/
 				verse = verses[hadith_index]
+				if verse['part_type'] != PartType.Hadith.value:
+					error_msg = f"Hadith index {hadith_index} is of part_type {verse['part_type']} in {chapter['titles']['en']}"
+					logger.warn(error_msg)
+					SEQUENCE_ERRORS.append(error_msg)
+
 
 			verse['translations'][SARWAR_TRANSLATION_ID] = [hadith_en]
 
@@ -191,10 +197,10 @@ def add_kafi_sarwar():
 	# add_content(kafi['chapters'][2], get_path("chapter\\3\\"))
 	# add_content(kafi['chapters'][3], get_path("chapter\\4\\"))
 	# add_content(kafi['chapters'][4], get_path("chapter\\5\\"))
-	add_content(kafi['chapters'][5], get_path("chapter\\6\\"))
-	# add_content(kafi['chapters'][6], get_path("chapter\\7\\"))
+	# add_content(kafi['chapters'][5], get_path("chapter\\6\\"))
+	add_content(kafi['chapters'][6], get_path("chapter\\7\\"))
 	# add_content(kafi['chapters'][7], get_path("chapter\\8\\"))
 	# insert_chapter_dict(kafi)
 
 	# write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
-	pprint(SEQUENCE_ERRORS)
+	pprint(SEQUENCE_ERRORS, width=240)
