@@ -66,13 +66,13 @@ def add_chapter_content(chapter, filepath, hadith_index = 0):
 				verse['translations'] = {}
 
 				verses.append(verse)
-				logger.warn('Adding new hadith from Sarwar to hubeali on index %i in %s', hadith_index, chapter['titles']['en'])
+				logger.warn(f"Adding new hadith from Sarwar to hubeali on index {hadith_index} in {chapter['crumbs'][-1]['path']}")
 			else:
 				# TODO: create new verse if the verse at this index doesn't match the one being inserted
 				# perhaps use https://github.com/ztane/python-Levenshtein or https://pypi.org/project/jellyfish/
 				verse = verses[hadith_index]
 				if verse['part_type'] != PartType.Hadith.value:
-					error_msg = f"Hadith index {hadith_index} is of part_type {verse['part_type']} in {chapter['titles']['en']}"
+					error_msg = f"Hadith index {hadith_index} is of part_type {verse['part_type']} in {chapter['crumbs'][-1]['path']}"
 					logger.warn(error_msg)
 					SEQUENCE_ERRORS.append(error_msg)
 
@@ -95,7 +95,7 @@ def add_chapter_content(chapter, filepath, hadith_index = 0):
 			hadith_index += 1
 
 	if hadith_index != len(verses):
-		error_msg = f"Sarwar has {hadith_index} hadith but hubeali has {len(verses)} hadith in {chapter['titles']['en']}"
+		error_msg = f"Sarwar has {hadith_index} hadith but hubeali has {len(verses)} hadith in {chapter['crumbs'][-1]['path']}"
 		logger.warn(error_msg)
 		SEQUENCE_ERRORS.append(error_msg)
 
@@ -192,15 +192,15 @@ def get_path(file):
 
 def add_kafi_sarwar():
 	kafi = load_chapter("/books/complete/al-kafi")
-	# add_content(kafi['chapters'][0], get_path("chapter\\1\\"))
+	add_content(kafi['chapters'][0], get_path("chapter\\1\\"))
 	# add_content(kafi['chapters'][1], get_path("chapter\\2\\"))
 	# add_content(kafi['chapters'][2], get_path("chapter\\3\\"))
 	# add_content(kafi['chapters'][3], get_path("chapter\\4\\"))
 	# add_content(kafi['chapters'][4], get_path("chapter\\5\\"))
 	# add_content(kafi['chapters'][5], get_path("chapter\\6\\"))
-	add_content(kafi['chapters'][6], get_path("chapter\\7\\"))
+	# add_content(kafi['chapters'][6], get_path("chapter\\7\\"))
 	# add_content(kafi['chapters'][7], get_path("chapter\\8\\"))
-	# insert_chapter_dict(kafi)
+	insert_chapter_dict(kafi)
 
 	# write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
 	pprint(SEQUENCE_ERRORS, width=240)
