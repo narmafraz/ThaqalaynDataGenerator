@@ -104,8 +104,8 @@ def build_alhassanain_baabs(file) -> List[Chapter]:
 						or ( is_tag(last_element) and 'Heading2Center' not in last_element['class'])
 						)
 					):
-					is_tag = is_tag(last_element)
-					if is_tag and 'libAr' in last_element['class']:
+					is_a_tag = is_tag(last_element)
+					if is_a_tag and 'libAr' in last_element['class']:
 						
 						# push the last verse if its not the start of chapter
 						if verse != None:
@@ -118,7 +118,7 @@ def build_alhassanain_baabs(file) -> List[Chapter]:
 
 						verse.text = [last_element.get_text(strip=True)]
 
-					if is_tag and 'libNormal' in last_element['class']:
+					if is_a_tag and 'libNormal' in last_element['class']:
 						verse.translations[HUBEALI_TRANSLATION_ID].append(last_element.get_text(strip=True))
 
 					last_element = last_element.next_sibling
@@ -262,8 +262,8 @@ def build_hubeali_books(dirname) -> List[Chapter]:
 					last_element = last_element.next_sibling
 					continue
 
-				is_tag = is_tag(last_element)
-				is_paragraph = is_tag and last_element.name == 'p'
+				is_a_tag = is_tag(last_element)
+				is_paragraph = is_a_tag and last_element.name == 'p'
 				is_not_section_break_paragraph = is_paragraph and not is_section_break_tag(last_element)
 				is_arabic = is_rtl_tag(last_element)
 
@@ -385,8 +385,8 @@ def build_hubeali_book_8(dirname) -> List[Chapter]:
 					last_element = last_element.next_sibling
 					continue
 
-				is_tag = is_tag(last_element)
-				is_paragraph = is_tag and last_element.name == 'p'
+				is_a_tag = is_tag(last_element)
+				is_paragraph = is_a_tag and last_element.name == 'p'
 				is_not_section_break_paragraph = is_paragraph and not is_section_break_tag(last_element)
 				is_arabic = is_rtl_tag(last_element)
 
