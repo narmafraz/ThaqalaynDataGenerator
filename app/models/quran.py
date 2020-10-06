@@ -1,39 +1,42 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from app.models.crumb import Crumb
 from app.models.enums import Language, PartType
 from app.models.translation import Translation
+from pydantic import BaseModel
 
 
-class Verse:
-	chain_text: str
-	index: int
-	local_index: int
-	part_type: PartType
-	path: str
-	sajda_type: str
-	text: List[str]
-	gradings: List[str]
-	translations: Dict[str, List[str]]
+class Verse(BaseModel):
+	chain_text: str = None
+	index: int = None
+	local_index: int = None
+	part_type: PartType = None
+	path: str = None
+	sajda_type: str = None
+	text: List[str] = None
+	gradings: List[str] = None
+	translations: Dict[str, List[str]] = None
 
-class Chapter:
-	chapters: List[Chapter]
-	crumbs: List[Crumb]
-	default_verse_translation_ids: Dict[str, str]
-	descriptions: Dict[str, List[str]]
-	index: int
-	local_index: int
-	order: int
-	part_type: PartType
-	path: str
-	reveal_type: str
-	rukus: int
-	sajda_type: str
-	title: str
-	translations: Dict[str, str]
-	verse_count: int
-	verse_start_index: int
-	verse_translations: List[Translation]
-	verses: List[Verse]
+class Chapter(BaseModel):
+	chapters: List[Chapter] = None
+	crumbs: List[Crumb] = None
+	default_verse_translation_ids: Dict[str, str] = None
+	descriptions: Dict[str, str] = None
+	index: str = None
+	local_index: int = None
+	order: int = None
+	part_type: PartType = None
+	path: str = None
+	reveal_type: str = None
+	rukus: int = None
+	sajda_type: str = None
+	titles: Dict[str, Optional[str]] = None
+	translations: Dict[str, str] = None
+	verse_count: int = None
+	verse_start_index: int = None
+	verse_translations: List[Translation] = None
+	verses: List[Verse] = None
+
+Chapter.update_forward_refs()

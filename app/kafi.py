@@ -288,8 +288,8 @@ def build_hubeali_books(dirname) -> List[Chapter]:
 							add_hadith(chapter, hadith_ar, hadith_en)
 						else:
 							book.descriptions = {}
-							book.descriptions[Language.AR.value] = join_texts(hadith_ar)
-							book.descriptions[Language.EN.value] = join_texts(hadith_en)
+							book.descriptions[Language.AR.value] = hadith_ar
+							book.descriptions[Language.EN.value] = hadith_en
 						hadith_ar = []
 						hadith_en = []
 
@@ -436,7 +436,7 @@ def build_volume(file, title_en: str, title_ar: str, description: str, last_volu
 		Language.AR.value: title_ar
 	}
 	volume.descriptions = {
-			Language.EN.value: description
+			Language.EN.value: [description]
 	}
 	if last_volume:
 		volume.chapters = build_hubeali_book_8(file)
@@ -459,7 +459,7 @@ def build_kafi() -> Chapter:
 		Language.AR.value: "الكافي"
 	}
 	kafi.descriptions = {
-			Language.EN.value: "Of the majestic narrator and the scholar, the jurist, the Sheykh Muhammad Bin Yaqoub Al-Kulayni Well known as ‘The trustworthy of Al-Islam Al-Kulayni’ Who died in the year 329 H"
+			Language.EN.value: ["Of the majestic narrator and the scholar, the jurist, the Sheykh Muhammad Bin Yaqoub Al-Kulayni Well known as ‘The trustworthy of Al-Islam Al-Kulayni’ Who died in the year 329 H"]
 	}
 	kafi.chapters = []
 

@@ -6,7 +6,7 @@ import os
 import jsons
 from fastapi.encoders import jsonable_encoder
 
-from app.lib_model import has_chapters, has_verses
+from app.lib_model import get_chapters, get_verses
 from app.models import Chapter, Language, Translation, Verse
 
 logging.basicConfig(level=logging.INFO)
@@ -23,17 +23,10 @@ def index_from_path(path: str) -> str:
 	return path[7:]
 
 def insert_chapter(chapter: Chapter):
-	if has_chapters(chapter):
+	if get_chapters(chapter):
 		insert_chapters_list(chapter)
 
-	if has_verses(chapter):
-		insert_chapter_content(chapter)
-
-def insert_chapter_dict(chapter):
-	if 'chapters' in chapter:
-		insert_chapters_list(chapter)
-
-	if 'verses' in chapter:
+	if get_verses(chapter):
 		insert_chapter_content(chapter)
 
 def insert_chapters_list(chapter):
@@ -50,10 +43,7 @@ def insert_chapters_list(chapter):
 	chapter_part = write_file(chapter_data['path'], obj_in)
 	logger.info("Inserted chapter list into chapter_part ID %s with index %s", chapter_part.id, chapter_part.index)
 
-	if has_chapters(chapter):
-		subchapters = chapter.chapters
-	else:
-		subchapters = chapter['chapters']
+	subchapters = get_chapters(chapter)
 
 	for subchapter in subchapters:
 		insert_chapter(subchapter)
@@ -91,7 +81,9 @@ def write_file(path: str, obj):
 	
 	return result
 
-def load_chapter(path: str) :
+def load_chapter(path: str) -> Chapter :
 	with open(ensure_dir(get_dest_path(path)), 'r', encoding='utf-8') as f:
-		return json.load(f)
-		# return jsons.load(chdict, Chapter)
+		json_chapter = json.load(f)
+		if 'data' in json_chapter:
+			json_chapter = json_chapter['data']
+		return Chapter(**json_chapter)

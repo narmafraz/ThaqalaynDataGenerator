@@ -8,17 +8,26 @@ CHAPTER_TITLE_PATTERN = re.compile("Chapter (\d+)")
 
 SEQUENCE_ERRORS = []
 
-def has_chapters(book: Chapter) -> bool:
-	return hasattr(book, 'chapters') and book.chapters is not None
+def get_chapters(book):
+	if hasattr(book, 'chapters'):
+		return book.chapters
+	if 'chapters' in book:
+		return book['chapters']
+	return None
 
-def has_verses(book: Chapter) -> bool:
-	return hasattr(book, 'verses') and book.verses is not None
+def get_verses(book):
+	if hasattr(book, 'verses'):
+		return book.verses
+	if 'verses' in book:
+		return book['verses']
+	return None
 
 def set_index(chapter: Chapter, indexes: List[int], depth: int) -> List[int]:
+	# TODO: set before/after chapter links
 	if len(indexes) < depth + 1:
 		indexes.append(0)
 
-	if has_verses(chapter):
+	if get_verses(chapter):
 		verse_local_index = 0
 		for verse in chapter.verses:
 			if verse.part_type == PartType.Hadith or verse.part_type == PartType.Verse:
@@ -31,7 +40,7 @@ def set_index(chapter: Chapter, indexes: List[int], depth: int) -> List[int]:
 	
 	report_numbering = True
 	sequence = None
-	if has_chapters(chapter):
+	if get_chapters(chapter):
 		chapter_local_index = 0
 		for subchapter in chapter.chapters:
 			indexes[depth] = indexes[depth] + 1

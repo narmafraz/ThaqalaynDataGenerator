@@ -1,9 +1,10 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from app.models.enums import PartType
+from pydantic import BaseModel
 
 
-class Crumb():
-	titles: Dict[str, str]
-	indexed_titles: Dict[str, str]
-	path: str
+class Crumb(BaseModel):
+	titles: Dict[str, Optional[str]] = None
+	indexed_titles: Dict[str, Optional[str]] = None
+	path: str = None
