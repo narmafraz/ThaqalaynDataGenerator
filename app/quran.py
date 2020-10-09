@@ -57,12 +57,8 @@ def build_chapters(file: str, verses: List[Verse], verse_translations: List[Tran
 		}
 
 		sura = Chapter()
-		# sura.index=index
-		# sura.path=BOOK_PATH + ":" + str(index)
 		sura.part_type = PartType.Chapter
 		sura.titles=titles
-		# sura.verse_count=ayas
-		# sura.verse_start_index=start
 		sura.reveal_type=type
 		sura.order=order
 		sura.rukus=rukus
@@ -72,10 +68,6 @@ def build_chapters(file: str, verses: List[Verse], verse_translations: List[Tran
 			"en": "en.qarai",
 			"fa": "fa.makarem"
 		}
-
-		# set verse path
-		# for verse in sura.verses:
-		# 	verse.path=sura.path + ":" + str(verse.index)
 
 		chapters.append(sura)
 
@@ -120,10 +112,7 @@ def insert_quran_translation(verses, verse_translations, file, key, lang, author
 	logger.info("Adding Quran translation file %s", file)
 
 	id = lang + "." + key
-	qt = Translation()
-	qt.lang = lang
-	qt.name = author
-	qt.id = id
+	qt = Translation(lang = lang, name = author, id = id)
 	verse_translations.append(qt)
 
 	index = 0

@@ -138,10 +138,7 @@ V8_HADITH_BEGINNING_PATTERN = re.compile(r"^-? ?(1\d+)-?")
 END_OF_HADITH_PATTERN = re.compile(r"<sup>\[\d+\]</sup>\s*$")
 END_OF_HADITH_CLEANUP_PATTERN = re.compile(r'<a id="[^"]+"/?>(</a>)?<sup>\[\d+\]</sup>\s*$')
 
-hubbeali_translation = Translation()
-hubbeali_translation.name = "HubeAli.com"
-hubbeali_translation.lang = Language.EN.value
-hubbeali_translation.id = HUBEALI_TRANSLATION_ID
+hubbeali_translation = Translation(name = "HubeAli.com", lang = Language.EN.value, id = HUBEALI_TRANSLATION_ID)
 
 def we_dont_care(heading):
 	if heading is None:
@@ -511,25 +508,6 @@ def build_kafi() -> Chapter:
 		"الجزء الثامن‏",
 		"Eighth volume of Al-Kafi", True))
 
-	# kafi.chapters.append(build_volume(
-	# 	get_path("alhassanain_org\\hubeali_com_usul_kafi_v_01_ed_html\\usul_kafi_v_01_ed.htm"),
-	# 	"Volume 1",
-	# 	"جلد اول",
-	# 	"First volume of Al-Kafi"))
-
-	# kafi.chapters.append(build_volume(
-	# 	get_path("alhassanain_org\\hubeali_com_usul_kafi_v_02_ed_html\\usul_kafi_v_02_ed.htm"),
-	# 	"Volume 2",
-	# 	"جلد 2",
-	# 	"Second volume of Al-Kafi"))
-
-	# kafi.chapters.append(build_volume(
-	# 	get_path("alhassanain_org\\hubeali_com_usul_kafi_v_03_ed_html\\usul_kafi_v_03_ed.htm"),
-	# 	"Volume 3",
-	# 	"جلد 3",
-	# 	"Third volume of Al-Kafi"))
-
-	# post_processor(kafi)
 	kafi.verse_start_index = 0
 	kafi.index = BOOK_INDEX
 	kafi.path = BOOK_PATH

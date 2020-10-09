@@ -1,8 +1,9 @@
 import logging
 
-# from app.books import init_books
-# from app.kafi import init_kafi
+from app.books import init_books
+from app.kafi import init_kafi
 from app.kafi_sarwar import add_kafi_sarwar
+from app.quran import init_quran
 
 # from app.quran import init_quran
 
