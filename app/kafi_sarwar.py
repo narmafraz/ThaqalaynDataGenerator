@@ -24,6 +24,7 @@ def we_dont_care(html: str) -> bool:
 
 def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 	verses = chapter.verses
+	heading_count = 0
 
 	sarwar_exists = next((item for item in chapter.verse_translations if item.id == SARWAR_TRANSLATION_ID), None)
 	if not sarwar_exists:
@@ -76,6 +77,7 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 
 				if verse.part_type == PartType.Heading:
 					hadith_index += 1
+					heading_count += 1
 					verse = verses[hadith_index]
 				
 				if verse.part_type != PartType.Hadith:
@@ -102,8 +104,9 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 			# logger.info(str(hadith_en))
 			hadith_index += 1
 
-	if hadith_index != len(verses):
-		error_msg = f"Sarwar has {hadith_index} hadith but hubeali has {len(verses)} hadith in {chapter.crumbs[-1].path}"
+	if hadith_index != len(verses) - heading_count:
+		site_path = filepath[filepath.index('\\chapter\\')+9:-5].replace('\\', '/')
+		error_msg = f"Sarwar has {hadith_index} hadith but hubeali has {len(verses)} hadith: https://thaqalayn.net/chapter/{site_path} vs https://thaqalayn.netlify.app/#{chapter.crumbs[-1].path}"
 		logger.warn(error_msg)
 		SEQUENCE_ERRORS.append(error_msg)
 
@@ -198,9 +201,9 @@ def get_path(file):
 
 def add_kafi_sarwar():
 	kafi = load_chapter("/books/complete/al-kafi")
-	add_content(kafi.chapters[0], get_path("chapter\\1\\"))
+	# add_content(kafi.chapters[0], get_path("chapter\\1\\"))
 	# add_content(kafi.chapters[1], get_path("chapter\\2\\"))
-	# add_content(kafi.chapters[2], get_path("chapter\\3\\"))
+	add_content(kafi.chapters[2], get_path("chapter\\3\\"))
 	# add_content(kafi.chapters[3], get_path("chapter\\4\\"))
 	# add_content(kafi.chapters[4], get_path("chapter\\5\\"))
 	# add_content(kafi.chapters[5], get_path("chapter\\6\\"))
