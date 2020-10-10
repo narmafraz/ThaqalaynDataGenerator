@@ -277,8 +277,11 @@ def build_hubeali_books(dirname) -> List[Chapter]:
 						hadith_ar = []
 						hadith_en = []
 
-					book_title_ar = element_content
-					chapter = None
+					# hubeali put chapters on ziyarat as separate book but we're going to stay true to the indexing on 
+					# other copies out there and have the chapters under this as part of book of Hajj
+					if not cfile.endswith('Al-Kafi-Volume-4\\c346.xhtml'):
+						book_title_ar = element_content
+						chapter = None
 				elif is_chapter_title(last_element):
 					if hadith_ar and hadith_en:
 						if chapter:
