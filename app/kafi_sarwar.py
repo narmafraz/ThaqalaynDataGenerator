@@ -83,13 +83,13 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 				# perhaps use https://github.com/ztane/python-Levenshtein or https://pypi.org/project/jellyfish/
 				verse = verses[hadith_index]
 
-				if verse.part_type == PartType.Heading:
+				if verse.part_type == PartType.Heading and hadith_index < len(verses)-1:
 					hadith_index += 1
 					heading_count += 1
 					verse = verses[hadith_index]
 				
 				if verse.part_type != PartType.Hadith:
-					error_msg = f"Hadith index {hadith_index} is of part_type {verse.part_type} in {chapter.crumbs[-1].path}"
+					error_msg = f"Hadith index {hadith_index} is of part_type {verse.part_type} in https://thaqalayn.netlify.app/#{chapter.crumbs[-1].path}"
 					logger.warn(error_msg)
 					SEQUENCE_ERRORS.append(error_msg)
 
