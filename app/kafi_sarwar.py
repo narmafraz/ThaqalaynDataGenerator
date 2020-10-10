@@ -51,13 +51,19 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 
 			all_paras = soup.find_all('p')
 
-			hadith_ar = get_contents(all_paras[0])
-			hadith_en = get_contents(all_paras[1])
+			para_index = 0
+			hadith_ar = []
+			while is_rtl_tag(all_paras[para_index]):
+				hadith_ar.append(get_contents(all_paras[para_index]))
+				para_index += 1
+
+			hadith_en = get_contents(all_paras[para_index])
+			para_index += 1
 
 
 			if hadith_index >= len(verses):
 				verse = Verse()
-				verse.text = [hadith_ar]
+				verse.text = hadith_ar
 				verse.part_type = PartType.Hadith.value
 				verse.translations = {}
 
@@ -67,6 +73,11 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 				# TODO: create new verse if the verse at this index doesn't match the one being inserted
 				# perhaps use https://github.com/ztane/python-Levenshtein or https://pypi.org/project/jellyfish/
 				verse = verses[hadith_index]
+
+				if verse.part_type == PartType.Heading:
+					hadith_index += 1
+					verse = verses[hadith_index]
+				
 				if verse.part_type != PartType.Hadith:
 					error_msg = f"Hadith index {hadith_index} is of part_type {verse.part_type} in {chapter.crumbs[-1].path}"
 					logger.warn(error_msg)
@@ -75,13 +86,14 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 
 			verse.translations[SARWAR_TRANSLATION_ID] = [hadith_en]
 
-			if len(all_paras) > 3:
-				grading_title = get_contents(all_paras[2])
+			if len(all_paras) > para_index + 1:
+				grading_title = get_contents(all_paras[para_index])
+				para_index += 1
 				if grading_title.startswith('Grading:'):
 					grading = []
 					# if len(all_paras[3:-3]) != 2 and len(all_paras[3:-3]) != 1:
 					# 	raise Exception("We are in " + filepath + " and all_paras is " + str(all_paras))
-					for grading_para in all_paras[3:-3]:
+					for grading_para in all_paras[para_index:-3]:
 						grading.append(get_contents(grading_para))
 					# logger.info(grading)
 					verse.gradings = grading
@@ -114,14 +126,12 @@ def create_chapter(title_ar) -> Chapter:
 def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 	hadith_index = 0
 	# book of hajj is split into another book on ziyarat https://thaqalayn.netlify.app/#/books/al-kafi:4:4?lang=en but this is not the case in https://thaqalayn.net/book/4
-	if volume.index == 4 and chapter_index >= 212:
-		new_chapter_index = chapter_index % 212
-		# the two hadith in https://thaqalayn.netlify.app/#/books/al-kafi:4:4:15?lang=en are split into two in https://thaqalayn.net/chapter/4/3/228
-		if new_chapter_index == 15:
-			hadith_index = 1
-		if new_chapter_index > 14:
-			new_chapter_index -= 1
-		return (volume.chapters[3].chapters[new_chapter_index], hadith_index)
+	if volume.index == 4:
+		if book.local_index == 2:
+			if chapter_index == 0:
+				# Chapter 228 is merged into the end of chapter 227 in hubeali
+				book.chapters.insert(227, create_chapter("دُعَاءٌ آخَرُ عِنْدَ قَبْرِ أَمِيرِ الْمُؤْمِنِينَ ع‏"))
+				book.chapters[227].verses.append(book.chapters[226].verses.pop(1))
 	
 	# vol 5 book 2 has missing chapter 82
 	if volume.index == 5:
