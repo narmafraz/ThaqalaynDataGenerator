@@ -62,14 +62,22 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 			para_index += 1
 
 
-			if hadith_index >= len(verses):
+			if hadith_index >= len(verses) - heading_count:
 				verse = Verse()
 				verse.text = hadith_ar
 				verse.part_type = PartType.Hadith.value
 				verse.translations = {}
 
 				verses.append(verse)
-				logger.warn(f"Adding new hadith from Sarwar to hubeali on index {hadith_index} in {chapter.titles['en']}")
+
+				site_path = filepath[filepath.index('\\chapter\\')+9:-5].replace('\\', '/')
+				if chapter.crumbs:
+					my_site_path = chapter.crumbs[-1].path
+				else:
+					my_site_path = site_path.replace('/', ':')
+				error_msg = f"Appending new hadith from Sarwar to hubeali, hadith #{hadith_index+1} from https://thaqalayn.net/chapter/{site_path} to https://thaqalayn.netlify.app/#{my_site_path}"
+				logger.warn(error_msg)
+				SEQUENCE_ERRORS.append(error_msg)
 			else:
 				# TODO: create new verse if the verse at this index doesn't match the one being inserted
 				# perhaps use https://github.com/ztane/python-Levenshtein or https://pypi.org/project/jellyfish/
@@ -97,11 +105,8 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 					# 	raise Exception("We are in " + filepath + " and all_paras is " + str(all_paras))
 					for grading_para in all_paras[para_index:-3]:
 						grading.append(get_contents(grading_para))
-					# logger.info(grading)
 					verse.gradings = grading
 
-
-			# logger.info(str(hadith_en))
 			hadith_index += 1
 
 	if hadith_index != len(verses) - heading_count:
@@ -110,12 +115,12 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 		logger.warn(error_msg)
 		SEQUENCE_ERRORS.append(error_msg)
 
-def replace_chapter_from_file(filename, book, chapter_index):
+def load_chapter_from_file(filename):
 	filepath = os.path.join(os.path.dirname(__file__), filename)
 	with open(filepath, 'r', encoding='utf8') as qfile:
 		file_content = qfile.read()
 		file_json = json.loads(file_content)
-		book.chapters[chapter_index] = Chapter(**file_json['data'])
+		return Chapter(**file_json['data'])
 
 def create_chapter(title_ar) -> Chapter:
 	chapter = {
@@ -144,7 +149,7 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 				# Chapter 82 missing in hubeali
 				book.chapters.insert(81, {})
 			if chapter_index == 81:
-				replace_chapter_from_file("raw\\corrections\\al-kafi_v5_b2_c82.json", book, chapter_index)
+				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b2_c82.json", book, chapter_index)
 		if book.local_index == 3:
 			# TODO: hadith 3 in chapter 120 missing, based on noor
 			# TODO: one hadith in chapter 124 missing, based on noor
@@ -158,23 +163,25 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 				book.chapters.insert(190, create_chapter("بَابُ تَفْسِيرِ مَا يَحِلُّ مِنَ النِّكَاحِ وَ مَا يَحْرُمُ وَ الْفَرْقِ بَيْنَ النِّكَاحِ وَ السِّفَاحِ وَ الزِّنَى وَ هُوَ مِنْ كَلَامِ يُونُس‏"))
 			# Hadith 2 and 3 missing in chapter 22 of hubeali 
 			if chapter_index == 21:
-				replace_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c22.json", book, chapter_index)
+				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c22.json", book, chapter_index)
 			# Hadith 4-9 missing in chapter 190 of hubeali
 			if chapter_index == 189:
-				replace_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c190.json", book, chapter_index)
+				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c190.json", book, chapter_index)
 
 	if volume.local_index == 6:
 		if book.local_index == 2:
 			if chapter_index == 0:
 				book.chapters.insert(28, create_chapter("بَابُ الْفَرْقِ بَيْنَ مَنْ طَلَّقَ عَلَى غَيْرِ السُّنَّةِ وَ بَيْنَ الْمُطَلَّقَةِ إِذَا خَرَجَتْ وَ هِيَ فِي عِدَّتِهَا أَوْ أَخْرَجَهَا زَوْجُهَا"))
 		# thaqalayn.net is missing a whole book on slavery: https://thaqalayn.netlify.app/#/books/al-kafi:6:3
-		# so we skip adding translation to this book
+		# so we skip adding translation to this book, note: book.local_index is 1 based
 		if book.local_index >= 3:
 			book = volume.chapters[book.local_index]
 		if book.local_index == 6:
 			# reserve missing chapter from beginning since we parse chapter file 159 before 82 and cause index out of bound
 			if chapter_index == 0:
 				book.chapters.insert(86, create_chapter("بَابُ أَلْبَانِ الْإِبِل‏"))
+			if chapter_index == 133:
+				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v6_b6_c134.json", book, chapter_index)
 
 	return (book.chapters[chapter_index], hadith_index)
 	
@@ -206,8 +213,8 @@ def add_kafi_sarwar():
 	# add_content(kafi.chapters[2], get_path("chapter\\3\\"))
 	# add_content(kafi.chapters[3], get_path("chapter\\4\\"))
 	# add_content(kafi.chapters[4], get_path("chapter\\5\\"))
-	add_content(kafi.chapters[5], get_path("chapter\\6\\"))
-	# add_content(kafi.chapters[6], get_path("chapter\\7\\"))
+	# add_content(kafi.chapters[5], get_path("chapter\\6\\"))
+	add_content(kafi.chapters[6], get_path("chapter\\7\\"))
 	# add_content(kafi.chapters[7], get_path("chapter\\8\\"))
 
 	# set_index(kafi, [0, 0, 0, 0], 0)
