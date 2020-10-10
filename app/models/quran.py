@@ -23,7 +23,7 @@ class Chapter(BaseModel):
 	chapters: List[Chapter] = None
 	crumbs: List[Crumb] = None
 	default_verse_translation_ids: Dict[str, str] = None
-	descriptions: Dict[str, str] = None
+	descriptions: Dict[str, List[str]] = None
 	index: str = None
 	local_index: int = None
 	order: int = None
