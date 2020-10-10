@@ -115,7 +115,7 @@ def replace_chapter_from_file(filename, book, chapter_index):
 	with open(filepath, 'r', encoding='utf8') as qfile:
 		file_content = qfile.read()
 		file_json = json.loads(file_content)
-		book.chapters[chapter_index] = file_json['data']
+		book.chapters[chapter_index] = Chapter(**file_json['data'])
 
 def create_chapter(title_ar) -> Chapter:
 	chapter = {
@@ -129,15 +129,15 @@ def create_chapter(title_ar) -> Chapter:
 def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 	hadith_index = 0
 	# book of hajj is split into another book on ziyarat https://thaqalayn.netlify.app/#/books/al-kafi:4:4?lang=en but this is not the case in https://thaqalayn.net/book/4
-	if volume.index == 4:
-		if book.local_index == 2:
+	if volume.local_index == 4:
+		if book.local_index == 3:
 			if chapter_index == 0:
 				# Chapter 228 is merged into the end of chapter 227 in hubeali
 				book.chapters.insert(227, create_chapter("دُعَاءٌ آخَرُ عِنْدَ قَبْرِ أَمِيرِ الْمُؤْمِنِينَ ع‏"))
 				book.chapters[227].verses.append(book.chapters[226].verses.pop(1))
 	
 	# vol 5 book 2 has missing chapter 82
-	if volume.index == 5:
+	if volume.local_index == 5:
 		if book.local_index == 2:
 			# reserve missing chapter from beginning since we parse chapter file 159 before 82 and cause index out of bound
 			if chapter_index == 0:
@@ -163,7 +163,7 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 			if chapter_index == 189:
 				replace_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c190.json", book, chapter_index)
 
-	if volume.index == 6:
+	if volume.local_index == 6:
 		if book.local_index == 2:
 			if chapter_index == 0:
 				book.chapters.insert(28, create_chapter("بَابُ الْفَرْقِ بَيْنَ مَنْ طَلَّقَ عَلَى غَيْرِ السُّنَّةِ وَ بَيْنَ الْمُطَلَّقَةِ إِذَا خَرَجَتْ وَ هِيَ فِي عِدَّتِهَا أَوْ أَخْرَجَهَا زَوْجُهَا"))
@@ -203,16 +203,15 @@ def add_kafi_sarwar():
 	kafi = load_chapter("/books/complete/al-kafi")
 	# add_content(kafi.chapters[0], get_path("chapter\\1\\"))
 	# add_content(kafi.chapters[1], get_path("chapter\\2\\"))
-	add_content(kafi.chapters[2], get_path("chapter\\3\\"))
+	# add_content(kafi.chapters[2], get_path("chapter\\3\\"))
 	# add_content(kafi.chapters[3], get_path("chapter\\4\\"))
 	# add_content(kafi.chapters[4], get_path("chapter\\5\\"))
-	# add_content(kafi.chapters[5], get_path("chapter\\6\\"))
+	add_content(kafi.chapters[5], get_path("chapter\\6\\"))
 	# add_content(kafi.chapters[6], get_path("chapter\\7\\"))
 	# add_content(kafi.chapters[7], get_path("chapter\\8\\"))
 
-	set_index(kafi, [0, 0, 0, 0], 0)
-
-	insert_chapter(kafi)
-
+	# set_index(kafi, [0, 0, 0, 0], 0)
+	# insert_chapter(kafi)
 	# write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
+
 	pprint(SEQUENCE_ERRORS, width=240)
