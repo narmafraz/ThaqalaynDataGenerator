@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 SARWAR_TRANSLATION_ID = "en.sarwar"
 sarwar_translation = Translation(name = "Shaykh Muhammad Sarwar (from Thaqalayn.net)", lang = Language.EN.value, id = SARWAR_TRANSLATION_ID)
 
+# Created cumulative sum of verse numbers in volume 8 to adjust chapter index like this:
+# from itertools import accumulate
+# x = [len(x.verses) for x in book.chapters]
+# print(list(accumulate(x)))
+V8_HADITH_CUMSUM = [1, 3, 4, 6, 7, 15, 16, 20, 21, 22, 23, 26, 28, 29, 30, 32, 40, 51, 54, 56, 62, 66, 68, 70, 91, 93, 94, 95, 98, 102, 104, 107, 125, 142, 143, 153, 192, 193, 254, 273, 299, 313, 392, 457, 477, 532, 536, 550, 551, 584, 586, 597]
+
 def we_dont_care(html: str) -> bool:
 	return '<body>' in html or '</body>' in html
 
@@ -121,7 +127,9 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 
 			hadith_index += 1
 
-	if hadith_index != len(verses) - heading_count:
+	# Volume 8 of al-kafi is one file per hadith on thaqalayn.net and it'll warn on every page 
+	# since there is always more ahadith on hubeali's chapter
+	if hadith_index != len(verses) - heading_count and 'al-kafi:8:1' not in chapter.path:
 		site_path = sitepath_from_filepath(filepath)
 		error_msg = f"Sarwar has {hadith_index} hadith but hubeali has {len(verses)} hadith: https://thaqalayn.net/chapter/{site_path} vs https://thaqalayn.netlify.app/#{chapter.crumbs[-1].path}"
 		logger.warn(error_msg)
@@ -201,6 +209,13 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 				book.chapters.insert(9, create_chapter("بَابُ الْعِلَّةِ فِي أَنَّ السِّهَامَ لَا تَكُونُ أَكْثَرَ مِنْ سِتَّةٍ وَ هُوَ مِنْ كَلَامِ يُونُس‏"))
 			if chapter_index >= 1:
 				chapter_index += 1
+	
+	if volume.local_index == 8 and chapter_index > 0:
+		# There is only one book and each hadith is in its own chapter in thaqalayn.net
+		cumsum_index = next(i for i,v in enumerate(V8_HADITH_CUMSUM) if v >= chapter_index + 1)
+		cumsum = V8_HADITH_CUMSUM[cumsum_index - 1]
+		hadith_index = chapter_index - cumsum
+		chapter_index = cumsum_index
 
 	return (book.chapters[chapter_index], hadith_index)
 	
@@ -214,30 +229,30 @@ def add_book_content(book: Chapter, dirname, volume):
 		
 		add_chapter_content(chapter, cfile, hadith_index)
 
-def add_content(chapter: Chapter, dirname):
+def add_content(volume: Chapter, dirname):
 	cfiles = glob.glob(dirname + "*")
 
 	for cfile in cfiles:
 		logger.info("Processing book dir %s", cfile)
 		book_index = int(os.path.basename(cfile)) - 1
-		add_book_content(chapter.chapters[book_index], cfile, chapter)
+		add_book_content(volume.chapters[book_index], cfile, volume)
 
 def get_path(file):
 	return os.path.join(os.path.dirname(__file__), "raw\\thaqalayn_net\\Thaqalayn\\thaqalayn.net\\" + file)
 
 def add_kafi_sarwar():
 	kafi = load_chapter("/books/complete/al-kafi")
-	# add_content(kafi.chapters[0], get_path("chapter\\1\\"))
-	# add_content(kafi.chapters[1], get_path("chapter\\2\\"))
-	# add_content(kafi.chapters[2], get_path("chapter\\3\\"))
-	# add_content(kafi.chapters[3], get_path("chapter\\4\\"))
-	# add_content(kafi.chapters[4], get_path("chapter\\5\\"))
-	# add_content(kafi.chapters[5], get_path("chapter\\6\\"))
+	add_content(kafi.chapters[0], get_path("chapter\\1\\"))
+	add_content(kafi.chapters[1], get_path("chapter\\2\\"))
+	add_content(kafi.chapters[2], get_path("chapter\\3\\"))
+	add_content(kafi.chapters[3], get_path("chapter\\4\\"))
+	add_content(kafi.chapters[4], get_path("chapter\\5\\"))
+	add_content(kafi.chapters[5], get_path("chapter\\6\\"))
 	add_content(kafi.chapters[6], get_path("chapter\\7\\"))
-	# add_content(kafi.chapters[7], get_path("chapter\\8\\"))
+	add_content(kafi.chapters[7], get_path("chapter\\8\\"))
 
-	# set_index(kafi, [0, 0, 0, 0], 0)
-	# insert_chapter(kafi)
+	set_index(kafi, [0, 0, 0, 0], 0)
+	insert_chapter(kafi)
 	# write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
 
 	pprint(SEQUENCE_ERRORS, width=240)
