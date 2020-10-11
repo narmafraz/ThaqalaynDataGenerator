@@ -149,7 +149,7 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 				# Chapter 82 missing in hubeali
 				book.chapters.insert(81, {})
 			if chapter_index == 81:
-				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b2_c82.json", book, chapter_index)
+				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b2_c82.json")
 		if book.local_index == 3:
 			# TODO: hadith 3 in chapter 120 missing, based on noor
 			# TODO: one hadith in chapter 124 missing, based on noor
@@ -163,10 +163,10 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 				book.chapters.insert(190, create_chapter("بَابُ تَفْسِيرِ مَا يَحِلُّ مِنَ النِّكَاحِ وَ مَا يَحْرُمُ وَ الْفَرْقِ بَيْنَ النِّكَاحِ وَ السِّفَاحِ وَ الزِّنَى وَ هُوَ مِنْ كَلَامِ يُونُس‏"))
 			# Hadith 2 and 3 missing in chapter 22 of hubeali 
 			if chapter_index == 21:
-				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c22.json", book, chapter_index)
+				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c22.json")
 			# Hadith 4-9 missing in chapter 190 of hubeali
 			if chapter_index == 189:
-				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c190.json", book, chapter_index)
+				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c190.json")
 
 	if volume.local_index == 6:
 		if book.local_index == 2:
@@ -181,7 +181,7 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 			if chapter_index == 0:
 				book.chapters.insert(86, create_chapter("بَابُ أَلْبَانِ الْإِبِل‏"))
 			if chapter_index == 133:
-				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v6_b6_c134.json", book, chapter_index)
+				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v6_b6_c134.json")
 
 	return (book.chapters[chapter_index], hadith_index)
 	
