@@ -22,9 +22,18 @@ sarwar_translation = Translation(name = "Shaykh Muhammad Sarwar (from Thaqalayn.
 def we_dont_care(html: str) -> bool:
 	return '<body>' in html or '</body>' in html
 
+def sitepath_from_filepath(filepath: str) -> str:
+	return filepath[filepath.index('\\chapter\\')+9:].replace('.html', '').replace('\\', '/')
+
 def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
+	if filepath.endswith('\\0.html'):
+		error_msg = f"Skipping zero file {filepath}"
+		logger.warn(error_msg)
+		SEQUENCE_ERRORS.append(error_msg)
+		return
+
 	verses = chapter.verses
-	heading_count = 0
+	heading_count = len([x for x in verses if x.part_type == PartType.Heading])
 
 	sarwar_exists = next((item for item in chapter.verse_translations if item.id == SARWAR_TRANSLATION_ID), None)
 	if not sarwar_exists:
@@ -61,8 +70,12 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 			hadith_en = get_contents(all_paras[para_index])
 			para_index += 1
 
-
 			if hadith_index >= len(verses) - heading_count:
+				# hubeali rightly splits first chapter in book of inheritance into two 
+				# but thaqalayn.net has it as one chapter, so we'll skip adding ahadith
+				if chapter.path == '/books/al-kafi:7:2:1':
+					break
+				
 				verse = Verse()
 				verse.text = hadith_ar
 				verse.part_type = PartType.Hadith.value
@@ -70,7 +83,7 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 
 				verses.append(verse)
 
-				site_path = filepath[filepath.index('\\chapter\\')+9:-5].replace('\\', '/')
+				site_path = sitepath_from_filepath(filepath)
 				if chapter.crumbs:
 					my_site_path = chapter.crumbs[-1].path
 				else:
@@ -83,9 +96,8 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 				# perhaps use https://github.com/ztane/python-Levenshtein or https://pypi.org/project/jellyfish/
 				verse = verses[hadith_index]
 
-				if verse.part_type == PartType.Heading and hadith_index < len(verses)-1:
+				if verse.part_type == PartType.Heading:
 					hadith_index += 1
-					heading_count += 1
 					verse = verses[hadith_index]
 				
 				if verse.part_type != PartType.Hadith:
@@ -110,7 +122,7 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 			hadith_index += 1
 
 	if hadith_index != len(verses) - heading_count:
-		site_path = filepath[filepath.index('\\chapter\\')+9:-5].replace('\\', '/')
+		site_path = sitepath_from_filepath(filepath)
 		error_msg = f"Sarwar has {hadith_index} hadith but hubeali has {len(verses)} hadith: https://thaqalayn.net/chapter/{site_path} vs https://thaqalayn.netlify.app/#{chapter.crumbs[-1].path}"
 		logger.warn(error_msg)
 		SEQUENCE_ERRORS.append(error_msg)
@@ -183,13 +195,20 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 			if chapter_index == 133:
 				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v6_b6_c134.json")
 
+	if volume.local_index == 7:
+		if book.local_index == 2:
+			if chapter_index == 0:
+				book.chapters.insert(9, create_chapter("بَابُ الْعِلَّةِ فِي أَنَّ السِّهَامَ لَا تَكُونُ أَكْثَرَ مِنْ سِتَّةٍ وَ هُوَ مِنْ كَلَامِ يُونُس‏"))
+			if chapter_index >= 1:
+				chapter_index += 1
+
 	return (book.chapters[chapter_index], hadith_index)
 	
 def add_book_content(book: Chapter, dirname, volume):
-	cfiles = glob.glob(os.path.join(dirname, "*.html"))
+	cfiles = glob.glob(os.path.join(dirname, "*"))
 	for cfile in cfiles:
 		logger.info("Processing file %s", cfile)
-		chapter_index = int(os.path.basename(cfile)[:-5]) - 1
+		chapter_index = int(os.path.basename(cfile).replace('.html', '')) - 1
 
 		(chapter, hadith_index) = get_adjusted_chapter(volume, book, cfile, chapter_index)
 		
