@@ -75,8 +75,10 @@ def write_file(path: str, obj):
 	result.path = path
 	result.index = obj["index"]
 
+	clean_obj = clean_nones(obj)
+
 	with open(ensure_dir(get_dest_path(path)), 'w', encoding='utf-8') as f:
-		json.dump(obj, f, ensure_ascii=False, sort_keys=True) # indent=2, 
+		json.dump(clean_obj, f, ensure_ascii=False, indent=2, sort_keys=True)
 		result.id = f.name
 	
 	return result
