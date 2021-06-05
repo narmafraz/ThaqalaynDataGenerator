@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from app.models.crumb import Crumb
+from app.models.crumb import Crumb, Navigation
 from app.models.enums import Language, PartType
 from app.models.translation import Translation
 from pydantic import BaseModel
@@ -22,6 +22,7 @@ class Verse(BaseModel):
 class Chapter(BaseModel):
 	chapters: List[Chapter] = None
 	crumbs: List[Crumb] = None
+	nav: Navigation = None
 	default_verse_translation_ids: Dict[str, str] = None
 	descriptions: Dict[str, List[str]] = None
 	index: str = None

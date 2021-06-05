@@ -2,7 +2,7 @@ import copy
 import re
 from typing import Dict, List
 
-from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
+from app.models import Chapter, Crumb, Language, Navigation, PartType
 
 CHAPTER_TITLE_PATTERN = re.compile("Chapter (\d+)")
 
@@ -40,6 +40,7 @@ def set_index(chapter: Chapter, indexes: List[int], depth: int) -> List[int]:
 	
 	report_numbering = True
 	sequence = None
+	prev_chapter = None
 	if get_chapters(chapter):
 		chapter_local_index = 0
 		for subchapter in chapter.chapters:
@@ -73,6 +74,14 @@ def set_index(chapter: Chapter, indexes: List[int], depth: int) -> List[int]:
 			crumb.titles = subchapter.titles
 			crumb.path = subchapter.path
 			subchapter.crumbs.append(crumb)
+
+			subchapter.nav = Navigation()
+			if prev_chapter:
+				subchapter.nav.prev = prev_chapter.crumbs[-1]
+				prev_chapter.nav.next = crumb
+			if len(subchapter.crumbs) >= 2:
+				subchapter.nav.up = subchapter.crumbs[-2]
+			prev_chapter = subchapter
 
 			indexes = set_index(subchapter, indexes, depth + 1)
 		chapter.verse_count = indexes[-1] - chapter.verse_start_index
