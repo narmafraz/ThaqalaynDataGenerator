@@ -34,6 +34,7 @@ def insert_chapters_list(chapter):
 	for subchapter in chapter_data['chapters']:
 		subchapter.pop('chapters', None)
 		subchapter.pop('verses', None)
+		subchapter.pop('nav', None)
 
 	obj_in = {
 		"index": index_from_path(chapter_data['path']),
