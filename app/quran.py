@@ -16,8 +16,8 @@ from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOOK_INDEX = "quran"
-BOOK_PATH = "/books/" + BOOK_INDEX
+BOOK_INDEX = 1
+BOOK_PATH = "/books/quran"
 
 def get_sajda_data(quran):
 	sajdas = {}
@@ -173,7 +173,7 @@ def build_quran() -> Chapter:
 		Language.AR.value: "القرآن الكريم"
 	}
 	q.descriptions = {
-		Language.EN.value: "Was revealed to the prophet SAW"
+		Language.EN.value: ["Was revealed to the prophet SAW"]
 	}
 	q.chapters=chapters
 	q.verse_translations = verse_translations

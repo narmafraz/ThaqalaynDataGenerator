@@ -23,8 +23,8 @@ from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOOK_INDEX = "al-kafi"
-BOOK_PATH = "/books/" + BOOK_INDEX
+BOOK_INDEX = 2
+BOOK_PATH = "/books/al-kafi"
 
 TITLE_NUMBERING = re.compile(r' \(\d+\)')
 
