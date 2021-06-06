@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from app.models.crumb import Crumb, Navigation
 from app.models.enums import Language, PartType
@@ -10,23 +10,24 @@ from pydantic import BaseModel
 
 class Verse(BaseModel):
 	chain_text: str = None
+	gradings: List[str] = None
 	index: int = None
 	local_index: int = None
 	part_type: PartType = None
 	path: str = None
+	refs: Dict[str, Set[str]] = None
 	sajda_type: str = None
 	text: List[str] = None
-	gradings: List[str] = None
 	translations: Dict[str, List[str]] = None
 
 class Chapter(BaseModel):
 	chapters: List[Chapter] = None
 	crumbs: List[Crumb] = None
-	nav: Navigation = None
 	default_verse_translation_ids: Dict[str, str] = None
 	descriptions: Dict[str, List[str]] = None
-	index: str = None
+	index: int = None
 	local_index: int = None
+	nav: Navigation = None
 	order: int = None
 	part_type: PartType = None
 	path: str = None
