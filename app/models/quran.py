@@ -15,7 +15,7 @@ class Verse(BaseModel):
 	local_index: int = None
 	part_type: PartType = None
 	path: str = None
-	refs: Dict[str, Set[str]] = None
+	relations: Dict[str, Set[str]] = None
 	sajda_type: str = None
 	text: List[str] = None
 	translations: Dict[str, List[str]] = None

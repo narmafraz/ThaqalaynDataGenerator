@@ -29,14 +29,14 @@ def update_refs(quran: Chapter, hadith: Verse, quran_refs: Set):
         try:
             sura = quran.chapters[sura_no - 1]
             verse = sura.verses[verse_no - 1]
-            if not verse.refs:
-                verse.refs = { "Mentioned In": set() }
-            verse.refs["Mentioned In"].add(hadith.path)
+            if not verse.relations:
+                verse.relations = { "Mentioned In": set() }
+            verse.relations["Mentioned In"].add(hadith.path)
             qrefs.add(f"/books/quran:{sura_no}:{verse_no}")
         except IndexError:
             logger.warn(f"Quran ref does not exist. Hadith {hadith.path} ref {sura_no}:{verse_no}")
     if qrefs:
-        hadith.refs = {'Mentions': qrefs }
+        hadith.relations = {'Mentions': qrefs }
 
 def process_chapter_verses(quran: Chapter, chapter: Chapter):
     for hadith in chapter.verses:
