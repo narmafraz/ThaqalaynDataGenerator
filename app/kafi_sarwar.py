@@ -253,6 +253,6 @@ def add_kafi_sarwar():
 
 	set_index(kafi, [0, 0, 0, 0], 0)
 	insert_chapter(kafi)
-	# write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
+	write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
 
 	pprint(SEQUENCE_ERRORS, width=240)
