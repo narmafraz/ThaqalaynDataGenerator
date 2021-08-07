@@ -75,7 +75,8 @@ def ensure_dir(file_path):
 def write_file(path: str, obj):
 	result = InsertedObj()
 	result.path = path
-	result.index = obj["index"]
+	if 'index' in obj:
+		result.index = obj["index"]
 
 	clean_obj = clean_nones(obj)
 
@@ -91,6 +92,13 @@ def load_chapter(path: str) -> Chapter :
 		if 'data' in json_chapter:
 			json_chapter = json_chapter['data']
 		return Chapter(**json_chapter)
+
+def load_json(path: str) :
+	with open(ensure_dir(get_dest_path(path)), 'r', encoding='utf-8') as f:
+		return json.load(f)
+
+def delete_file(path: str) :
+	os.remove(get_dest_path(path))
 
 def clean_nones(value):
 	"""
