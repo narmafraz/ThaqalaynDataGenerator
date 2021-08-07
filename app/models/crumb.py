@@ -1,6 +1,5 @@
 from typing import Dict, List, Optional
 
-from app.models.enums import PartType
 from pydantic import BaseModel
 
 
