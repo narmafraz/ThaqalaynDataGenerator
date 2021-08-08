@@ -30,7 +30,7 @@ def init_books():
 		"chapters": [
 			{
 				"index": QURAN_INDEX,
-				"path": BOOK_PATH + QURAN_INDEX,
+				"path": BOOK_PATH + 'quran',
 				"titles": {
 					Language.EN.value: "The Holy Quran",
 					Language.AR.value: "القرآن الكريم"
@@ -38,7 +38,7 @@ def init_books():
 			},
 			{
 				"index": KAFI_INDEX,
-				"path": BOOK_PATH + KAFI_INDEX,
+				"path": BOOK_PATH + 'al-kafi',
 				"titles": {
 					Language.EN.value: "Al-Kafi",
 					Language.AR.value: "الكافي"
