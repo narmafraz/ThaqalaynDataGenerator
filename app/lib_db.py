@@ -98,7 +98,9 @@ def load_json(path: str) :
 		return json.load(f)
 
 def delete_file(path: str) :
-	os.remove(get_dest_path(path))
+	filename = get_dest_path(path)
+	if os.path.exists(filename):
+		os.remove(filename)
 
 def clean_nones(value):
 	"""
