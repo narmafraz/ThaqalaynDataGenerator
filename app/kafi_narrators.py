@@ -11,38 +11,53 @@ from app.lib_db import (delete_file, insert_chapter, load_chapter, load_json,
 from app.lib_model import SEQUENCE_ERRORS, get_chapters, get_verses
 from app.models import Chapter, Language, PartType, Translation, Verse
 from app.models.people import ChainVerses, Narrator, NarratorIndex
+from app.models.quran import NarratorChain
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SPAN_PATTERN = re.compile(u"<\/?span[^>]*>")
-NARRATORS_PATTERN = re.compile(u"^(.* (?:عَنْ|عَنِ|إِلَى) )*(.*?) قَالَ ")
-NARRATOR_SPLIT_PATTERN = re.compile(u" (?:عَنْ|عَنِ|إِلَى) ")
-SKIP_PREFIX_PATTERN = re.compile(u"")
-NARRATORS_TEXT_PATTERN = re.compile(u"^(.*?) قَالَ")
+# History:
+# 1st commit detects 10455 narrators
+# 2nd commit detects 6222 narrators
+# Revisit:
+# http://localhost:4200/#/books/al-kafi:1:3:1#h5
+
+SPAN_PATTERN = re.compile(u"</?span[^>]*>")
+NARRATOR_SPLIT_PATTERN = re.compile(u" (?:وَ|جَمِيعاً عَنْ|جَمِيعاً عَنِ|عَنْ|عَنِ|إِلَى|قَالَ حَدَّثَنِي|عَمَّنْ|مِمَّنْ|مِنْهُمْ) ")
+SKIP_PREFIX_PATTERN = re.compile(u"^([\\d\\s-]*|أخْبَرَنَا|أَخْبَرَنَا)* ")
+NARRATORS_TEXT_PATTERN = re.compile(u"(.*?) قَالَ")
+NARRATORS_TEXT_CONTINUE_PATTERN = re.compile(u"\\s*(حَدَّثَنِي)\\s")
 
 def extract_narrators(hadith: Verse) -> List[str]:
     narrators = []
     first_line = hadith.text[0]
-    all_matches = NARRATORS_PATTERN.match(first_line)
-    if all_matches:
-        mg = all_matches.groups()
-        multi_narrator = mg[0]
-        last_narrator = mg[1]
-        if multi_narrator:
-            for split_narrator in NARRATOR_SPLIT_PATTERN.split(multi_narrator):
-                if split_narrator:
-                    narrators.append(split_narrator)
-        narrators.append(last_narrator)
 
-        end_index = all_matches.end(0)
+    # Step 1: Extract from beginning to the first qaal
+    narrators_text_match = NARRATORS_TEXT_PATTERN.match(first_line)
+    if narrators_text_match:
+        while narrators_text_match:
+            end_index = narrators_text_match.end(0)
+            if NARRATORS_TEXT_CONTINUE_PATTERN.match(first_line, end_index):
+                narrators_text_match = NARRATORS_TEXT_PATTERN.match(first_line, end_index)
+            else:
+                break
         narrators_text = first_line[:end_index]
         hadith_text = first_line[end_index:]
         hadith.text[0] = hadith_text
-        hadith.text.insert(0, narrators_text)
+        if not hadith.narrator_chain:
+            hadith.narrator_chain = NarratorChain()
+            hadith.narrator_chain.parts = []
+        hadith.narrator_chain.text = narrators_text
+
+        # Step 2: trim unwanted prefixes
+        narrators_with_prefix = narrators_text[:-6]
+        if narrators_with_prefix:
+            narrators_without_prefix = SKIP_PREFIX_PATTERN.sub('', narrators_with_prefix)
+            # Step 3: split the text to get narrators
+            narrators = NARRATOR_SPLIT_PATTERN.split(narrators_without_prefix)
     else:
         logger.warn("Could not find narrators for %s", hadith.path)
-    
+
     return narrators
 
 def assign_narrator_id(narrators, narrator_index: NarratorIndex):
@@ -104,7 +119,11 @@ def process_chapter_verses(chapter: Chapter, narrator_index, narrators):
             logger.warn("No Arabic text found in %s", hadith.path)
             continue
         hadith.text[0] = SPAN_PATTERN.sub("", hadith.text[0])
-        narrator_names = extract_narrators(hadith)
+        try:
+            narrator_names = extract_narrators(hadith)
+        except Exception as e:
+            logger.error('Ran into exception with hadith at ' + hadith.path)
+            raise e
         narrator_ids = assign_narrator_id(narrator_names, narrator_index)
         add_narrator_links(hadith, narrator_ids, narrator_index)
         update_narrators(hadith, narrator_ids, narrators, narrator_index)
