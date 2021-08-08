@@ -66,6 +66,6 @@ def link_quran_kafi():
 
     insert_chapter(kafi)
     insert_chapter(quran) 
-    # write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
-    # write_file("/books/complete/quran", jsonable_encoder(quran))
+    write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
+    write_file("/books/complete/quran", jsonable_encoder(quran))
 
