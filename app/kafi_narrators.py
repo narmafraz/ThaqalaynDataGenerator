@@ -11,7 +11,7 @@ from app.lib_db import (delete_file, insert_chapter, load_chapter, load_json,
 from app.lib_model import SEQUENCE_ERRORS, get_chapters, get_verses
 from app.models import Chapter, Language, PartType, Translation, Verse
 from app.models.people import ChainVerses, Narrator, NarratorIndex
-from app.models.quran import NarratorChain
+from app.models.quran import NarratorChain, SpecialText
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -76,11 +76,34 @@ def assign_narrator_id(narrators, narrator_index: NarratorIndex):
     return narrator_ids
 
 def add_narrator_links(hadith: Verse, narrator_ids, narrator_index: NarratorIndex):
-    line = hadith.text[0]
+    if not hadith.narrator_chain or not hadith.narrator_chain.text:
+        return
+    
+    line = hadith.narrator_chain.text
     for id in narrator_ids:
         narrator = narrator_index.id_name[id]
-        line = line.replace(narrator, f"<a href=\"/people/narrators/{id}\">{narrator}</a>")
-    hadith.text[0] = line
+        beforeafter = line.split(narrator, 1)
+        if len(beforeafter) != 2:
+            raise Exception("Could not split " + hadith.path + " into two parts when splitting by " + narrator)
+        before = beforeafter[0]
+        line = beforeafter[1]
+
+        if before:
+            beforePart = SpecialText()
+            beforePart.kind = "plain"
+            beforePart.text = before
+            hadith.narrator_chain.parts.append(beforePart)
+
+        narratorPart = SpecialText()
+        narratorPart.kind = "narrator"
+        narratorPart.text = narrator
+        narratorPart.path = f"/people/narrators/{id}"
+        hadith.narrator_chain.parts.append(narratorPart)
+    
+    lastPart = SpecialText()
+    lastPart.kind = "plain"
+    lastPart.text = line
+    hadith.narrator_chain.parts.append(lastPart)
 
 def getCombinations(lst) -> Dict[int, List[List[int]]]:
     result = {}
@@ -121,12 +144,12 @@ def process_chapter_verses(chapter: Chapter, narrator_index, narrators):
         hadith.text[0] = SPAN_PATTERN.sub("", hadith.text[0])
         try:
             narrator_names = extract_narrators(hadith)
+            narrator_ids = assign_narrator_id(narrator_names, narrator_index)
+            add_narrator_links(hadith, narrator_ids, narrator_index)
+            update_narrators(hadith, narrator_ids, narrators, narrator_index)
         except Exception as e:
             logger.error('Ran into exception with hadith at ' + hadith.path)
             raise e
-        narrator_ids = assign_narrator_id(narrator_names, narrator_index)
-        add_narrator_links(hadith, narrator_ids, narrator_index)
-        update_narrators(hadith, narrator_ids, narrators, narrator_index)
 
 def process_chapter(kafi: Chapter, narrator_index, narrators: Dict[int, Narrator]):
     chapters = get_chapters(kafi)

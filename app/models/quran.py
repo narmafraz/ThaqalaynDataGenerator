@@ -8,8 +8,17 @@ from app.models.translation import Translation
 from pydantic import BaseModel
 
 
+class SpecialText(BaseModel):
+	kind: str = None
+	text: str = None
+	path: str = None
+
+class NarratorChain(BaseModel):
+	text: str = None
+	parts: List[SpecialText] = None
+
 class Verse(BaseModel):
-	chain_text: str = None
+	narrator_chain: NarratorChain = None
 	gradings: List[str] = None
 	index: int = None
 	local_index: int = None
