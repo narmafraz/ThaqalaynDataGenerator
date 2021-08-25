@@ -19,13 +19,14 @@ logger = logging.getLogger(__name__)
 # History:
 # 1st commit detects 10455 narrators
 # 2nd commit detects 6222 narrators
+# 3rd commit detects 5744 narrators
 # Revisit:
 # http://localhost:4200/#/books/al-kafi:1:3:1#h5
 
 SPAN_PATTERN = re.compile(u"</?span[^>]*>")
-NARRATOR_SPLIT_PATTERN = re.compile(u" (?:وَ|جَمِيعاً عَنْ|جَمِيعاً عَنِ|عَنْ|عَنِ|إِلَى|قَالَ حَدَّثَنِي|عَمَّنْ|مِمَّنْ|مِنْهُمْ) ")
-SKIP_PREFIX_PATTERN = re.compile(u"^([\\d\\s-]*|أخْبَرَنَا|أَخْبَرَنَا)* ")
-NARRATORS_TEXT_PATTERN = re.compile(u"(.*?) قَالَ")
+NARRATOR_SPLIT_PATTERN = re.compile(u" (?:وَ|جَمِيعاً عَنْ|جَمِيعاً عَنِ|عَنْ|عَنِ|إِلَى|قَالَ حَدَّثَنِي|عَمَّنْ|مِمَّنْ|مِنْهُمْ|رَفَعَهُ عَنْ|رَفَعَهُ إِلَى|فِي حَدِيثِ|رَفَعَهُ أَنَّ) ")
+SKIP_PREFIX_PATTERN = re.compile(u"^([\\d\\s-]*|أخْبَرَنَا|أَخْبَرَنَا|وَ)* ")
+NARRATORS_TEXT_PATTERN = re.compile(u"(.*?) (قَالَ|فِي هَذِهِ الْآيَةِ|يَرْفَعُهُ قَالَ|رَفَعَهُ قَالَ|فَكَانَ مِنْ سُؤَالِهِ أَنْ قَالَ|فِي قَوْلِ|فِي قَوْلِهِ)")
 NARRATORS_TEXT_CONTINUE_PATTERN = re.compile(u"\\s*(حَدَّثَنِي)\\s")
 
 def extract_narrators(hadith: Verse) -> List[str]:
@@ -36,6 +37,7 @@ def extract_narrators(hadith: Verse) -> List[str]:
     narrators_text_match = NARRATORS_TEXT_PATTERN.match(first_line)
     if narrators_text_match:
         while narrators_text_match:
+            ending_phrase_len = len(narrators_text_match.groups()[-1]) + 1
             end_index = narrators_text_match.end(0)
             if NARRATORS_TEXT_CONTINUE_PATTERN.match(first_line, end_index):
                 narrators_text_match = NARRATORS_TEXT_PATTERN.match(first_line, end_index)
@@ -50,7 +52,7 @@ def extract_narrators(hadith: Verse) -> List[str]:
         hadith.narrator_chain.text = narrators_text
 
         # Step 2: trim unwanted prefixes
-        narrators_with_prefix = narrators_text[:-6]
+        narrators_with_prefix = narrators_text[:-ending_phrase_len]
         if narrators_with_prefix:
             narrators_without_prefix = SKIP_PREFIX_PATTERN.sub('', narrators_with_prefix)
             # Step 3: split the text to get narrators
