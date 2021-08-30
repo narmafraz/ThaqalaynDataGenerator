@@ -20,29 +20,41 @@ logger = logging.getLogger(__name__)
 # 1st commit detects 10455 narrators
 # 2nd commit detects 6222 narrators
 # 3rd commit detects 5744 narrators
+# 4th commit detects 4860 narrators
 # Revisit:
 # http://localhost:4200/#/books/al-kafi:1:3:1#h5
+# http://localhost:4200/#/books/al-kafi:5:1:4#h1 (first text is weird)
 
 SPAN_PATTERN = re.compile(u"</?span[^>]*>")
-NARRATOR_SPLIT_PATTERN = re.compile(u" (?:وَ|جَمِيعاً عَنْ|جَمِيعاً عَنِ|عَنْ|عَنِ|إِلَى|قَالَ حَدَّثَنِي|عَمَّنْ|مِمَّنْ|مِنْهُمْ|رَفَعَهُ عَنْ|رَفَعَهُ إِلَى|فِي حَدِيثِ|رَفَعَهُ أَنَّ) ")
+NARRATOR_SPLIT_PATTERN = re.compile(u" (?:عَمَّنْ سَمِعَ|وَ سَمِعْتُ|وَ|جَمِيعاً عَنْ|جَمِيعاً عَنِ|عَنْ|عَنِ|إِلَى|قَالَ حَدَّثَنِي|عَمَّنْ|مِمَّنْ|مِنْهُمْ|رَفَعَهُ عَنْ|رَفَعَهُ إِلَى|فِي حَدِيثِ|رَفَعَهُ أَنَّ|رَفَعَهُ) ")
 SKIP_PREFIX_PATTERN = re.compile(u"^([\\d\\s-]*|أخْبَرَنَا|أَخْبَرَنَا|وَ)* ")
-NARRATORS_TEXT_PATTERN = re.compile(u"(.*?) (قَالَ|فِي هَذِهِ الْآيَةِ|يَرْفَعُهُ قَالَ|رَفَعَهُ قَالَ|فَكَانَ مِنْ سُؤَالِهِ أَنْ قَالَ|فِي قَوْلِ|فِي قَوْلِهِ)")
+NARRATORS_TEXT_PATTERN = re.compile(u"(.*?) (قَالَ|فِي هَذِهِ الْآيَةِ|يَرْفَعُهُ قَالَ|رَفَعَهُ قَالَ|فَكَانَ مِنْ سُؤَالِهِ أَنْ قَالَ|فِي قَوْلِ|فِي قَوْلِهِ|فِي|أَنَّ|يَقُولُ|فَقَالَ|مِثْلَهُ)")
+NARRATORS_TEXT_FAILOVER_PATTERN = re.compile(u"(.*?\\( عليهم? السلام \\))")
 NARRATORS_TEXT_CONTINUE_PATTERN = re.compile(u"\\s*(حَدَّثَنِي)\\s")
 
+NARRATIONS_WITHOUT_NARRATORS = 0
+
 def extract_narrators(hadith: Verse) -> List[str]:
+    global NARRATIONS_WITHOUT_NARRATORS
     narrators = []
     first_line = hadith.text[0]
 
     # Step 1: Extract from beginning to the first qaal
     narrators_text_match = NARRATORS_TEXT_PATTERN.match(first_line)
+    if not narrators_text_match:
+        narrators_text_match = NARRATORS_TEXT_FAILOVER_PATTERN.match(first_line)
     if narrators_text_match:
         while narrators_text_match:
-            ending_phrase_len = len(narrators_text_match.groups()[-1]) + 1
+            if len(narrators_text_match.groups()) > 1:
+                ending_phrase_len = len(narrators_text_match.groups()[-1]) + 1
+            else: # in case of failover pattern we don't have anything to remove
+                ending_phrase_len = 0
             end_index = narrators_text_match.end(0)
             if NARRATORS_TEXT_CONTINUE_PATTERN.match(first_line, end_index):
                 narrators_text_match = NARRATORS_TEXT_PATTERN.match(first_line, end_index)
             else:
                 break
+        # Modify first line to only contain narrators
         narrators_text = first_line[:end_index]
         hadith_text = first_line[end_index:]
         hadith.text[0] = hadith_text
@@ -51,14 +63,18 @@ def extract_narrators(hadith: Verse) -> List[str]:
             hadith.narrator_chain.parts = []
         hadith.narrator_chain.text = narrators_text
 
-        # Step 2: trim unwanted prefixes
-        narrators_with_prefix = narrators_text[:-ending_phrase_len]
+        # Step 2: trim unwanted prefixes/suffix
+        if ending_phrase_len > 0:
+            narrators_with_prefix = narrators_text[:-ending_phrase_len]
+        else: # in case of failover pattern we don't have anything to remove
+            narrators_with_prefix = narrators_text
         if narrators_with_prefix:
             narrators_without_prefix = SKIP_PREFIX_PATTERN.sub('', narrators_with_prefix)
             # Step 3: split the text to get narrators
             narrators = NARRATOR_SPLIT_PATTERN.split(narrators_without_prefix)
     else:
-        logger.warn("Could not find narrators for %s", hadith.path)
+        logger.warning("Could not find narrators for %s", hadith.path)
+        NARRATIONS_WITHOUT_NARRATORS += 1
 
     return narrators
 
@@ -197,9 +213,9 @@ def load_narrator_index() -> NarratorIndex:
         narrator_index = {}
 
     narrators = NarratorIndex() 
-    narrators.id_name = narrator_index
-    narrators.name_id = {v: k for k, v in narrator_index.items()}
-    narrators.last_id = max(narrator_index.keys(), default=0)
+    narrators.id_name = {int(k):v for (k,v) in narrator_index.items()}
+    narrators.name_id = {v: k for k, v in narrators.id_name.items()}
+    narrators.last_id = max(narrators.id_name.keys(), default=0)
 
     return narrators
 
@@ -210,6 +226,7 @@ def insert_narrators(narrators: Dict[int, Narrator]):
             "kind": "person_content",
             'data': jsonable_encoder(narrator)
         }
+        logger.info(f"Inserting /people/narrators/{narrator.index}")
         write_file(f"/people/narrators/{narrator.index}", obj)
 
 def insert_narrator_index(narrator_index: NarratorIndex):
@@ -222,12 +239,13 @@ def insert_narrator_index(narrator_index: NarratorIndex):
 
 def kafi_narrators():
     # reset narrators
-    delete_file("/people/narrators/index")
+    # delete_file("/people/narrators/index")
     narrator_index = load_narrator_index()
     narrators = {}
 
     kafi = load_chapter("/books/complete/al-kafi")
     process_chapter(kafi, narrator_index, narrators)
+    print(f"Number of narrations without narrators: {NARRATIONS_WITHOUT_NARRATORS}")
 
     insert_narrators(narrators)
     insert_narrator_index(narrator_index)
