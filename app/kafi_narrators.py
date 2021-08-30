@@ -6,7 +6,7 @@ from typing import Dict, List, Set
 from fastapi.encoders import jsonable_encoder
 
 from app.lib_bs4 import get_contents, is_rtl_tag
-from app.lib_db import (delete_file, insert_chapter, load_chapter, load_json,
+from app.lib_db import (delete_folder, insert_chapter, load_chapter, load_json,
                         write_file)
 from app.lib_model import SEQUENCE_ERRORS, get_chapters, get_verses
 from app.models import Chapter, Language, PartType, Translation, Verse
@@ -239,7 +239,7 @@ def insert_narrator_index(narrator_index: NarratorIndex):
 
 def kafi_narrators():
     # reset narrators
-    # delete_file("/people/narrators/index")
+    delete_folder("/people/narrators")
     narrator_index = load_narrator_index()
     narrators = {}
 

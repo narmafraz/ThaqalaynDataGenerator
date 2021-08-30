@@ -2,6 +2,7 @@ import inspect
 import json
 import logging
 import os
+import shutil
 
 import jsons
 from fastapi.encoders import jsonable_encoder
@@ -103,6 +104,13 @@ def delete_file(path: str) :
 	filename = get_dest_path(path)
 	if os.path.exists(filename):
 		os.remove(filename)
+
+def delete_folder(path: str) :
+	if path.startswith("/"):
+		path = path[1:]
+	filename = os.path.join(DESTINATION_DIR, path)
+	if os.path.exists(filename):
+		shutil.rmtree(filename)
 
 def clean_nones(value):
 	"""
