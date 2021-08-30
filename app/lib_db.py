@@ -30,12 +30,14 @@ def insert_chapter(chapter: Chapter):
 		insert_chapter_content(chapter)
 
 def insert_chapters_list(chapter):
-	chapter_data = jsonable_encoder(chapter)
-	for subchapter in chapter_data['chapters']:
-		subchapter.pop('chapters', None)
-		subchapter.pop('verses', None)
-		subchapter.pop('crumbs', None)
-		subchapter.pop('nav', None)
+	chapter_data = jsonable_encoder(chapter,
+		exclude={'chapters': {'__all__': {
+			'chapters',
+			'verses',
+			'crumbs',
+			'nav'
+		}}}
+	)
 
 	obj_in = {
 		"index": index_from_path(chapter_data['path']),
