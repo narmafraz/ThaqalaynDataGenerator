@@ -206,19 +206,6 @@ def load_narrator(narrator_id: int, narrator_index: NarratorIndex, narrators: Di
 
     return narrator
 
-def load_narrator_index() -> NarratorIndex:
-    try:
-        narrator_index = load_json("/people/narrators/index")['data']
-    except:
-        narrator_index = {}
-
-    narrators = NarratorIndex() 
-    narrators.id_name = {int(k):v for (k,v) in narrator_index.items()}
-    narrators.name_id = {v: k for k, v in narrators.id_name.items()}
-    narrators.last_id = max(narrators.id_name.keys(), default=0)
-
-    return narrators
-
 def insert_narrators(narrators: Dict[int, Narrator]):
     for narrator in narrators.values():
         obj = {
@@ -229,11 +216,37 @@ def insert_narrators(narrators: Dict[int, Narrator]):
         logger.info(f"Inserting /people/narrators/{narrator.index}")
         write_file(f"/people/narrators/{narrator.index}", obj)
 
-def insert_narrator_index(narrator_index: NarratorIndex):
+def load_narrator_index() -> NarratorIndex:
+    try:
+        narrator_index = load_json("/people/narrators/index")['data']
+    except:
+        narrator_index = {}
+
+    narrators = NarratorIndex() 
+    narrators.id_name = {int(k):v['titles']['ar'] for (k,v) in narrator_index.items()}
+    narrators.name_id = {v: k for k, v in narrators.id_name.items()}
+    narrators.last_id = max(narrators.id_name.keys(), default=0)
+
+    return narrators
+
+def compose_narrator_metadata(name: str, narrator: Narrator) -> dict:
+    result = {}
+    result['titles'] = {}
+    result['titles'][Language.AR.value] = name
+    two_chains = [x for x in narrator.subchains.values() if len(x.narrator_ids) == 2]
+    narrated_to = [x for x in two_chains if x.narrator_ids[0] == narrator.index]
+    narrated_from = [x for x in two_chains if x.narrator_ids[1] == narrator.index]
+    result['narrations'] = len(narrator.verse_paths)
+    result['narrated_from'] = len(narrated_from)
+    result['narrated_to'] = len(narrated_to)
+    return result
+
+def insert_narrator_index(narrator_index: NarratorIndex, narrators: Dict[int, Narrator]):
+    narrators_with_metadata = {id:compose_narrator_metadata(name, narrators[id]) for (id, name) in narrator_index.id_name.items()}
     obj = {
         "index": 'people',
         "kind": "person_list",
-        'data': jsonable_encoder(narrator_index.id_name)
+        'data': narrators_with_metadata
     }
     write_file("/people/narrators/index", obj)
 
@@ -248,7 +261,7 @@ def kafi_narrators():
     print(f"Number of narrations without narrators: {NARRATIONS_WITHOUT_NARRATORS}")
 
     insert_narrators(narrators)
-    insert_narrator_index(narrator_index)
+    insert_narrator_index(narrator_index, narrators)
     insert_chapter(kafi)
     # write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
 
