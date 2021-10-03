@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Narrators Network</title>
+
+    <style type="text/css">
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            font: 10pt arial;
+            /* overflow: hidden; */
+        }
+
+        .box {
+            display: flex;
+            flex-flow: column;
+            height: 100%;
+        }
+
+        .box .row.header {
+            padding-left: 15px;
+            flex: 0 1 auto;
+            /* The above is shorthand for:
+                flex-grow: 0,
+                flex-shrink: 1,
+                flex-basis: auto
+            */
+        }
+
+        .box .row.content {
+            flex: 1 1 auto;
+        }
+
+        #mynetwork {
+            height: 90vh;
+            border: 1px solid lightgray;
+        }
+    </style>
+
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis-network.min.js"></script>
+
+    <script type="text/javascript">
+        var nodes = null;
+        var edges = null;
+        var network = null;
+
+        function draw() {
+            // create people.
+            // value corresponds with the age of the person
+            nodes = %%nodes%%;
+
+            // create connections between people
+            // value corresponds with the amount of contact between two people
+            edges = %%edges%%;
+
+            // Instantiate our network object.
+            var container = document.getElementById("mynetwork");
+            var data = {
+                nodes: nodes,
+                edges: edges,
+            };
+            var options = {
+                nodes: {
+                    shape: "dot",
+                },
+                edges: {
+                    font: {
+                        align: "middle"
+                    },
+                    scaling: {
+                        label: {
+                            enabled: false
+                        }
+                    }
+                }
+            };
+            network = new vis.Network(container, data, options);
+        }
+    </script>
+</head>
+
+<body onload="draw()">
+
+    <div class="box">
+        <div class="row header">
+            <p>
+                Nodes size = number of narrations in al-Kafi; 
+                Edges weight = number of narrations between the narrators in 
+                <a href="https://thaqalayn.netlify.app/#/books/al-kafi:1:4" target="_blank">&#x643;&#x650;&#x62A;&#x64E;&#x627;&#x628;&#x64F; &#x627;&#x644;&#x652;&#x62D;&#x64F;&#x62C;&#x651;&#x64E;&#x629;&#x650;</a> 
+                in the first 30 chapters;
+                Node labels contain numbers for "[narrations passed on, narrations received]"
+            </p>
+        </div>
+        <div class="row content" id="mynetwork">
+        </div>
+</body>
+
+</html>
