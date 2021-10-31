@@ -2,6 +2,7 @@
 <html>
 
 <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <title>Narrators Network</title>
 
     <style type="text/css">
@@ -9,41 +10,26 @@
         body {
             height: 100%;
             margin: 0;
-            font: 10pt arial;
-            /* overflow: hidden; */
         }
 
-        .box {
-            display: flex;
-            flex-flow: column;
-            height: 100%;
-        }
-
-        .box .row.header {
+        .row.header {
             padding-left: 15px;
-            flex: 0 1 auto;
-            /* The above is shorthand for:
-                flex-grow: 0,
-                flex-shrink: 1,
-                flex-basis: auto
-            */
-        }
-
-        .box .row.content {
-            flex: 1 1 auto;
-            display: flex;
-            flex-flow: row;
         }
 
         #mynetwork {
-            height: 90vh;
-            flex: 1 1 auto;
+            height: 80vh;
             border: 1px solid lightgray;
         }
 
-        #meta {
-            flex: 0 1 auto;
-            overflow-y: scroll;
+        .gradient {
+            width: 100%;
+            height: 20px;
+            background: linear-gradient(to right, %%gradients%%
+            );
+        }
+
+        #removed_narrators {
+          font-size: 120%;
         }
     </style>
 
@@ -52,21 +38,31 @@
     <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/tabulator/4.9.3/js/tabulator.min.js"></script>
     
     <script type="text/javascript">
-        var nodes = null;
-        var edges = null;
+        // create people.
+        // value corresponds with the number of edges
+        var nodes = %%nodes%%;
+
+        // create connections between people
+        // value corresponds with the amount of contact between two people
+        var edges = %%edges%%;
+
+        var hadithdata = %%hadithdata%%;
+
+        var narratornarrationsdata = %%narratornarrationsdata%%;
+
+        var imamnamesdata = %%imamnamesdata%%;
+
+        var hadithtable = null;
         var network = null;
 
+        function updateAhadith(nodes) {
+            arrayofarrays = nodes.map(id => narratornarrationsdata[id]);
+            arrayofnarrationids = [].concat.apply([], arrayofarrays);
+            newdata = arrayofnarrationids.map(id => hadithdata[id])
+            hadithtable.replaceData(newdata);
+        }
+
         function draw() {
-            //define data array
-            var tabledata = %%tabledata%%
-            // create people.
-            // value corresponds with the age of the person
-            nodes = %%nodes%%;
-
-            // create connections between people
-            // value corresponds with the amount of contact between two people
-            edges = %%edges%%;
-
             // Instantiate our network object.
             var container = document.getElementById("mynetwork");
             var data = {
@@ -89,32 +85,79 @@
                 }
             };
             network = new vis.Network(container, data, options);
-
-            var table = new Tabulator("#extras", {
-                data:tabledata, //assign data to table
-                autoColumns:true, //create columns from data field names
+            network.on("click", function (params) {
+                updateAhadith(params.nodes);
+                // document.getElementById("eventSpanContent").innerText = JSON.stringify(
+                // params,
+                // null,
+                // 4
+                // );
+                console.log(
+                "click event, getNodeAt returns: " +
+                    this.getNodeAt(params.pointer.DOM)
+                );
             });
+
+            hadithtable = new Tabulator("#ahadith", {
+                data:[], //assign data to table
+                textDirection:"rtl",
+                columns:[                 //define the table columns
+                    {title:"Text", field:"text"},
+                    {title:"Chain", field:"chain"},
+                    {title:"Path", field:"path", formatter:"link", formatterParams:{urlPrefix:"https://thaqalayn.netlify.app/#", target:"_blank"}},
+                ],
+            });
+            var table = new Tabulator("#allgraphdata", {
+                data:nodes, //assign data to table
+                columns:[                 //define the table columns
+                    {title:"Name", field:"label", formatter:function(cell, formatterParams, onRendered){
+                        //cell - the cell component
+                        //formatterParams - parameters set for the column
+                        //onRendered - function to call when the formatter has been rendered
+
+                        var val = cell.getValue();
+                        return val.substring( 0, val.indexOf( "\n[" ) ); //return the contents of the cell;
+                    }},
+                    {title:"Average distance to Imam in chains", field:"m"},
+                    {title:"Colour", field:"color", formatter:"color"},
+                    {title:"Narrations passed on", field:"fro"},
+                    {title:"Narrations received", field:"to"},
+                    {title:"Node Size", field:"value"},
+                    {title:"ID", field:"id"},
+                ],
+                pagination:"local",       //paginate the data
+                paginationSize:10,         //allow 10 rows per page of data
+                textDirection:"rtl",
+            });
+
+            var nHTML = '';
+            imamnamesdata.forEach(function(item) {
+                nHTML += '<li>' + item + '</li>';
+            });
+            document.getElementById("removed_narrators").innerHTML = '<ol>' + nHTML + '</ol>'
         }
     </script>
 </head>
 
 <body onload="draw()">
 
-    <div class="box">
-        <div class="row header">
-            <p>
-                Nodes size = number of narrations in al-Kafi; 
-                Edges weight = number of narrations between the narrators in 
-                <a href="https://thaqalayn.netlify.app/#/books/al-kafi:1:4" target="_blank">&#x643;&#x650;&#x62A;&#x64E;&#x627;&#x628;&#x64F; &#x627;&#x644;&#x652;&#x62D;&#x64F;&#x62C;&#x651;&#x64E;&#x629;&#x650;</a> 
-                in the first 30 chapters;
-                Node labels contain numbers for "[narrations passed on, narrations received]"
-            </p>
-        </div>
-        <div class="row content">
-            <div id="mynetwork"></div>
-            <div id="meta"></div>
-        </div>
-        <div id="extras"></div>
+    <div id="mynetwork"></div>
+    <h1>Data associated to selected node/edge</h1>
+    <div id="ahadith"></div>
+    <h1>All data used to generate the graph</h1>
+    <div class="row header">
+        <p>
+            Edges weight = number of narrations between the narrators in 
+            <a href="https://thaqalayn.netlify.app/#/books/al-kafi:1:4" target="_blank">&#x643;&#x650;&#x62A;&#x64E;&#x627;&#x628;&#x64F; &#x627;&#x644;&#x652;&#x62D;&#x64F;&#x62C;&#x651;&#x64E;&#x629;&#x650;</a> 
+            between chapters %%START_CHAPTER%% and %%END_CHAPTER%% (inclusive);
+            Node labels contain numbers for "[narrations passed on, narrations received]" and the size of each node is proportionate to the sum of these two numbers. 
+            Node colour depends on average distance of each narrator to the Imam (end of chain) and these colours are used:
+        </p>
+        <div class="gradient">Closer to Imam</div>
+    </div>
+    <div id="allgraphdata"></div>
+    <h1>Narrator names removed from the graph data</h1>
+    <div id="removed_narrators"></div>
 </body>
 
 </html>
