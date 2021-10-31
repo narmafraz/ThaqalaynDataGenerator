@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 START_CHAPTER=1
-END_CHAPTER=10
+END_CHAPTER=30
 
 ABIH = "أَبِيهِ"
 ABU = "أَبِي"
@@ -187,5 +187,12 @@ def main():
 	
 	with open("kitab_hujjat_narrators.html", 'w', newline='', encoding='utf-8') as f:
 		f.write(htmlfile)
+	
+	csvheader = ["ID", "Name", "Average distance from Imam", "Narrations passed on", "Narrations received", "Narrations total"]
+	csvdata = [[row['id'], row['label'][:row['label'].index('\n[')], row['m'], row['fro'], row['to'], row['value']] for row in nodes]
+	with open("kitab_hujjat_narrators.csv", 'w', newline='', encoding='utf-8-sig') as f:
+		writer = csv.writer(f)
+		writer.writerow(csvheader)
+		writer.writerows(csvdata)
 
 main()
