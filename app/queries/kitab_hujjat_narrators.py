@@ -185,12 +185,12 @@ def main():
 		.replace('%%START_CHAPTER%%', str(START_CHAPTER))\
 		.replace('%%END_CHAPTER%%', str(END_CHAPTER))
 	
-	with open("kitab_hujjat_narrators.html", 'w', newline='', encoding='utf-8') as f:
+	with open("reports/kitab_hujjat_narrators.html", 'w', newline='', encoding='utf-8') as f:
 		f.write(htmlfile)
 	
 	csvheader = ["ID", "Name", "Average distance from Imam", "Narrations passed on", "Narrations received", "Narrations total"]
 	csvdata = [[row['id'], row['label'][:row['label'].index('\n[')], row['m'], row['fro'], row['to'], row['value']] for row in nodes]
-	with open("kitab_hujjat_narrators.csv", 'w', newline='', encoding='utf-8-sig') as f:
+	with open("reports/kitab_hujjat_narrators.csv", 'w', newline='', encoding='utf-8-sig') as f:
 		writer = csv.writer(f)
 		writer.writerow(csvheader)
 		writer.writerows(csvdata)
