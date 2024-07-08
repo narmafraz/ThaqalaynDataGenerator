@@ -14,7 +14,7 @@ from app.models import Chapter, Language, PartType, Translation, Verse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SEARCH_TERM = "قَالَ حَدَّثَنِي"
+SEARCH_TERM = "مباهله"
 
 def query_chapter(chapter: Chapter):
 	results = []

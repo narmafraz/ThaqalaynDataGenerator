@@ -263,5 +263,5 @@ def kafi_narrators():
     insert_narrators(narrators)
     insert_narrator_index(narrator_index, narrators)
     insert_chapter(kafi)
-    # write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
+    write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
 

@@ -22,8 +22,7 @@ def get_verses(book):
 		return book['verses']
 	return None
 
-def set_index(chapter: Chapter, indexes: List[int], depth: int) -> List[int]:
-	# TODO: set before/after chapter links
+def set_index(chapter: Chapter, indexes: List[int], depth: int, master_index: Dict[str, Crumb]) -> List[int]:
 	if len(indexes) < depth + 1:
 		indexes.append(0)
 
@@ -73,6 +72,7 @@ def set_index(chapter: Chapter, indexes: List[int], depth: int) -> List[int]:
 			}
 			crumb.titles = subchapter.titles
 			crumb.path = subchapter.path
+			master_index[subchapter.path] = crumb
 			subchapter.crumbs.append(crumb)
 
 			subchapter.nav = Navigation()
@@ -83,7 +83,7 @@ def set_index(chapter: Chapter, indexes: List[int], depth: int) -> List[int]:
 				subchapter.nav.up = subchapter.crumbs[-2]
 			prev_chapter = subchapter
 
-			indexes = set_index(subchapter, indexes, depth + 1)
+			indexes = set_index(subchapter, indexes, depth + 1, master_index)
 		chapter.verse_count = indexes[-1] - chapter.verse_start_index
 
 	return indexes

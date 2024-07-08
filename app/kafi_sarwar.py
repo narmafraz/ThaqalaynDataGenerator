@@ -12,6 +12,7 @@ from app.lib_bs4 import get_contents, is_rtl_tag
 from app.lib_db import insert_chapter, load_chapter, write_file
 from app.lib_model import SEQUENCE_ERRORS, set_index
 from app.models import Chapter, Language, PartType, Translation, Verse
+from app.models.index import Index
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -251,8 +252,12 @@ def add_kafi_sarwar():
 	add_content(kafi.chapters[6], get_path("chapter\\7\\"))
 	add_content(kafi.chapters[7], get_path("chapter\\8\\"))
 
-	set_index(kafi, [0, 0, 0, 0], 0)
+	master_index = {}
+	index = Index()
+	index.index = master_index
+	set_index(kafi, [0, 0, 0, 0], 0, master_index)
 	insert_chapter(kafi)
 	write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
+	write_file("/books/al-kafi/index", jsonable_encoder(index))
 
 	pprint(SEQUENCE_ERRORS, width=240)

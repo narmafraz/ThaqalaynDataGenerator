@@ -10,7 +10,6 @@ from pprint import pprint
 
 from app.lib_bs4 import get_contents, is_rtl_tag
 from app.lib_db import insert_chapter_dict, load_chapter, write_file
-from app.lib_model import SEQUENCE_ERRORS, set_index
 from app.models import Chapter, Language, PartType, Translation, Verse
 from bs4 import BeautifulSoup, NavigableString, Tag
 from fastapi.encoders import jsonable_encoder
