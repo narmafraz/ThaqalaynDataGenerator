@@ -525,5 +525,17 @@ def init_kafi():
 	insert_chapter(book)
 
 	write_file("/books/complete/al-kafi", fastapi.encoders.jsonable_encoder(book))
+    
+	index_map = {}
+	def populate_index(chapter):
+		if chapter.titles and "en" in chapter.titles:
+			title = chapter.titles["en"]
+			indexed_title = title.split(" – ")[0] if " – " in title else title
+			index_map[chapter.path] = {"indexed_title": indexed_title, "title": title}
+		if chapter.chapters:
+			for subchapter in chapter.chapters:
+				populate_index(subchapter)
+	populate_index(book)
+	write_file("/index/index.en.json", fastapi.encoders.jsonable_encoder(index_map))
 
 	pprint(SEQUENCE_ERRORS)
