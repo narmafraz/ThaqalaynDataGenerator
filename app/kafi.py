@@ -522,13 +522,12 @@ def init_kafi():
 				if title:
 					if lang not in index_maps:
 						index_maps[lang] = {}
-					indexed_title = title.split(" – ")[0] if " – " in title else title
-					index_maps[lang][chapter.path] = {"indexed_title": indexed_title, "title": title}
+					index_maps[lang][chapter.path] = {"local_index": chapter.local_index, "part_type": chapter.part_type}
 		if chapter.chapters:
 			for subchapter in chapter.chapters:
 				collect_indexes(subchapter)
 	collect_indexes(book)
 	for lang, idx in index_maps.items():
-		write_file(f"/index/index.{lang}.json", fastapi.encoders.jsonable_encoder(idx))
+		write_file(f"/index/books.{lang}.json", fastapi.encoders.jsonable_encoder(idx))
 
 	pprint(SEQUENCE_ERRORS)
