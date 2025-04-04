@@ -515,12 +515,6 @@ def build_kafi() -> Chapter:
 	kafi.index = BOOK_INDEX
 	kafi.path = BOOK_PATH
 	
-	crumb = Crumb()
-	crumb.titles = kafi.titles
-	crumb.indexed_titles = kafi.titles
-	crumb.path = kafi.path
-	kafi.crumbs = [crumb]
-
 	set_index(kafi, [0, 0, 0, 0], 0)
 
 	return kafi

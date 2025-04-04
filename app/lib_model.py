@@ -65,22 +65,11 @@ def set_index(chapter: Chapter, indexes: List[int], depth: int, master_index: Di
 						# report_numbering = False
 						# raise Exception('Chapter ' + str(chapter_local_index) + ' with indexes ' + str(indexes) + ' does not match title ' + str(subchapter.titles))
 
-			subchapter.crumbs = copy.copy(chapter.crumbs)
-			crumb = Crumb()
-			crumb.indexed_titles = {
-				Language.EN.value: subchapter.part_type.name + ' ' + str(subchapter.local_index)
-			}
-			crumb.titles = subchapter.titles
-			crumb.path = subchapter.path
-			master_index[subchapter.path] = crumb
-			subchapter.crumbs.append(crumb)
-
 			subchapter.nav = Navigation()
 			if prev_chapter:
-				subchapter.nav.prev = prev_chapter.crumbs[-1]
-				prev_chapter.nav.next = crumb
-			if len(subchapter.crumbs) >= 2:
-				subchapter.nav.up = subchapter.crumbs[-2]
+				subchapter.nav.prev = prev_chapter.path
+				prev_chapter.nav.next = subchapter.path
+			subchapter.nav.up = chapter.path
 			prev_chapter = subchapter
 
 			indexes = set_index(subchapter, indexes, depth + 1, master_index)
