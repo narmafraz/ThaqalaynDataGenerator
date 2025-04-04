@@ -20,6 +20,13 @@ from app.lib_db import insert_chapter, write_file
 from app.lib_model import SEQUENCE_ERRORS, set_index
 from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
 
+def set_titles_and_index(chapter, titles):
+    chapter.titles = titles
+    chapter.index_info = {}
+    for lang, title in titles.items():
+        if title:
+            chapter.index_info[lang] = {"indexed_title": title.split(" – ")[0] if " – " in title else title, "title": title}
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -71,7 +78,7 @@ def build_alhassanain_baabs(file) -> List[Chapter]:
 			if not baab:
 				baab = Chapter()
 				baab.part_type = PartType.Book
-				baab.titles = baab_titles
+				set_titles_and_index(baab, baab_titles)
 				baab.chapters = []
 
 				baabs.append(baab)
@@ -89,7 +96,7 @@ def build_alhassanain_baabs(file) -> List[Chapter]:
 
 				chapter = Chapter()
 				chapter.part_type = PartType.Chapter
-				chapter.titles = chapter_titles
+				set_titles_and_index(chapter, chapter_titles)
 				chapter.verse_translations = [translation]
 				chapter.verses = []
 
@@ -225,10 +232,7 @@ def build_hubeali_books(dirname) -> List[Chapter]:
 			if book_title_ar:
 				book = Chapter()
 				book.part_type = PartType.Book
-				book.titles = {}
-				# Arabic title comes from previous file
-				book.titles[Language.AR.value] = book_title_ar
-				book.titles[Language.EN.value] = heading_en
+				set_titles_and_index(book, {Language.AR.value: book_title_ar, Language.EN.value: heading_en})
 				book_title_ar = None
 				book.chapters = []
 
@@ -237,9 +241,7 @@ def build_hubeali_books(dirname) -> List[Chapter]:
 			elif (chapter_title_ar or not chapter) and heading_en.startswith('Chapter'):
 				chapter = Chapter()
 				chapter.part_type = PartType.Chapter
-				chapter.titles = {}
-				chapter.titles[Language.AR.value] = chapter_title_ar
-				chapter.titles[Language.EN.value] = heading_en
+				set_titles_and_index(chapter, {Language.AR.value: chapter_title_ar, Language.EN.value: heading_en})
 				chapter_title_ar = None
 				chapter.verse_translations = [hubbeali_translation]
 				chapter.verses = []
@@ -320,10 +322,7 @@ def build_hubeali_book_8(dirname) -> List[Chapter]:
 
 	book = Chapter()
 	book.part_type = PartType.Book
-	book.titles = {}
-	# Arabic title comes from previous file
-	book.titles[Language.AR.value] = "&#1603;&#1578;&#1575;&#1576; &#1575;&#1604;&#1585;&#1617;&#1614;&#1608;&#1618;&#1590;&#1614;&#1577;&#1616;"
-	book.titles[Language.EN.value] = "The Book - Garden (of Flowers)"
+	set_titles_and_index(book, {Language.AR.value: "&#1603;&#1578;&#1575;&#1576; &#1575;&#1604;&#1585;&#1617;&#1614;&#1608;&#1618;&#1590;&#1614;&#1577;&#1616;", Language.EN.value: "The Book - Garden (of Flowers)"})
 	book.chapters = []
 	
 	is_the_end = False
@@ -431,10 +430,7 @@ def build_hubeali_book_8(dirname) -> List[Chapter]:
 
 def build_volume(file, title_en: str, title_ar: str, description: str, last_volume: bool = False) -> Chapter:
 	volume = Chapter()
-	volume.titles = {
-		Language.EN.value: title_en,
-		Language.AR.value: title_ar
-	}
+	set_titles_and_index(volume, {Language.EN.value: title_en, Language.AR.value: title_ar})
 	volume.descriptions = {
 			Language.EN.value: [description]
 	}
@@ -454,10 +450,7 @@ def build_kafi() -> Chapter:
 	kafi = Chapter()
 	kafi.index = BOOK_INDEX
 	kafi.path = BOOK_PATH
-	kafi.titles = {
-		Language.EN.value: "Al-Kafi",
-		Language.AR.value: "الكافي"
-	}
+	set_titles_and_index(kafi, {Language.EN.value: "Al-Kafi", Language.AR.value: "الكافي"})
 	kafi.descriptions = {
 			Language.EN.value: ["Of the majestic narrator and the scholar, the jurist, the Sheykh Muhammad Bin Yaqoub Al-Kulayni Well known as ‘The trustworthy of Al-Islam Al-Kulayni’ Who died in the year 329 H"]
 	}
@@ -528,13 +521,12 @@ def init_kafi():
     
 	index_maps = {}
 	def collect_indexes(chapter):
-		if chapter.titles:
-			for lang, title in chapter.titles.items():
-				if title:
+		if hasattr(chapter, 'index_info'):
+			for lang, info in chapter.index_info.items():
+				if info:
 					if lang not in index_maps:
 						index_maps[lang] = {}
-					indexed_title = title.split(" – ")[0] if " – " in title else title
-					index_maps[lang][chapter.path] = {"indexed_title": indexed_title, "title": title}
+					index_maps[lang][chapter.path] = info
 		if chapter.chapters:
 			for subchapter in chapter.chapters:
 				collect_indexes(subchapter)
