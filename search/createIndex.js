@@ -11,7 +11,7 @@ const index = new Document({
     threshold: 0.3,
     document: {
         id: "index",
-        index: ["crumbs", "titles", "text", "narrator_chain", "translations"]
+        index: ["titles", "text", "narrator_chain", "translations"]
     }
 });
 
@@ -35,9 +35,6 @@ function readFiles(dir) {
 function processFile(data, filePath) {
     if (data.kind === 'verse_list') {
         const baseIndex = data.index;
-        const crumbs = data.data.crumbs.map(crumb => {
-            return `${crumb.indexed_titles.ar || ''} ${crumb.indexed_titles.en || ''}`.trim();
-        }).join(' ');
         const titles = `${data.data.titles.en || ''} ${data.data.titles.ar || ''}`.trim();
 
         data.data.verses.forEach(verse => {
@@ -47,7 +44,6 @@ function processFile(data, filePath) {
 
             const entry = {
                 index: `${baseIndex}:${verse.local_index}`,
-                crumbs: crumbs,
                 titles: titles,
                 text: verseText,
                 narrator_chain: narratorChain,
