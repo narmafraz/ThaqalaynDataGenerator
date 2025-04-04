@@ -22,10 +22,6 @@ from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
 
 def set_titles_and_index(chapter, titles):
     chapter.titles = titles
-    chapter.index_info = {}
-    for lang, title in titles.items():
-        if title:
-            chapter.index_info[lang] = {"indexed_title": title.split(" – ")[0] if " – " in title else title, "title": title}
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -521,12 +517,13 @@ def init_kafi():
     
 	index_maps = {}
 	def collect_indexes(chapter):
-		if hasattr(chapter, 'index_info'):
-			for lang, info in chapter.index_info.items():
-				if info:
+		if chapter.titles:
+			for lang, title in chapter.titles.items():
+				if title:
 					if lang not in index_maps:
 						index_maps[lang] = {}
-					index_maps[lang][chapter.path] = info
+					indexed_title = title.split(" – ")[0] if " – " in title else title
+					index_maps[lang][chapter.path] = {"indexed_title": indexed_title, "title": title}
 		if chapter.chapters:
 			for subchapter in chapter.chapters:
 				collect_indexes(subchapter)
