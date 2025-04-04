@@ -4,7 +4,7 @@ from typing import Dict, List
 
 from app.models import Chapter, Crumb, Language, Navigation, PartType
 
-CHAPTER_TITLE_PATTERN = re.compile("Chapter (\d+)")
+CHAPTER_TITLE_PATTERN = re.compile(r"Chapter (\d+)")
 
 SEQUENCE_ERRORS = []
 
