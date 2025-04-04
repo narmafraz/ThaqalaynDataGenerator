@@ -526,16 +526,20 @@ def init_kafi():
 
 	write_file("/books/complete/al-kafi", fastapi.encoders.jsonable_encoder(book))
     
-	index_map = {}
-	def populate_index(chapter):
-		if chapter.titles and "en" in chapter.titles:
-			title = chapter.titles["en"]
-			indexed_title = title.split(" – ")[0] if " – " in title else title
-			index_map[chapter.path] = {"indexed_title": indexed_title, "title": title}
+	index_maps = {}
+	def collect_indexes(chapter):
+		if chapter.titles:
+			for lang, title in chapter.titles.items():
+				if title:
+					if lang not in index_maps:
+						index_maps[lang] = {}
+					indexed_title = title.split(" – ")[0] if " – " in title else title
+					index_maps[lang][chapter.path] = {"indexed_title": indexed_title, "title": title}
 		if chapter.chapters:
 			for subchapter in chapter.chapters:
-				populate_index(subchapter)
-	populate_index(book)
-	write_file("/index/index.en.json", fastapi.encoders.jsonable_encoder(index_map))
+				collect_indexes(subchapter)
+	collect_indexes(book)
+	for lang, idx in index_maps.items():
+		write_file(f"/index/index.{lang}.json", fastapi.encoders.jsonable_encoder(idx))
 
 	pprint(SEQUENCE_ERRORS)
