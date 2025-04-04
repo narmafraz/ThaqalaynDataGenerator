@@ -134,3 +134,6 @@ reports/
 
 # js
 node_modules/
+.aider*
+search/*.json
+search/*.zip
