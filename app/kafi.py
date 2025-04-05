@@ -522,7 +522,7 @@ def init_kafi():
 				if title:
 					if lang not in index_maps:
 						index_maps[lang] = {}
-					index_maps[lang][chapter.path] = {"local_index": chapter.local_index, "part_type": chapter.part_type}
+					index_maps[lang][chapter.path] = {"title": title, "local_index": chapter.local_index, "part_type": chapter.part_type}
 		if chapter.chapters:
 			for subchapter in chapter.chapters:
 				collect_indexes(subchapter)
