@@ -93,7 +93,7 @@ def build_alhassanain_baabs(file) -> List[Chapter]:
 				chapter = Chapter()
 				chapter.part_type = PartType.Chapter
 				set_titles_and_index(chapter, chapter_titles)
-				chapter.verse_translations = [translation]
+				chapter.verse_translations = [translation.id]
 				chapter.verses = []
 
 				baab.chapters.append(chapter)
@@ -239,7 +239,7 @@ def build_hubeali_books(dirname) -> List[Chapter]:
 				chapter.part_type = PartType.Chapter
 				set_titles_and_index(chapter, {Language.AR.value: chapter_title_ar, Language.EN.value: heading_en})
 				chapter_title_ar = None
-				chapter.verse_translations = [hubbeali_translation]
+				chapter.verse_translations = [hubbeali_translation.id]
 				chapter.verses = []
 
 				book.chapters.append(chapter)
@@ -366,7 +366,7 @@ def build_hubeali_book_8(dirname) -> List[Chapter]:
 					chapter.titles[Language.EN.value] = "In the name of Allah, the Beneficent, the Merciful"
 				chapter_title_ar = None
 				chapter.verses = []
-				chapter.verse_translations = [hubbeali_translation]
+				chapter.verse_translations = [hubbeali_translation.id]
 
 				book.chapters.append(chapter)
 			elif is_hadith_title:
@@ -529,5 +529,17 @@ def init_kafi():
 	collect_indexes(book)
 	for lang, idx in index_maps.items():
 		write_file(f"/index/books.{lang}.json", fastapi.encoders.jsonable_encoder(idx))
+	
+	translations_map = {}
+	def collect_translations(chapter):
+	    if chapter.verse_translations:
+	        for tid in chapter.verse_translations:
+	            if tid == hubbeali_translation.id and tid not in translations_map:
+	                translations_map[tid] = hubbeali_translation.dict()
+	    if chapter.chapters:
+	        for subchapter in chapter.chapters:
+	            collect_translations(subchapter)
+	collect_translations(book)
+	write_file("/index/translations.json", fastapi.encoders.jsonable_encoder(translations_map))
 
 	pprint(SEQUENCE_ERRORS)

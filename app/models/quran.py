@@ -47,7 +47,7 @@ class Chapter(BaseModel):
 	translations: Dict[str, str] = None
 	verse_count: int = None
 	verse_start_index: int = None
-	verse_translations: List[Translation] = None
+	verse_translations: List[str] = None
 	verses: List[Verse] = None
 
 Chapter.update_forward_refs()
