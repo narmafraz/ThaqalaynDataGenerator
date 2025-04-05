@@ -132,7 +132,7 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 	# since there is always more ahadith on hubeali's chapter
 	if hadith_index != len(verses) - heading_count and 'al-kafi:8:1' not in chapter.path:
 		site_path = sitepath_from_filepath(filepath)
-		error_msg = f"Sarwar has {hadith_index} hadith but hubeali has {len(verses)} hadith: https://thaqalayn.net/chapter/{site_path} vs https://thaqalayn.netlify.app/#{chapter.crumbs[-1].path}"
+		error_msg = f"Sarwar has {hadith_index} hadith but hubeali has {len(verses)} hadith: https://thaqalayn.net/chapter/{site_path} vs https://thaqalayn.netlify.app/#{chapter.path}"
 		logger.warn(error_msg)
 		SEQUENCE_ERRORS.append(error_msg)
 

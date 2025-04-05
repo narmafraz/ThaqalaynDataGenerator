@@ -22,7 +22,7 @@ def get_verses(book):
 		return book['verses']
 	return None
 
-def set_index(chapter: Chapter, indexes: List[int], depth: int, master_index: Dict[str, Crumb]) -> List[int]:
+def set_index(chapter: Chapter, indexes: List[int], depth: int) -> List[int]:
 	if len(indexes) < depth + 1:
 		indexes.append(0)
 
@@ -72,7 +72,7 @@ def set_index(chapter: Chapter, indexes: List[int], depth: int, master_index: Di
 			subchapter.nav.up = chapter.path
 			prev_chapter = subchapter
 
-			indexes = set_index(subchapter, indexes, depth + 1, master_index)
+			indexes = set_index(subchapter, indexes, depth + 1)
 		chapter.verse_count = indexes[-1] - chapter.verse_start_index
 
 	return indexes

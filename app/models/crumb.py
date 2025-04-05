@@ -9,6 +9,6 @@ class Crumb(BaseModel):
 	path: str = None
 
 class Navigation(BaseModel):
-	prev: Crumb = None
-	next: Crumb = None
-	up: Crumb = None
+	prev: str = None
+	next: str = None
+	up: str = None
