@@ -252,12 +252,8 @@ def add_kafi_sarwar():
 	add_content(kafi.chapters[6], get_path("chapter\\7\\"))
 	add_content(kafi.chapters[7], get_path("chapter\\8\\"))
 
-	master_index = {}
-	index = Index()
-	index.index = master_index
-	set_index(kafi, [0, 0, 0, 0], 0, master_index)
+	set_index(kafi, [0, 0, 0, 0], 0)
 	insert_chapter(kafi)
 	write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
-	write_file("/books/al-kafi/index", jsonable_encoder(index))
 
 	pprint(SEQUENCE_ERRORS, width=240)
