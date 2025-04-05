@@ -42,9 +42,9 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 	verses = chapter.verses
 	heading_count = len([x for x in verses if x.part_type == PartType.Heading])
 
-	sarwar_exists = next((item for item in chapter.verse_translations if item.id == SARWAR_TRANSLATION_ID), None)
+	sarwar_exists = next((item for item in chapter.verse_translations if item == SARWAR_TRANSLATION_ID), None)
 	if not sarwar_exists:
-		chapter.verse_translations.append(sarwar_translation)
+		chapter.verse_translations.append(sarwar_translation.id)
 
 	with open(filepath, 'r', encoding='utf8') as qfile:
 		file_html = qfile.read()
