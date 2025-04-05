@@ -30,8 +30,10 @@ def update_refs(quran: Chapter, hadith: Verse, quran_refs: Set):
             sura = quran.chapters[sura_no - 1]
             verse = sura.verses[verse_no - 1]
             if not verse.relations:
-                verse.relations = { "Mentioned In": set() }
-            verse.relations["Mentioned In"].add(hadith.path)
+                verse.relations = { "Mentioned In": [] }
+            if hadith.path not in verse.relations["Mentioned In"]:
+                verse.relations["Mentioned In"].append(hadith.path)
+                verse.relations["Mentioned In"] = sorted(verse.relations["Mentioned In"])
             qrefs.add(f"/books/quran:{sura_no}:{verse_no}")
         except IndexError:
             logger.warn(f"Quran ref does not exist. Hadith {hadith.path} ref {sura_no}:{verse_no}")
