@@ -529,6 +529,6 @@ def init_kafi():
 	        for subchapter in chapter.chapters:
 	            collect_translations(subchapter)
 	collect_translations(book)
-	write_file("/index/translations.json", fastapi.encoders.jsonable_encoder(translations_map))
+	write_file("/index/translations", fastapi.encoders.jsonable_encoder(translations_map))
 
 	pprint(SEQUENCE_ERRORS)

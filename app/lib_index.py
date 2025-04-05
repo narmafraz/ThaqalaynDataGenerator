@@ -26,4 +26,4 @@ def update_index_files(index_maps):
         else:
             existing = {}
         merged = {**existing, **idx}
-        write_file(filename, fastapi.encoders.jsonable_encoder(merged))
+        write_file(f"/index/books.{lang}", fastapi.encoders.jsonable_encoder(merged))
