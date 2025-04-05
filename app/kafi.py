@@ -527,8 +527,16 @@ def init_kafi():
 			for subchapter in chapter.chapters:
 				collect_indexes(subchapter)
 	collect_indexes(book)
+	import os, json
 	for lang, idx in index_maps.items():
-		write_file(f"/index/books.{lang}.json", fastapi.encoders.jsonable_encoder(idx))
+		filename = f"/index/books.{lang}.json"
+		if os.path.exists(filename):
+			with open(filename, "r", encoding="utf8") as f:
+				existing = json.load(f)
+		else:
+			existing = {}
+		merged = {**existing, **idx}
+		write_file(filename, fastapi.encoders.jsonable_encoder(merged))
 	
 	translations_map = {}
 	def collect_translations(chapter):

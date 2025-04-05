@@ -208,4 +208,26 @@ def init_quran():
 	quran = build_quran()
 	insert_chapter(quran) 
 	write_file("/books/complete/quran", fastapi.encoders.jsonable_encoder(quran))
-	# insert_verse_content(db_session, quran)
+	# Build index map for quran
+	index_maps = {}
+	def collect_indexes(chapter):
+		if chapter.titles:
+			for lang, title in chapter.titles.items():
+				if title:
+					if lang not in index_maps:
+						index_maps[lang] = {}
+					index_maps[lang][chapter.path] = {"title": title, "local_index": chapter.local_index, "part_type": chapter.part_type}
+		if chapter.chapters:
+			for subchapter in chapter.chapters:
+				collect_indexes(subchapter)
+	collect_indexes(quran)
+	import os, json
+	for lang, idx in index_maps.items():
+		filename = f"/index/books.{lang}.json"
+		if os.path.exists(filename):
+			with open(filename, "r", encoding="utf8") as f:
+				existing = json.load(f)
+		else:
+			existing = {}
+		merged = {**existing, **idx}
+		write_file(filename, fastapi.encoders.jsonable_encoder(merged))
