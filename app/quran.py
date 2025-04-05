@@ -32,7 +32,7 @@ def get_sajda_data(quran):
 
 	return sajdas
 
-def build_chapters(file: str, verses: List[Verse], verse_translations: List[Translation]) -> List[Chapter]:
+def build_chapters(file: str, verses: List[Verse], verse_translations: List[str]) -> List[Chapter]:
 	chapters: List[Chapter] = []
 	
 	quran = xml.etree.ElementTree.parse(file).getroot()
