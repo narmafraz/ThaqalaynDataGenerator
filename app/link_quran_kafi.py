@@ -36,7 +36,7 @@ def update_refs(quran: Chapter, hadith: Verse, quran_refs: Set):
         except IndexError:
             logger.warn(f"Quran ref does not exist. Hadith {hadith.path} ref {sura_no}:{verse_no}")
     if qrefs:
-        hadith.relations = {'Mentions': qrefs }
+        hadith.relations = {'Mentions': sorted(qrefs)}
 
 def process_chapter_verses(quran: Chapter, chapter: Chapter):
     for hadith in chapter.verses:
