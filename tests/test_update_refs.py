@@ -27,9 +27,9 @@ class TestUpdateRefs(unittest.TestCase):
         self.assertEqual(hadith.relations, {'Mentions': expected_mentions})
         
         # Verify that each matching Quran verse has been updated with the hadith path
-        self.assertEqual(verse1.relations, {"Mentioned In": ["hadith1"]})
-        self.assertEqual(verse2.relations, {"Mentioned In": ["hadith1"]})
-        self.assertEqual(verse3.relations, {"Mentioned In": ["hadith1"]})
+        self.assertEqual(quran.chapters[0].verses[0].relations, {"Mentioned In": ["hadith1"]})
+        self.assertEqual(quran.chapters[0].verses[1].relations, {"Mentioned In": ["hadith1"]})
+        self.assertEqual(quran.chapters[1].verses[0].relations, {"Mentioned In": ["hadith1"]})
 
 if __name__ == "__main__":
     unittest.main()
