@@ -5,16 +5,22 @@ class TestKafiPaths(unittest.TestCase):
     def test_paths_not_none(self):
         kafi = load_chapter("/books/complete/al-kafi")
         
-        def check_chapter(chapter):
-            self.assertIsNotNone(chapter.path, f"Chapter path is None for chapter: {chapter}")
+        errors = []
+        
+        def check_chapter(chapter, parent_info="root", index_info=""):
+            if chapter.path is None:
+                errors.append(f"{parent_info} - chapter at index {index_info} (object: {chapter}) has path None")
             if chapter.verses:
-                for verse in chapter.verses:
-                    self.assertIsNotNone(verse.path, f"Verse path is None for verse: {verse}")
+                for i, verse in enumerate(chapter.verses):
+                    if verse.path is None:
+                        errors.append(f"{chapter.path or parent_info} - verse at index {i} (object: {verse}) has path None")
             if chapter.chapters:
-                for subchapter in chapter.chapters:
-                    check_chapter(subchapter)
+                for i, subchapter in enumerate(chapter.chapters):
+                    check_chapter(subchapter, parent_info=(chapter.path or parent_info), index_info=i)
         
         check_chapter(kafi)
+        if errors:
+            self.fail("Entities with missing path detected:\n" + "\n".join(errors))
 
 if __name__ == '__main__':
     unittest.main()
