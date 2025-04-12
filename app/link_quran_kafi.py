@@ -33,7 +33,7 @@ def update_refs(quran: Chapter, hadith: Verse, quran_refs: Set):
                 verse.relations = { "Mentioned In": [] }
             if hadith.path not in verse.relations["Mentioned In"]:
                 verse.relations["Mentioned In"].append(hadith.path)
-                verse.relations["Mentioned In"] = sorted([ref for ref in verse.relations["Mentioned In"] if ref is not None])
+                verse.relations["Mentioned In"] = sorted(set(verse.relations["Mentioned In"]))
             qrefs.add(f"/books/quran:{sura_no}:{verse_no}")
         except IndexError:
             logger.warning(f"Quran ref does not exist. Hadith {hadith.path} ref {sura_no}:{verse_no}")
@@ -42,6 +42,10 @@ def update_refs(quran: Chapter, hadith: Verse, quran_refs: Set):
 
 def process_chapter_verses(quran: Chapter, chapter: Chapter):
     for hadith in chapter.verses:
+        # Some headings have refs (e.g. /books/al-kafi:1:3:19), but its ok to ignore them since the hadith itself also has the ref
+        if hadith.part_type is PartType.Heading:
+            continue
+
         quran_refs = set()
         if 'en.hubeali' in hadith.translations:
             process_translation_text(hadith.translations['en.hubeali'], quran_refs)
