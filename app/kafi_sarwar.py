@@ -85,7 +85,7 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 				
 				verse = Verse()
 				verse.text = hadith_ar
-				verse.part_type = PartType.Hadith.value
+				verse.part_type = PartType.Hadith
 				verse.translations = {}
 
 				verses.append(verse)
