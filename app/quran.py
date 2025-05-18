@@ -114,6 +114,8 @@ def insert_quran_translation(verses, verse_translations, file, key, lang, author
 	id = lang + "." + key
 	qt = Translation(lang = lang, name = author, id = id)
 	verse_translations.append(qt.id)
+	from app.lib_index import add_translation
+	add_translation(qt)
 
 	index = 0
 	with open(file, 'r', encoding='utf8') as qfile:

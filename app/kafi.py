@@ -142,6 +142,8 @@ END_OF_HADITH_PATTERN = re.compile(r"<sup>\[\d+\]</sup>\s*$")
 END_OF_HADITH_CLEANUP_PATTERN = re.compile(r'<a id="[^"]+"/?>(</a>)?<sup>\[\d+\]</sup>\s*$')
 
 hubbeali_translation = Translation(name = "HubeAli.com", lang = Language.EN.value, id = HUBEALI_TRANSLATION_ID)
+from app.lib_index import add_translation
+add_translation(hubbeali_translation)
 
 def we_dont_care(heading):
 	if heading is None:

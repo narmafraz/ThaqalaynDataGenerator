@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 SARWAR_TRANSLATION_ID = "en.sarwar"
 sarwar_translation = Translation(name = "Shaykh Muhammad Sarwar (from Thaqalayn.net)", lang = Language.EN.value, id = SARWAR_TRANSLATION_ID)
+from app.lib_index import add_translation
+add_translation(sarwar_translation)
 
 # Created cumulative sum of verse numbers in volume 8 to adjust chapter index like this:
 # from itertools import accumulate

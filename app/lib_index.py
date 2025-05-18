@@ -27,3 +27,15 @@ def update_index_files(index_maps):
             existing = {}
         merged = {**existing, **idx}
         write_file(f"/index/books.{lang}", fastapi.encoders.jsonable_encoder(merged))
+    
+def add_translation(translation):
+    try:
+        if os.path.exists("/index/translations"):
+            with open("/index/translations", "r", encoding="utf8") as f:
+                translations = json.load(f)
+        else:
+            translations = {}
+    except Exception:
+        translations = {}
+    translations[translation.id] = fastapi.encoders.jsonable_encoder(translation.dict())
+    write_file("/index/translations", fastapi.encoders.jsonable_encoder(translations))
