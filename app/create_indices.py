@@ -3,7 +3,7 @@ from app.lib_index import collect_indexes, update_index_files
 from app.lib_db import write_file
 from app.kafi import hubbeali_translation
 
-def create_indices(book):
+def create_translation_index(book):
     index_maps = collect_indexes(book)
     update_index_files(index_maps)
     

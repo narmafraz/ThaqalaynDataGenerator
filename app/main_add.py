@@ -6,7 +6,7 @@ from app.kafi_narrators import kafi_narrators
 from app.kafi_sarwar import add_kafi_sarwar
 from app.link_quran_kafi import link_quran_kafi
 from app.quran import init_quran
-from app.create_indices import create_indices
+from app.create_indices import create_translation_index
 
 # from app.quran import init_quran
 
@@ -21,7 +21,7 @@ def init():
     add_kafi_sarwar()
     link_quran_kafi()
     kafi_narrators()
-    create_indices(kafi_book)
+    create_translation_index(kafi_book)
 
 def main():
     logger.info("Creating initial data")
