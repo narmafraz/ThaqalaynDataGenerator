@@ -3,7 +3,7 @@ from app.lib_index import collect_indexes, update_index_files
 from app.lib_db import write_file, load_chapter
 from app.kafi import hubbeali_translation
 
-def create_translation_index():
+def create_indices():
     quran = load_chapter("/books/complete/quran")
     kafi = load_chapter("/books/complete/al-kafi")
     
