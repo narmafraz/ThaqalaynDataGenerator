@@ -6,6 +6,7 @@ from app.kafi_narrators import kafi_narrators
 from app.kafi_sarwar import add_kafi_sarwar
 from app.link_quran_kafi import link_quran_kafi
 from app.quran import init_quran
+from app.create_indices import create_indices
 
 # from app.quran import init_quran
 
@@ -16,10 +17,11 @@ logger = logging.getLogger(__name__)
 def init():
     init_books()
     init_quran()
-    init_kafi()
+    kafi_book = init_kafi()
     add_kafi_sarwar()
     link_quran_kafi()
     kafi_narrators()
+    create_indices(kafi_book)
 
 def main():
     logger.info("Creating initial data")
