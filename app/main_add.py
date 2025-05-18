@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def init():
     init_books()
     init_quran()
-    kafi_book = init_kafi()
+    init_kafi()
     add_kafi_sarwar()
     link_quran_kafi()
     kafi_narrators()

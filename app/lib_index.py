@@ -1,7 +1,8 @@
 import os
 import json
 import fastapi
-from app.lib_db import write_file
+from app.lib_db import write_file, load_json
+from app.models.translation import Translation
 
 def collect_indexes(chapter, index_maps=None):
     if index_maps is None:
@@ -28,13 +29,9 @@ def update_index_files(index_maps):
         merged = {**existing, **idx}
         write_file(f"/index/books.{lang}", fastapi.encoders.jsonable_encoder(merged))
     
-def add_translation(translation):
+def add_translation(translation: Translation):
     try:
-        if os.path.exists("/index/translations"):
-            with open("/index/translations", "r", encoding="utf8") as f:
-                translations = json.load(f)
-        else:
-            translations = {}
+        load_json("/index/translations")
     except Exception:
         translations = {}
     translations[translation.id] = fastapi.encoders.jsonable_encoder(translation.dict())
