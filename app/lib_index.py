@@ -31,7 +31,7 @@ def update_index_files(index_maps):
     
 def add_translation(translation: Translation):
     try:
-        load_json("/index/translations")
+        translations = load_json("/index/translations")
     except Exception:
         translations = {}
     translations[translation.id] = fastapi.encoders.jsonable_encoder(translation.dict())
