@@ -1,11 +1,15 @@
 import fastapi
 from app.lib_index import collect_indexes, update_index_files
-from app.lib_db import write_file
+from app.lib_db import write_file, load_chapter
 from app.kafi import hubbeali_translation
 
-def create_translation_index(book):
-    index_maps = collect_indexes(book)
-    update_index_files(index_maps)
+def create_translation_index():
+    quran = load_chapter("/books/complete/quran")
+    kafi = load_chapter("/books/complete/al-kafi")
+    
+    for book in [quran, kafi]:
+        index_maps = collect_indexes(book)
+        update_index_files(index_maps)
     
     translations_map = {}
     def collect_translations(chapter):
@@ -16,5 +20,6 @@ def create_translation_index(book):
         if chapter.chapters:
             for subchapter in chapter.chapters:
                 collect_translations(subchapter)
-    collect_translations(book)
+    for book in [quran, kafi]:
+        collect_translations(book)
     write_file("/index/translations", fastapi.encoders.jsonable_encoder(translations_map))
