@@ -1,7 +1,10 @@
 from pprint import pprint
 
-from app.kafi_narrators import extract_narrators
+from app.kafi_narrators import (
+    extract_narrators, assign_narrator_id, getCombinations, compose_narrator_metadata
+)
 from app.models import Chapter, Language, PartType, Translation, Verse
+from app.models.people import NarratorIndex, Narrator, ChainVerses
 
 
 def assert_text_narrators(text, narrators):
@@ -261,3 +264,99 @@ def test_8_1_13_1():
             'أَبِي جَعْفَرٍ ( عليه السلام )'
         ]
     )
+
+
+class TestAssignNarratorId:
+    """Test narrator ID assignment"""
+
+    def test_assign_new_narrator(self):
+        """Test ID assignment for new narrator"""
+        narrator_index = NarratorIndex()
+        narrator_index.name_id = {}
+        narrator_index.id_name = {}
+        narrator_index.last_id = 0
+
+        ids = assign_narrator_id(["مُحَمَّدُ بْنُ يَحْيَى"], narrator_index)
+        assert ids == [1]
+        assert narrator_index.last_id == 1
+        assert narrator_index.id_name[1] == "مُحَمَّدُ بْنُ يَحْيَى"
+
+    def test_assign_existing_narrator(self):
+        """Test ID reuse for existing narrator"""
+        narrator_index = NarratorIndex()
+        narrator_index.name_id = {"مُحَمَّدُ": 5}
+        narrator_index.id_name = {5: "مُحَمَّدُ"}
+        narrator_index.last_id = 5
+
+        ids = assign_narrator_id(["مُحَمَّدُ"], narrator_index)
+        assert ids == [5]
+        assert narrator_index.last_id == 5  # Unchanged
+
+    def test_assign_multiple_narrators(self):
+        """Test ID assignment for multiple narrators"""
+        narrator_index = NarratorIndex()
+        narrator_index.name_id = {}
+        narrator_index.id_name = {}
+        narrator_index.last_id = 0
+
+        ids = assign_narrator_id(["أَحْمَدُ", "مُحَمَّدُ"], narrator_index)
+        assert ids == [1, 2]
+        assert narrator_index.last_id == 2
+
+
+class TestGetCombinations:
+    """Test narrator chain combination generation"""
+
+    def test_two_narrators(self):
+        """Test combination generation for 2 narrators"""
+        result = getCombinations([1, 2])
+
+        # Expected: {1: [("1-2", [1,2])], 2: [("1-2", [1,2])]}
+        assert 1 in result
+        assert 2 in result
+        assert "1-2" in [key for key, _ in result[1]]
+        assert "1-2" in [key for key, _ in result[2]]
+
+    def test_three_narrators(self):
+        """Test subchain combinations for 3 narrators"""
+        result = getCombinations([1, 2, 3])
+
+        # Should generate: 1-2, 1-2-3, 2-3
+        narrator_1_chains = [key for key, _ in result[1]]
+        assert "1-2" in narrator_1_chains
+        assert "1-2-3" in narrator_1_chains
+
+    def test_single_narrator(self):
+        """Test no combinations for single narrator"""
+        result = getCombinations([1])
+        assert result == {}
+
+
+class TestComposeNarratorMetadata:
+    """Test narrator metadata composition"""
+
+    def test_basic_metadata(self):
+        """Test metadata for narrator with basic info"""
+        narrator = Narrator()
+        narrator.index = 1
+        narrator.path = "/people/narrators/1"
+        narrator.verse_paths = {"/books/al-kafi:1:1:1", "/books/al-kafi:1:1:2"}
+        narrator.subchains = {}
+
+        # Add subchains
+        cv1 = ChainVerses()
+        cv1.narrator_ids = [1, 2]
+        cv1.verse_paths = {"/books/al-kafi:1:1:1"}
+        narrator.subchains["1-2"] = cv1
+
+        cv2 = ChainVerses()
+        cv2.narrator_ids = [3, 1]
+        cv2.verse_paths = {"/books/al-kafi:1:1:2"}
+        narrator.subchains["3-1"] = cv2
+
+        metadata = compose_narrator_metadata("مُحَمَّدُ", narrator)
+
+        assert metadata["titles"]["ar"] == "مُحَمَّدُ"
+        assert metadata["narrations"] == 2
+        assert metadata["narrated_to"] == 1  # Chain 1-2
+        assert metadata["narrated_from"] == 1  # Chain 3-1
