@@ -34,5 +34,5 @@ def add_translation(translation: Translation):
         translations = load_json("/index/translations")
     except Exception:
         translations = {}
-    translations[translation.id] = fastapi.encoders.jsonable_encoder(translation.dict())
+    translations[translation.id] = fastapi.encoders.jsonable_encoder(translation.model_dump())
     write_file("/index/translations", fastapi.encoders.jsonable_encoder(translations))

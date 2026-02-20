@@ -4,11 +4,11 @@ from pydantic import BaseModel
 
 
 class Crumb(BaseModel):
-	titles: Dict[str, Optional[str]] = None
-	indexed_titles: Dict[str, Optional[str]] = None
-	path: str = None
+	titles: Optional[Dict[str, Optional[str]]] = None
+	indexed_titles: Optional[Dict[str, Optional[str]]] = None
+	path: Optional[str] = None
 
 class Navigation(BaseModel):
-	prev: str = None
-	next: str = None
-	up: str = None
+	prev: Optional[str] = None
+	next: Optional[str] = None
+	up: Optional[str] = None
