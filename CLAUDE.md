@@ -168,13 +168,17 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 - **Encoding issues**: All JSON files use UTF-8 encoding with `ensure_ascii=False` to preserve Arabic text
 - **Sequence errors**: Parser validates chapter numbering; errors are logged to the `ProcessingReport.sequence_errors` list (and legacy `SEQUENCE_ERRORS` global) but don't halt execution
 - **logger.warn is deprecated**: Use `logger.warning()` instead of `logger.warn()` -- the latter triggers `DeprecationWarning` on Python 3.12+
-- **Windows shell rules**: When running tests from the root `scripture/` directory, use `cd ThaqalaynDataGenerator && DESTINATION_DIR=... PYTHONPATH=... .venv/Scripts/python.exe -m pytest` pattern. Do not chain `cd` with `&&` when following TEAM.md rules, but this is sometimes needed when the working directory resets between bash calls
-- **Shell patterns that trigger approval prompts**: Avoid these — they require manual user approval and block automation:
-  - No `sleep` chained with `&&` (e.g., `sleep 300 && ...`). If you need to wait, use separate Bash calls.
-  - No compound `if/then/else` one-liners (e.g., `if [ -f ... ]; then ...; else ...; fi`).
-  - No full absolute paths in file checks. Use relative paths from the working directory (e.g., `ls ThaqalaynDataGenerator/app/raw/.../hadiths.json`).
-  - No `cd` combined with `2>/dev/null` or other redirections in compound commands.
-- **`uv` not in bash PATH on Windows**: The `uv` command may not be available in Git Bash even when installed. Use `source .venv/Scripts/activate && python` as a reliable alternative. Or call `.venv/Scripts/python.exe` directly if activation fails.
+- **SHELL RULES (CRITICAL — violations trigger approval prompts or shutdown)**:
+  - Every command must be a **separate Bash tool call**. No chaining with `&&`.
+  - **FORBIDDEN**: `&&` after `cd`, full absolute paths with `cd`, `$(pwd)` (use `$PWD`), `.venv/Scripts/python.exe` (source venv then use `python`), `2>&1`, `2>/dev/null`, `| tail`, `| head`, `sleep N && ...`, `if [ ... ]; then ... fi` one-liners.
+  - **ALLOWED patterns** (each as its own Bash call):
+    - `pwd`
+    - `cd ThaqalaynDataGenerator` (relative, no chaining)
+    - `source .venv/Scripts/activate`
+    - `DESTINATION_DIR="../ThaqalaynData/" PYTHONPATH="$PWD:$PWD/app" python -m pytest --no-cov -q`
+    - `ls app/raw/thaqalayn_api/nahj-al-balagha/hadiths.json` (relative paths for file checks)
+  - To run tests: first `cd ThaqalaynDataGenerator` in one call, then `source .venv/Scripts/activate` in another, then the test command in a third.
+- **`uv` not in bash PATH on Windows**: The `uv` command may not be available in Git Bash even when installed. Activate the venv first (`source .venv/Scripts/activate`) and then use `python` directly.
 - **`requests` not installed**: The venv does not include the `requests` library. Scrapers use `urllib.request` (stdlib) instead. If you need HTTP in new scripts, use `urllib.request.Request` with a `User-Agent` header.
 - **Arabic text on Windows console**: Printing Arabic text to Windows console causes `UnicodeEncodeError: 'charmap' codec can't encode character`. Fix with `sys.stdout.reconfigure(encoding='utf-8')` at the top of scripts that print Arabic.
 - **hubeali.com Arabic encoding**: The Book of Sulaym page on hubeali.com has encoding issues. Using `raw.decode("utf-8", errors="replace")` prevents crashes but corrupts Arabic characters, causing the scraper to extract 0 Arabic paragraphs. The raw HTML is saved at `raw/hubeali_com/book-of-sulaym/page.html` for future re-parsing with a different approach.
