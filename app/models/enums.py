@@ -14,6 +14,7 @@ class Language(LowerCaseAutoName):
     EN = auto()
     ENT = auto()
     FA = auto()
+    FR = auto()
 
 class PartType(AutoName):
     Verse = auto()
@@ -22,3 +23,4 @@ class PartType(AutoName):
     Chapter = auto()
     Hadith = auto()
     Heading = auto()
+    Section = auto()

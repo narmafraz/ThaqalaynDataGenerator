@@ -19,17 +19,19 @@ class NarratorChain(BaseModel):
 
 class Verse(BaseModel):
 	narrator_chain: Optional[NarratorChain] = None
-	gradings: Optional[List[str]] = None
+	gradings: Optional[Dict[str, str]] = None
 	index: Optional[int] = None
 	local_index: Optional[int] = None
 	part_type: Optional[PartType] = None
 	path: Optional[str] = None
 	relations: Optional[Dict[str, Set[str]]] = None
 	sajda_type: Optional[str] = None
+	source_url: Optional[str] = None
 	text: Optional[List[str]] = None
 	translations: Optional[Dict[str, List[str]]] = None
 
 class Chapter(BaseModel):
+	author: Optional[Dict[str, str]] = None
 	chapters: Optional[List[Chapter]] = None
 	crumbs: Optional[List[Crumb]] = None
 	default_verse_translation_ids: Optional[Dict[str, str]] = None
@@ -43,7 +45,9 @@ class Chapter(BaseModel):
 	reveal_type: Optional[str] = None
 	rukus: Optional[int] = None
 	sajda_type: Optional[str] = None
+	source_url: Optional[str] = None
 	titles: Optional[Dict[str, Optional[str]]] = None
+	translator: Optional[Dict[str, str]] = None
 	translations: Optional[Dict[str, str]] = None
 	verse_count: Optional[int] = None
 	verse_start_index: Optional[int] = None

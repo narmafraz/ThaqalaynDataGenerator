@@ -1,17 +1,9 @@
-import json
 import logging
-import os
-import sqlite3
-import xml.etree.ElementTree
 from typing import Dict, List
 
-# make sure all SQL Alchemy models are imported before initializing DB
-# otherwise, SQL Alchemy might fail to initialize relationships properly
-# for more details: https://github.com/tiangolo/full-stack-fastapi-postgresql/issues/28
-from app.kafi import BOOK_INDEX as KAFI_INDEX
+from app.book_registry import BOOK_REGISTRY
 from app.lib_db import write_file
 from app.models import Language
-from app.quran import BOOK_INDEX as QURAN_INDEX
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,6 +12,23 @@ BOOK_INDEX = "books"
 BOOK_PATH = "/books/"
 
 def init_books():
+	chapters = []
+	for book_config in BOOK_REGISTRY:
+		entry = {
+			"index": book_config.index,
+			"path": book_config.path,
+			"titles": book_config.titles,
+		}
+		if book_config.descriptions:
+			entry["descriptions"] = book_config.descriptions
+		if book_config.author:
+			entry["author"] = book_config.author
+		if book_config.translator:
+			entry["translator"] = book_config.translator
+		if book_config.source_url:
+			entry["source_url"] = book_config.source_url
+		chapters.append(entry)
+
 	data_root = {
 		"titles": {
 			Language.EN.value: "Books",
@@ -27,24 +36,7 @@ def init_books():
 		"descriptions": {
 			Language.EN.value: "The two weighty things at your fingertips!"
 		},
-		"chapters": [
-			{
-				"index": QURAN_INDEX,
-				"path": BOOK_PATH + 'quran',
-				"titles": {
-					Language.EN.value: "The Holy Quran",
-					Language.AR.value: "القرآن الكريم"
-				}
-			},
-			{
-				"index": KAFI_INDEX,
-				"path": BOOK_PATH + 'al-kafi',
-				"titles": {
-					Language.EN.value: "Al-Kafi",
-					Language.AR.value: "الكافي"
-				}
-			}
-		]
+		"chapters": chapters
 	}
 
 	obj_in = {

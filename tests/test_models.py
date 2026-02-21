@@ -194,3 +194,114 @@ class TestModelRoundTrip:
         assert restored.nav.prev == "/books/test:1"
         assert restored.nav.next == "/books/test:3"
         assert restored.nav.up == "/books/test"
+
+
+class TestSchemaEvolution:
+    """Test Phase 3B schema additions."""
+
+    def test_verse_gradings_dict(self):
+        """Gradings field accepts Dict[str, str] for grading systems."""
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = ["Arabic text"]
+        v.gradings = {
+            "majlisi": "Sahih",
+            "mohseni": "Mu'tabar",
+            "behbudi": "Sahih",
+        }
+
+        json_data = jsonable_encoder(v)
+        assert json_data["gradings"]["majlisi"] == "Sahih"
+        assert json_data["gradings"]["mohseni"] == "Mu'tabar"
+        assert json_data["gradings"]["behbudi"] == "Sahih"
+
+        restored = Verse(**json_data)
+        assert restored.gradings == v.gradings
+
+    def test_verse_source_url(self):
+        """Verse source_url links back to source site."""
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = ["Arabic text"]
+        v.source_url = "https://thaqalayn.net/hadith/1/1/1/1"
+
+        json_data = jsonable_encoder(v)
+        assert json_data["source_url"] == "https://thaqalayn.net/hadith/1/1/1/1"
+
+        restored = Verse(**json_data)
+        assert restored.source_url == v.source_url
+
+    def test_verse_gradings_none_by_default(self):
+        """Gradings field is None by default and omitted from JSON."""
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = ["text"]
+
+        assert v.gradings is None
+
+    def test_verse_source_url_none_by_default(self):
+        """source_url is None by default."""
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = ["text"]
+
+        assert v.source_url is None
+
+    def test_section_part_type(self):
+        """Section PartType for ThaqalaynAPI books with sections."""
+        ch = Chapter()
+        ch.part_type = PartType.Section
+        ch.titles = {"en": "Section 1"}
+        ch.path = "/books/test:1"
+
+        json_data = jsonable_encoder(ch)
+        assert json_data["part_type"] == "Section"
+
+        restored = Chapter(**json_data)
+        assert restored.part_type == PartType.Section
+
+    def test_french_language(self):
+        """FR language enum for French translations."""
+        assert Language.FR.value == "fr"
+
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = ["Arabic text"]
+        v.translations = {
+            "fr.test": ["Traduction francaise"]
+        }
+
+        json_data = jsonable_encoder(v)
+        assert json_data["translations"]["fr.test"] == ["Traduction francaise"]
+
+    def test_chapter_book_metadata(self):
+        """Chapter supports author, translator, source_url metadata."""
+        ch = Chapter()
+        ch.part_type = PartType.Book
+        ch.titles = {"en": "Al-Kafi", "ar": "\u0627\u0644\u0643\u0627\u0641\u064a"}
+        ch.path = "/books/al-kafi"
+        ch.author = {
+            "en": "Shaykh al-Kulayni",
+            "ar": "\u0627\u0644\u0634\u064a\u062e \u0627\u0644\u0643\u0644\u064a\u0646\u064a",
+        }
+        ch.translator = {
+            "en": "HubeAli.com",
+        }
+        ch.source_url = "https://thaqalayn.net/"
+
+        json_data = jsonable_encoder(ch)
+        assert json_data["author"]["en"] == "Shaykh al-Kulayni"
+        assert json_data["translator"]["en"] == "HubeAli.com"
+        assert json_data["source_url"] == "https://thaqalayn.net/"
+
+        restored = Chapter(**json_data)
+        assert restored.author == ch.author
+        assert restored.translator == ch.translator
+        assert restored.source_url == ch.source_url
+
+    def test_chapter_metadata_none_by_default(self):
+        """Book metadata fields are None by default."""
+        ch = Chapter()
+        assert ch.author is None
+        assert ch.translator is None
+        assert ch.source_url is None
