@@ -189,19 +189,24 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 The primary source for structured hadith data. Provides REST JSON for 33 books from thaqalayn.net. API endpoint: `GET /api/v2/{book-slug}/{hadith-id}`. Book list: `GET /api/v2/allbooks`. Each hadith includes Arabic text, English translation, narrator chain separation (`thaqalaynSanad`/`thaqalaynMatn`), grading fields (`majlisiGrading`, `mohseniGrading`, `behbudiGrading`), and thaqalayn.net URLs. Rate limit: use >= 0.5s delay between requests.
 
 ### Tahdhib al-Ahkam & al-Istibsar (Remaining Two of the Four Books)
-**BREAKTHROUGH**: ghbook.ir (Qaimiyyah Digital Library) has BOTH books as structured HTML text (Arabic):
-- **Tahdhib al-Ahkam** (~13,590 hadiths, 10 vols by al-Tusi): book_id=378, 4,119 pages
-  - HTML download: `download.ghbook.ir/downloads.php?id=378&file=378-a-13900129-tahzebalahkam-koli.htm`
-  - EPUB download: `download.ghbook.ir/downloads.php?id=378&file=378-ar-tahzebalahkam-koli.epub`
-  - Text is fully diacritized, hadith numbers clearly marked (e.g. "(145) 84"), includes footnotes with cross-references
-  - English translation (Vols 1-3 only): PDF at almuntazar.ca (Bab ul Qaim Publications)
-- **al-Istibsar** (~5,511 hadiths, 4 vols by al-Tusi): book_id=2628
-  - HTML download: `download.ghbook.ir/downloads.php?id=2628&file=2628-a-13900308-alestebsar-koli.htm`
-  - EPUB download: `download.ghbook.ir/downloads.php?id=2628&file=2628-ar-alestebsar-koli.epub`
-  - NO English translation available online anywhere
-- **Recommended approach**: Download HTML/EPUB from ghbook.ir, parse with BeautifulSoup, identify hadith boundaries by numbered patterns, extract narrator chains from Arabic text
-- **License**: Free distribution explicitly stated ("نشر رایگان مطالب و نرم افزارهای سایت مجاز می باشد")
-- **Previous assessment was wrong** -- English-only searches found only PDFs; Arabic/Farsi searches revealed this HTML source
+Multiple Arabic text sources confirmed. Cross-validation: gather from 2+ independent sources.
+
+**Source 1 - ghbook.ir (Qaimiyyah Digital Library)** -- HTML/EPUB download:
+- **Tahdhib al-Ahkam**: book_id=378, 10 vols, 4,119 pages. HTML: `download.ghbook.ir/downloads.php?id=378&file=378-a-13900129-tahzebalahkam-koli.htm`
+- **al-Istibsar**: book_id=2628, 4 vols. HTML: `download.ghbook.ir/downloads.php?id=2628&file=2628-a-13900308-alestebsar-koli.htm`
+- Free distribution license. Fully diacritized text. Hadith numbers clearly marked.
+
+**Source 2 - rafed.net (Maktabat Rafed)** -- Word download API (easiest to automate):
+- **Tahdhib**: Vols 1-10 (view IDs: 722, 731, 734, 735, 736, 737, 741, 745, 747, 752). Word: `books.rafed.net/api/download/{id}/doc`
+- **al-Istibsar**: Vols 1-4 (view IDs: 1266, 1307, 1320, 1321). Word: `books.rafed.net/api/download/{id}/doc`
+- Also has Al-Kafi (view/372+) and Man La Yahduruhu al-Faqih (view/1414+) -- ALL Four Books
+- Page-by-page text at `/view/{id}/page/{n}`. Clean HTML paragraphs. No login required.
+
+**Source 3 - almuntazar.ca** -- PDF backup:
+- Tahdhib: Arabic (9 vols) + English Vols 1-3 (Bab ul Qaim Publications)
+- al-Istibsar: Arabic (4 vols), NO English
+
+**Recommended**: Download Word from rafed.net API (easiest), download HTML from ghbook.ir, cross-validate. For English: babulqaim.com/almuntazar.ca PDFs (Tahdhib Vols 1-3 only).
 
 ### Other Missing Books
 3. **Tuhaf al-Uqul** — available on al-islam.org but English only (no Arabic text).
