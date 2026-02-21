@@ -121,6 +121,10 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 
 5. **Corrections Layer**: `kafi_corrections.py` contains manual fixes for source HTML errors, keeping parser logic clean.
 
+6. **ProcessingReport**: Error accumulation uses a `ProcessingReport` class (in `lib_model.py`) that is passed through the pipeline. It replaces the old module-level globals (`SEQUENCE_ERRORS`, `NARRATIONS_WITHOUT_NARRATORS`). All report parameters are optional with `None` default, falling back to a global default report for backward compatibility. Tests should create isolated `ProcessingReport()` instances to avoid state leaks between tests.
+
+7. **Narrator Subchain Optimization**: `getCombinations()` in `kafi_narrators.py` generates only full chains + consecutive pairs (not all contiguous subsequences). A chain of N narrators produces N entries (1 full chain + N-1 pairs) instead of N*(N+1)/2 - N. When the chain has exactly 2 narrators, the full chain equals the only pair, so a dedup check avoids double-counting.
+
 ## Environment Variables
 
 - `DESTINATION_DIR`: Output directory for generated JSON files (default: `../ThaqalaynData/`)
@@ -131,4 +135,6 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 - **Import errors**: Ensure `PYTHONPATH` includes both project root and `app/` directory
 - **Missing output directory**: The generator creates directories automatically, but `DESTINATION_DIR` parent must exist
 - **Encoding issues**: All JSON files use UTF-8 encoding with `ensure_ascii=False` to preserve Arabic text
-- **Sequence errors**: Parser validates chapter numbering; errors are logged to `SEQUENCE_ERRORS` list but don't halt execution
+- **Sequence errors**: Parser validates chapter numbering; errors are logged to the `ProcessingReport.sequence_errors` list (and legacy `SEQUENCE_ERRORS` global) but don't halt execution
+- **logger.warn is deprecated**: Use `logger.warning()` instead of `logger.warn()` -- the latter triggers `DeprecationWarning` on Python 3.12+
+- **Windows shell rules**: When running tests from the root `scripture/` directory, use `cd ThaqalaynDataGenerator && DESTINATION_DIR=... PYTHONPATH=... .venv/Scripts/python.exe -m pytest` pattern. Do not chain `cd` with `&&` when following TEAM.md rules, but this is sometimes needed when the working directory resets between bash calls
