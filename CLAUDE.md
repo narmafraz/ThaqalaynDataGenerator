@@ -169,6 +169,11 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 - **Sequence errors**: Parser validates chapter numbering; errors are logged to the `ProcessingReport.sequence_errors` list (and legacy `SEQUENCE_ERRORS` global) but don't halt execution
 - **logger.warn is deprecated**: Use `logger.warning()` instead of `logger.warn()` -- the latter triggers `DeprecationWarning` on Python 3.12+
 - **Windows shell rules**: When running tests from the root `scripture/` directory, use `cd ThaqalaynDataGenerator && DESTINATION_DIR=... PYTHONPATH=... .venv/Scripts/python.exe -m pytest` pattern. Do not chain `cd` with `&&` when following TEAM.md rules, but this is sometimes needed when the working directory resets between bash calls
+- **Shell patterns that trigger approval prompts**: Avoid these — they require manual user approval and block automation:
+  - No `sleep` chained with `&&` (e.g., `sleep 300 && ...`). If you need to wait, use separate Bash calls.
+  - No compound `if/then/else` one-liners (e.g., `if [ -f ... ]; then ...; else ...; fi`).
+  - No full absolute paths in file checks. Use relative paths from the working directory (e.g., `ls ThaqalaynDataGenerator/app/raw/.../hadiths.json`).
+  - No `cd` combined with `2>/dev/null` or other redirections in compound commands.
 - **`uv` not in bash PATH on Windows**: The `uv` command may not be available in Git Bash even when installed. Use `source .venv/Scripts/activate && python` as a reliable alternative. Or call `.venv/Scripts/python.exe` directly if activation fails.
 - **`requests` not installed**: The venv does not include the `requests` library. Scrapers use `urllib.request` (stdlib) instead. If you need HTTP in new scripts, use `urllib.request.Request` with a `User-Agent` header.
 - **Arabic text on Windows console**: Printing Arabic text to Windows console causes `UnicodeEncodeError: 'charmap' codec can't encode character`. Fix with `sys.stdout.reconfigure(encoding='utf-8')` at the top of scripts that print Arabic.
