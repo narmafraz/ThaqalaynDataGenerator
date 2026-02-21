@@ -10,7 +10,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.lib_bs4 import get_contents, is_rtl_tag
 from app.lib_db import insert_chapter, load_chapter, write_file
-from app.lib_model import SEQUENCE_ERRORS, set_index
+from app.lib_model import ProcessingReport, SEQUENCE_ERRORS, get_default_report, set_index
 from app.models import Chapter, Language, PartType, Translation, Verse
 from app.models.index import Index
 
@@ -34,10 +34,13 @@ def we_dont_care(html: str) -> bool:
 def sitepath_from_filepath(filepath: str) -> str:
 	return filepath[filepath.index('\\chapter\\')+9:].replace('.html', '').replace('\\', '/')
 
-def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
+def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0, report: ProcessingReport = None):
+	if report is None:
+		report = get_default_report()
 	if filepath.endswith('\\0.html'):
 		error_msg = f"Skipping zero file {filepath}"
-		logger.warn(error_msg)
+		logger.warning(error_msg)
+		report.add_sequence_error(error_msg)
 		SEQUENCE_ERRORS.append(error_msg)
 		return
 
@@ -98,7 +101,8 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 				else:
 					my_site_path = site_path.replace('/', ':')
 				error_msg = f"Appending new hadith from Sarwar to hubeali, hadith #{hadith_index+1} from https://thaqalayn.net/chapter/{site_path} to https://thaqalayn.netlify.app/#{my_site_path}"
-				logger.warn(error_msg)
+				logger.warning(error_msg)
+				report.add_sequence_error(error_msg)
 				SEQUENCE_ERRORS.append(error_msg)
 			else:
 				# TODO: create new verse if the verse at this index doesn't match the one being inserted
@@ -111,7 +115,8 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 				
 				if verse.part_type != PartType.Hadith:
 					error_msg = f"Hadith index {hadith_index} is of part_type {verse.part_type} in https://thaqalayn.netlify.app/#{chapter.crumbs[-1].path}"
-					logger.warn(error_msg)
+					logger.warning(error_msg)
+					report.add_sequence_error(error_msg)
 					SEQUENCE_ERRORS.append(error_msg)
 
 
@@ -135,7 +140,8 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0):
 	if hadith_index != len(verses) - heading_count and 'al-kafi:8:1' not in chapter.path:
 		site_path = sitepath_from_filepath(filepath)
 		error_msg = f"Sarwar has {hadith_index} hadith but hubeali has {len(verses)} hadith: https://thaqalayn.net/chapter/{site_path} vs https://thaqalayn.netlify.app/#{chapter.path}"
-		logger.warn(error_msg)
+		logger.warning(error_msg)
+		report.add_sequence_error(error_msg)
 		SEQUENCE_ERRORS.append(error_msg)
 
 def load_chapter_from_file(filename):
@@ -222,40 +228,42 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 
 	return (book.chapters[chapter_index], hadith_index)
 	
-def add_book_content(book: Chapter, dirname, volume):
+def add_book_content(book: Chapter, dirname, volume, report: ProcessingReport = None):
 	cfiles = glob.glob(os.path.join(dirname, "*"))
 	for cfile in cfiles:
 		logger.info("Processing file %s", cfile)
 		chapter_index = int(os.path.basename(cfile).replace('.html', '')) - 1
 
 		(chapter, hadith_index) = get_adjusted_chapter(volume, book, cfile, chapter_index)
-		
-		add_chapter_content(chapter, cfile, hadith_index)
 
-def add_content(volume: Chapter, dirname):
+		add_chapter_content(chapter, cfile, hadith_index, report)
+
+def add_content(volume: Chapter, dirname, report: ProcessingReport = None):
 	cfiles = glob.glob(dirname + "*")
 
 	for cfile in cfiles:
 		logger.info("Processing book dir %s", cfile)
 		book_index = int(os.path.basename(cfile)) - 1
-		add_book_content(volume.chapters[book_index], cfile, volume)
+		add_book_content(volume.chapters[book_index], cfile, volume, report)
 
 def get_path(file):
 	return os.path.join(os.path.dirname(__file__), "raw\\thaqalayn_net\\Thaqalayn\\thaqalayn.net\\" + file)
 
-def add_kafi_sarwar():
+def add_kafi_sarwar(report: ProcessingReport = None):
+	if report is None:
+		report = get_default_report()
 	kafi = load_chapter("/books/complete/al-kafi")
-	add_content(kafi.chapters[0], get_path("chapter\\1\\"))
-	add_content(kafi.chapters[1], get_path("chapter\\2\\"))
-	add_content(kafi.chapters[2], get_path("chapter\\3\\"))
-	add_content(kafi.chapters[3], get_path("chapter\\4\\"))
-	add_content(kafi.chapters[4], get_path("chapter\\5\\"))
-	add_content(kafi.chapters[5], get_path("chapter\\6\\"))
-	add_content(kafi.chapters[6], get_path("chapter\\7\\"))
-	add_content(kafi.chapters[7], get_path("chapter\\8\\"))
+	add_content(kafi.chapters[0], get_path("chapter\\1\\"), report)
+	add_content(kafi.chapters[1], get_path("chapter\\2\\"), report)
+	add_content(kafi.chapters[2], get_path("chapter\\3\\"), report)
+	add_content(kafi.chapters[3], get_path("chapter\\4\\"), report)
+	add_content(kafi.chapters[4], get_path("chapter\\5\\"), report)
+	add_content(kafi.chapters[5], get_path("chapter\\6\\"), report)
+	add_content(kafi.chapters[6], get_path("chapter\\7\\"), report)
+	add_content(kafi.chapters[7], get_path("chapter\\8\\"), report)
 
-	set_index(kafi, [0, 0, 0, 0], 0)
+	set_index(kafi, [0, 0, 0, 0], 0, report)
 	insert_chapter(kafi)
 	write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
 
-	pprint(SEQUENCE_ERRORS, width=240)
+	report.print_summary()

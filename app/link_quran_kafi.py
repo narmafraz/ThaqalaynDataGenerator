@@ -6,7 +6,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.lib_bs4 import get_contents, is_rtl_tag
 from app.lib_db import insert_chapter, load_chapter, write_file
-from app.lib_model import SEQUENCE_ERRORS, get_chapters, get_verses
+from app.lib_model import get_chapters, get_verses
 from app.models import Chapter, Language, PartType, Translation, Verse
 
 logging.basicConfig(level=logging.INFO)

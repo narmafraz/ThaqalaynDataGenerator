@@ -6,6 +6,7 @@ from app.kafi_narrators import (
     compose_narrator_metadata, add_narrator_links, update_narrators,
     process_chapter_verses, process_chapter,
 )
+from app.lib_model import ProcessingReport
 from app.models import Chapter, Language, PartType, Translation, Verse
 from app.models.people import NarratorIndex, Narrator, ChainVerses
 from app.models.quran import NarratorChain, SpecialText
@@ -741,3 +742,59 @@ class TestProcessChapter:
         # Hadith at depth 3 should still be processed
         assert len(narrators) >= 2
         assert hadith.narrator_chain is not None
+
+
+class TestProcessingReportIntegration:
+    """Test that ProcessingReport is correctly used by kafi_narrators functions."""
+
+    def test_extract_narrators_increments_report_on_no_match(self):
+        """extract_narrators increments report counter when no narrators found."""
+        report = ProcessingReport()
+
+        hadith = Verse()
+        hadith.part_type = PartType.Hadith
+        hadith.path = "/books/test:1"
+        hadith.text = ["text without any narrator patterns"]
+
+        result = extract_narrators(hadith, report)
+
+        assert result == []
+        assert report.narrations_without_narrators == 1
+
+    def test_extract_narrators_does_not_increment_on_match(self):
+        """extract_narrators does not increment counter when narrators are found."""
+        report = ProcessingReport()
+
+        hadith = Verse()
+        hadith.part_type = PartType.Hadith
+        hadith.path = "/books/test:1"
+        hadith.text = ["مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ text"]
+
+        result = extract_narrators(hadith, report)
+
+        assert len(result) > 0
+        assert report.narrations_without_narrators == 0
+
+    def test_process_chapter_passes_report_through(self):
+        """process_chapter passes report to extract_narrators for no-match counting."""
+        report = ProcessingReport()
+        narrator_index = NarratorIndex()
+        narrator_index.name_id = {}
+        narrator_index.id_name = {}
+        narrator_index.last_id = 0
+        narrators = {}
+
+        chapter = Chapter()
+        chapter.verses = []
+
+        # Hadith with no narrator pattern
+        hadith = Verse()
+        hadith.part_type = PartType.Hadith
+        hadith.path = "/books/test:1"
+        hadith.text = ["plain text without narrators"]
+        hadith.translations = {}
+        chapter.verses.append(hadith)
+
+        process_chapter(chapter, narrator_index, narrators, report)
+
+        assert report.narrations_without_narrators == 1

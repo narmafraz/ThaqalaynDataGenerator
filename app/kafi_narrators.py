@@ -7,7 +7,7 @@ from fastapi.encoders import jsonable_encoder
 from app.lib_bs4 import get_contents, is_rtl_tag
 from app.lib_db import (delete_folder, insert_chapter, load_chapter, load_json,
                         write_file)
-from app.lib_model import SEQUENCE_ERRORS, get_chapters, get_verses
+from app.lib_model import ProcessingReport, get_chapters, get_default_report, get_verses
 from app.models import Chapter, Language, PartType, Translation, Verse
 from app.models.people import ChainVerses, Narrator, NarratorIndex
 from app.models.quran import NarratorChain, SpecialText
@@ -31,10 +31,9 @@ NARRATORS_TEXT_PATTERN = re.compile(u"(.*?) (قَالَ|فِي هَذِهِ ال
 NARRATORS_TEXT_FAILOVER_PATTERN = re.compile(u"(.*?\\( عليهم? السلام \\))")
 NARRATORS_TEXT_CONTINUE_PATTERN = re.compile(u"\\s*(حَدَّثَنِي)\\s")
 
-NARRATIONS_WITHOUT_NARRATORS = 0
-
-def extract_narrators(hadith: Verse) -> List[str]:
-    global NARRATIONS_WITHOUT_NARRATORS
+def extract_narrators(hadith: Verse, report: ProcessingReport = None) -> List[str]:
+    if report is None:
+        report = get_default_report()
     narrators = []
     first_line = hadith.text[0]
 
@@ -73,7 +72,7 @@ def extract_narrators(hadith: Verse) -> List[str]:
             narrators = NARRATOR_SPLIT_PATTERN.split(narrators_without_prefix)
     else:
         logger.warning("Could not find narrators for %s", hadith.path)
-        NARRATIONS_WITHOUT_NARRATORS += 1
+        report.narrations_without_narrators += 1
 
     return narrators
 
@@ -166,15 +165,17 @@ def update_narrators(hadith: Verse, narrator_ids, narrators: Dict[int, Narrator]
                     narrator.subchains[subchain_key] = cv
                 narrator.subchains[subchain_key].verse_paths.add(hadith.path)
 
-def process_chapter_verses(chapter: Chapter, narrator_index, narrators):
+def process_chapter_verses(chapter: Chapter, narrator_index, narrators, report: ProcessingReport = None):
+    if report is None:
+        report = get_default_report()
     for hadith in chapter.verses:
         # Ran into issues with /books/al-kafi:7:3:15#h5
         if len(hadith.text) < 1:
-            logger.warn("No Arabic text found in %s", hadith.path)
+            logger.warning("No Arabic text found in %s", hadith.path)
             continue
         hadith.text[0] = SPAN_PATTERN.sub("", hadith.text[0])
         try:
-            narrator_names = extract_narrators(hadith)
+            narrator_names = extract_narrators(hadith, report)
             narrator_ids = assign_narrator_id(narrator_names, narrator_index)
             add_narrator_links(hadith, narrator_ids, narrator_index)
             update_narrators(hadith, narrator_ids, narrators, narrator_index)
@@ -184,14 +185,16 @@ def process_chapter_verses(chapter: Chapter, narrator_index, narrators):
             logger.error('Ran into exception with hadith at ' + hadith.path)
             raise e
 
-def process_chapter(kafi: Chapter, narrator_index, narrators: Dict[int, Narrator]):
+def process_chapter(kafi: Chapter, narrator_index, narrators: Dict[int, Narrator], report: ProcessingReport = None):
+    if report is None:
+        report = get_default_report()
     chapters = get_chapters(kafi)
     verses = get_verses(kafi)
     if chapters:
         for chapter in chapters:
-            process_chapter(chapter, narrator_index, narrators)
+            process_chapter(chapter, narrator_index, narrators, report)
     elif verses:
-        process_chapter_verses(kafi, narrator_index, narrators)
+        process_chapter_verses(kafi, narrator_index, narrators, report)
     else:
         logger.info("Couldn't find anything to process in %s", kafi)
 
@@ -265,15 +268,17 @@ def insert_narrator_index(narrator_index: NarratorIndex, narrators: Dict[int, Na
     }
     write_file("/people/narrators/index", obj)
 
-def kafi_narrators():
+def kafi_narrators(report: ProcessingReport = None):
+    if report is None:
+        report = get_default_report()
     # reset narrators
     delete_folder("/people/narrators")
     narrator_index = load_narrator_index()
     narrators = {}
 
     kafi = load_chapter("/books/complete/al-kafi")
-    process_chapter(kafi, narrator_index, narrators)
-    print(f"Number of narrations without narrators: {NARRATIONS_WITHOUT_NARRATORS}")
+    process_chapter(kafi, narrator_index, narrators, report)
+    logger.info("Number of narrations without narrators: %d", report.narrations_without_narrators)
 
     insert_narrators(narrators)
     insert_narrator_index(narrator_index, narrators)

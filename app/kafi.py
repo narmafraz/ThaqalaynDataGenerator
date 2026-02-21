@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 from app.kafi_corrections import file_correction
 from app.lib_bs4 import get_contents, is_rtl_tag, is_tag
 from app.lib_db import insert_chapter, write_file
-from app.lib_model import SEQUENCE_ERRORS, set_index
+from app.lib_model import ProcessingReport, SEQUENCE_ERRORS, get_default_report, set_index
 from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
 
 def set_titles_and_index(chapter, titles):
@@ -444,7 +444,7 @@ def get_path(file):
 	return os.path.join(os.path.dirname(__file__), "raw\\" + file)
 
 
-def build_kafi() -> Chapter:
+def build_kafi(report: ProcessingReport = None) -> Chapter:
 	kafi = Chapter()
 	kafi.index = BOOK_INDEX
 	kafi.path = BOOK_PATH
@@ -506,17 +506,18 @@ def build_kafi() -> Chapter:
 	kafi.index = BOOK_INDEX
 	kafi.path = BOOK_PATH
 	
-	set_index(kafi, [0, 0, 0, 0], 0)
+	set_index(kafi, [0, 0, 0, 0], 0, report)
 
 	return kafi
 
-def init_kafi():
-	book = build_kafi()
+def init_kafi(report: ProcessingReport = None):
+	if report is None:
+		report = get_default_report()
+	book = build_kafi(report)
 
 	insert_chapter(book)
 
 	write_file("/books/complete/al-kafi", fastapi.encoders.jsonable_encoder(book))
-    
 
-	pprint(SEQUENCE_ERRORS)
+	report.print_summary()
 	return book

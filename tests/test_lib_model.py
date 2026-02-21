@@ -1,4 +1,4 @@
-from app.lib_model import set_index, get_chapters, get_verses, SEQUENCE_ERRORS
+from app.lib_model import set_index, get_chapters, get_verses, ProcessingReport, SEQUENCE_ERRORS
 from app.models import Chapter, Crumb, PartType, Verse
 
 
@@ -161,8 +161,8 @@ class TestSequenceErrors:
     """Test chapter numbering validation"""
 
     def test_skipped_chapter_number_logged(self):
-        """Test that skipping a chapter number adds to SEQUENCE_ERRORS"""
-        initial_errors = len(SEQUENCE_ERRORS)
+        """Test that skipping a chapter number adds to report.sequence_errors"""
+        report = ProcessingReport()
 
         book = Chapter()
         book.part_type = PartType.Book
@@ -187,14 +187,15 @@ class TestSequenceErrors:
 
         book.chapters = [ch1, ch3]
 
-        set_index(book, [], 0)
+        set_index(book, [], 0, report)
 
         # Should have logged a sequence error
-        assert len(SEQUENCE_ERRORS) > initial_errors
+        assert len(report.sequence_errors) == 1
+        assert "Chapter 2" in report.sequence_errors[0]
 
     def test_sequential_chapters_no_error(self):
         """Test that sequential chapter numbers don't produce errors"""
-        initial_errors = len(SEQUENCE_ERRORS)
+        report = ProcessingReport()
 
         book = Chapter()
         book.part_type = PartType.Book
@@ -212,9 +213,9 @@ class TestSequenceErrors:
             ch.verse_start_index = 0
             book.chapters.append(ch)
 
-        set_index(book, [], 0)
+        set_index(book, [], 0, report)
 
-        assert len(SEQUENCE_ERRORS) == initial_errors
+        assert len(report.sequence_errors) == 0
 
 
 class TestVerseStartIndexBehavior:
@@ -307,3 +308,29 @@ class TestVerseStartIndexBehavior:
 
         # Book total is always correct: 4 - 0 = 4
         assert book.verse_count == 4
+
+
+class TestProcessingReport:
+    """Test the ProcessingReport class for error accumulation."""
+
+    def test_fresh_report_is_empty(self):
+        """A new report has no errors and zero counter."""
+        report = ProcessingReport()
+        assert report.sequence_errors == []
+        assert report.narrations_without_narrators == 0
+
+    def test_add_sequence_error(self):
+        """Errors are accumulated in order."""
+        report = ProcessingReport()
+        report.add_sequence_error("error 1")
+        report.add_sequence_error("error 2")
+        assert report.sequence_errors == ["error 1", "error 2"]
+
+    def test_reports_are_isolated(self):
+        """Two report instances do not share state."""
+        r1 = ProcessingReport()
+        r2 = ProcessingReport()
+        r1.add_sequence_error("only in r1")
+        r1.narrations_without_narrators = 5
+        assert r2.sequence_errors == []
+        assert r2.narrations_without_narrators == 0
