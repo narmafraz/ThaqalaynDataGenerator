@@ -1,4 +1,4 @@
-from app.lib_model import set_index, get_chapters, get_verses
+from app.lib_model import set_index, get_chapters, get_verses, SEQUENCE_ERRORS
 from app.models import Chapter, Crumb, PartType
 
 
@@ -155,3 +155,63 @@ class TestGetVerses:
         """Test getting verses returns None when no verses exist"""
         verses = get_verses(nested_book)
         assert verses is None
+
+
+class TestSequenceErrors:
+    """Test chapter numbering validation"""
+
+    def test_skipped_chapter_number_logged(self):
+        """Test that skipping a chapter number adds to SEQUENCE_ERRORS"""
+        initial_errors = len(SEQUENCE_ERRORS)
+
+        book = Chapter()
+        book.part_type = PartType.Book
+        book.titles = {"en": "Test Book"}
+        book.path = "/books/test"
+        book.crumbs = []
+        book.verse_start_index = 0
+        book.chapters = []
+
+        # Chapter 1 and Chapter 3 (skipping 2)
+        ch1 = Chapter()
+        ch1.part_type = PartType.Chapter
+        ch1.titles = {"en": "Chapter 1"}
+        ch1.crumbs = []
+        ch1.verse_start_index = 0
+
+        ch3 = Chapter()
+        ch3.part_type = PartType.Chapter
+        ch3.titles = {"en": "Chapter 3"}
+        ch3.crumbs = []
+        ch3.verse_start_index = 0
+
+        book.chapters = [ch1, ch3]
+
+        set_index(book, [], 0)
+
+        # Should have logged a sequence error
+        assert len(SEQUENCE_ERRORS) > initial_errors
+
+    def test_sequential_chapters_no_error(self):
+        """Test that sequential chapter numbers don't produce errors"""
+        initial_errors = len(SEQUENCE_ERRORS)
+
+        book = Chapter()
+        book.part_type = PartType.Book
+        book.titles = {"en": "Test"}
+        book.path = "/books/test"
+        book.crumbs = []
+        book.verse_start_index = 0
+        book.chapters = []
+
+        for i in range(1, 4):
+            ch = Chapter()
+            ch.part_type = PartType.Chapter
+            ch.titles = {"en": f"Chapter {i}"}
+            ch.crumbs = []
+            ch.verse_start_index = 0
+            book.chapters.append(ch)
+
+        set_index(book, [], 0)
+
+        assert len(SEQUENCE_ERRORS) == initial_errors
