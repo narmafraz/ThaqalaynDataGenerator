@@ -13,7 +13,8 @@ from app.models import Chapter, Language, Translation, Verse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DESTINATION_DIR = os.getenv("DESTINATION_DIR")
+def get_destination_dir():
+	return os.getenv("DESTINATION_DIR")
 
 class InsertedObj():
 	id: str
@@ -67,7 +68,7 @@ def get_dest_path(filename: str) -> str:
 	sanitised_file = filename.replace(":", "/")
 	if sanitised_file.startswith("/"):
 		sanitised_file = sanitised_file[1:]
-	return os.path.join(DESTINATION_DIR, sanitised_file + ".json")
+	return os.path.join(get_destination_dir(), sanitised_file + ".json")
 
 def ensure_dir(file_path):
 	directory = os.path.dirname(file_path)
@@ -108,7 +109,7 @@ def delete_file(path: str) :
 def delete_folder(path: str) :
 	if path.startswith("/"):
 		path = path[1:]
-	filename = os.path.join(DESTINATION_DIR, path)
+	filename = os.path.join(get_destination_dir(), path)
 	if os.path.exists(filename):
 		shutil.rmtree(filename)
 

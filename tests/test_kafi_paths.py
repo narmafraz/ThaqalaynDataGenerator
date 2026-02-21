@@ -1,7 +1,16 @@
+import os
 import unittest
-from app.lib_db import load_chapter
+
+import pytest
+
+from app.lib_db import load_chapter, get_destination_dir
 from app.models.enums import PartType
 
+
+@pytest.mark.skipif(
+    not get_destination_dir() or not os.path.exists(os.path.join(get_destination_dir(), "books", "complete", "al-kafi.json")),
+    reason="Requires generated ThaqalaynData (run the generator first)"
+)
 class TestKafiPaths(unittest.TestCase):
     def test_paths_not_none(self):
         kafi = load_chapter("/books/complete/al-kafi")

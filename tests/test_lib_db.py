@@ -1,4 +1,5 @@
 import json
+from fastapi.encoders import jsonable_encoder
 from app.lib_db import (
     index_from_path, get_dest_path, clean_nones,
     write_file, load_json, ensure_dir
@@ -110,7 +111,7 @@ class TestFileOperations:
         obj = {
             "index": "test:1",
             "kind": "chapter_list",
-            "data": simple_chapter
+            "data": jsonable_encoder(simple_chapter)
         }
         result = write_file("/books/test:1", obj)
 
