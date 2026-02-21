@@ -553,9 +553,9 @@ class TestProcessChapterVerses:
 
         process_chapter_verses(chapter, narrator_index, narrators)
 
-        # Narrator chain should be populated
+        # Narrator chain should be populated (text is set to None for optimization)
         assert hadith.narrator_chain is not None
-        assert hadith.narrator_chain.text is not None
+        assert hadith.narrator_chain.text is None
         # Narrator parts should have been created
         narrator_parts = [p for p in hadith.narrator_chain.parts if p.kind == "narrator"]
         assert len(narrator_parts) >= 2

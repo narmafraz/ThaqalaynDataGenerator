@@ -165,6 +165,8 @@ def process_chapter_verses(chapter: Chapter, narrator_index, narrators):
             narrator_ids = assign_narrator_id(narrator_names, narrator_index)
             add_narrator_links(hadith, narrator_ids, narrator_index)
             update_narrators(hadith, narrator_ids, narrators, narrator_index)
+            if hadith.narrator_chain:
+                hadith.narrator_chain.text = None
         except Exception as e:
             logger.error('Ran into exception with hadith at ' + hadith.path)
             raise e
