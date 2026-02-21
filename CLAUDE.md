@@ -188,10 +188,14 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 ### ThaqalaynAPI (`https://www.thaqalayn-api.net/`)
 The primary source for structured hadith data. Provides REST JSON for 33 books from thaqalayn.net. API endpoint: `GET /api/v2/{book-slug}/{hadith-id}`. Book list: `GET /api/v2/allbooks`. Each hadith includes Arabic text, English translation, narrator chain separation (`thaqalaynSanad`/`thaqalaynMatn`), grading fields (`majlisiGrading`, `mohseniGrading`, `behbudiGrading`), and thaqalayn.net URLs. Rate limit: use >= 0.5s delay between requests.
 
-### Books Still Missing from Aspiration List
-These books have NO structured raw data and are not available on ThaqalaynAPI:
-1. **Tahdhib al-Ahkam** — one of the Four Books. No English structured data found online.
-2. **al-Istibsar** — one of the Four Books. No English structured data found online.
+### Tahdhib al-Ahkam & al-Istibsar (Remaining Two of the Four Books)
+These books have NO structured data (HTML/JSON/API) online. Only PDF sources exist:
+- **Tahdhib al-Ahkam** (~13,590 hadiths, 10 vols by al-Tusi): Arabic PDFs at almuntazar.ca (9 vols) and alkarbala.org. English translation by Bab ul Qaim Publications exists for Vols 1-3 only (PDFs on almuntazar.ca + Google Drive). Vols 4-10 English listed as "Coming Soon".
+- **al-Istibsar** (~5,511 hadiths, 4 vols by al-Tusi): Arabic PDFs at almuntazar.ca (4 vols). NO English translation available online anywhere.
+- **Recommended approach**: Download PDFs, extract text with pdfplumber/PyPDF2, parse into structured JSON. Arabic text extraction from PDFs with diacritics is error-prone. No narrator chain separation available (unlike ThaqalaynAPI data).
+- **lib.eshia.ir** has both books in Arabic but as image scans (not text), so not usable for extraction.
+
+### Other Missing Books
 3. **Tuhaf al-Uqul** — available on al-islam.org but English only (no Arabic text).
 4. **Al-Ihtijaj** — available on al-shia.org/downloadshiabooks.com (not yet scraped).
 5. **Daim al-Islam** — rare, may not have English translation online.
