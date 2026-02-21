@@ -1,10 +1,12 @@
 from pprint import pprint
 
 from app.kafi_narrators import (
-    extract_narrators, assign_narrator_id, getCombinations, compose_narrator_metadata
+    extract_narrators, assign_narrator_id, getCombinations,
+    compose_narrator_metadata, add_narrator_links, update_narrators,
 )
 from app.models import Chapter, Language, PartType, Translation, Verse
 from app.models.people import NarratorIndex, Narrator, ChainVerses
+from app.models.quran import NarratorChain, SpecialText
 
 
 def assert_text_narrators(text, narrators):
@@ -360,3 +362,159 @@ class TestComposeNarratorMetadata:
         assert metadata["narrations"] == 2
         assert metadata["narrated_to"] == 1  # Chain 1-2
         assert metadata["narrated_from"] == 1  # Chain 3-1
+
+
+class TestAddNarratorLinks:
+    """Test narrator link injection into hadith narrator_chain"""
+
+    def test_basic_narrator_links(self):
+        """Test that narrator names are linked in narrator_chain.parts"""
+        hadith = Verse()
+        hadith.path = "/books/al-kafi:1:1:1:1"
+        hadith.narrator_chain = NarratorChain()
+        hadith.narrator_chain.text = "مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ"
+        hadith.narrator_chain.parts = []
+
+        narrator_index = NarratorIndex()
+        narrator_index.name_id = {
+            "مُحَمَّدُ بْنُ يَحْيَى": 1,
+            "أَحْمَدَ بْنِ مُحَمَّدٍ": 2,
+        }
+        narrator_index.id_name = {
+            1: "مُحَمَّدُ بْنُ يَحْيَى",
+            2: "أَحْمَدَ بْنِ مُحَمَّدٍ",
+        }
+
+        add_narrator_links(hadith, [1, 2], narrator_index)
+
+        # Should have narrator parts with kind="narrator" and path
+        narrator_parts = [p for p in hadith.narrator_chain.parts if p.kind == "narrator"]
+        assert len(narrator_parts) == 2
+        assert narrator_parts[0].path == "/people/narrators/1"
+        assert narrator_parts[1].path == "/people/narrators/2"
+
+    def test_no_chain_text_is_noop(self):
+        """Test that missing narrator_chain doesn't crash"""
+        hadith = Verse()
+        hadith.path = "/books/al-kafi:1:1:1:1"
+        hadith.narrator_chain = None
+
+        add_narrator_links(hadith, [1], NarratorIndex())
+        # Should not crash, narrator_chain stays None
+
+    def test_plain_parts_between_narrators(self):
+        """Test that text between narrators gets plain parts"""
+        hadith = Verse()
+        hadith.path = "/books/test:1"
+        hadith.narrator_chain = NarratorChain()
+        hadith.narrator_chain.text = "أَوَّلُ عَنْ ثَانِي"
+        hadith.narrator_chain.parts = []
+
+        narrator_index = NarratorIndex()
+        narrator_index.id_name = {1: "أَوَّلُ", 2: "ثَانِي"}
+
+        add_narrator_links(hadith, [1, 2], narrator_index)
+
+        plain_parts = [p for p in hadith.narrator_chain.parts if p.kind == "plain"]
+        narrator_parts = [p for p in hadith.narrator_chain.parts if p.kind == "narrator"]
+        # Should have connector text " عَنْ " as plain, plus trailing plain
+        assert len(narrator_parts) == 2
+        assert any(" عَنْ " in p.text for p in plain_parts)
+
+
+class TestUpdateNarrators:
+    """Test narrator verse tracking and subchain building"""
+
+    def test_update_narrators_tracks_verse_path(self):
+        """Test that narrator.verse_paths gets the hadith path added"""
+        hadith = Verse()
+        hadith.path = "/books/al-kafi:1:1:1:1"
+
+        narrator_index = NarratorIndex()
+        narrator_index.name_id = {"A": 1, "B": 2}
+        narrator_index.id_name = {1: "A", 2: "B"}
+        narrator_index.last_id = 2
+
+        narrators = {}
+        narrator1 = Narrator()
+        narrator1.index = 1
+        narrator1.path = "/people/narrators/1"
+        narrator1.titles = {"ar": "A"}
+        narrator1.verse_paths = set()
+        narrator1.subchains = {}
+        narrators[1] = narrator1
+
+        narrator2 = Narrator()
+        narrator2.index = 2
+        narrator2.path = "/people/narrators/2"
+        narrator2.titles = {"ar": "B"}
+        narrator2.verse_paths = set()
+        narrator2.subchains = {}
+        narrators[2] = narrator2
+
+        update_narrators(hadith, [1, 2], narrators, narrator_index)
+
+        assert hadith.path in narrators[1].verse_paths
+        assert hadith.path in narrators[2].verse_paths
+
+    def test_update_narrators_creates_subchains(self):
+        """Test that subchains are created between narrator pairs"""
+        hadith = Verse()
+        hadith.path = "/books/test:1:1"
+
+        narrator_index = NarratorIndex()
+        narrator_index.name_id = {"X": 1, "Y": 2, "Z": 3}
+        narrator_index.id_name = {1: "X", 2: "Y", 3: "Z"}
+
+        narrators = {}
+        for i in range(1, 4):
+            n = Narrator()
+            n.index = i
+            n.path = f"/people/narrators/{i}"
+            n.titles = {"ar": narrator_index.id_name[i]}
+            n.verse_paths = set()
+            n.subchains = {}
+            narrators[i] = n
+
+        update_narrators(hadith, [1, 2, 3], narrators, narrator_index)
+
+        # Narrator 1 should have subchain "1-2" and "1-2-3"
+        assert "1-2" in narrators[1].subchains
+        assert "1-2-3" in narrators[1].subchains
+
+        # Narrator 2 should have subchains "1-2", "1-2-3", "2-3"
+        assert "2-3" in narrators[2].subchains
+
+
+class TestComposeNarratorMetadataExtended:
+    """Extended tests for narrator metadata composition"""
+
+    def test_narrator_with_no_subchains(self):
+        """Test metadata for narrator without any subchains"""
+        narrator = Narrator()
+        narrator.index = 1
+        narrator.path = "/people/narrators/1"
+        narrator.verse_paths = {"/books/test:1"}
+        narrator.subchains = {}
+
+        metadata = compose_narrator_metadata("test", narrator)
+        assert metadata["narrations"] == 1
+        assert metadata["narrated_to"] == 0
+        assert metadata["narrated_from"] == 0
+
+    def test_narrator_with_long_chains_only(self):
+        """Test that only length-2 chains count for narrated_to/from"""
+        narrator = Narrator()
+        narrator.index = 1
+        narrator.path = "/people/narrators/1"
+        narrator.verse_paths = {"/books/test:1"}
+        narrator.subchains = {}
+
+        cv = ChainVerses()
+        cv.narrator_ids = [1, 2, 3]  # Length 3, not 2
+        cv.verse_paths = {"/books/test:1"}
+        narrator.subchains["1-2-3"] = cv
+
+        metadata = compose_narrator_metadata("test", narrator)
+        assert metadata["narrated_to"] == 0
+        assert metadata["narrated_from"] == 0

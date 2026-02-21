@@ -1,10 +1,12 @@
 import json
+import os
 from fastapi.encoders import jsonable_encoder
 from app.lib_db import (
     index_from_path, get_dest_path, clean_nones,
-    write_file, load_json, ensure_dir
+    write_file, load_json, load_chapter, ensure_dir,
+    insert_chapter, delete_file, delete_folder,
 )
-from app.models import Chapter
+from app.models import Chapter, Verse, PartType
 
 
 class TestPathFunctions:
@@ -165,3 +167,118 @@ class TestFileOperations:
 
         loaded = load_json("/books/test")
         assert loaded["data"]["title"] == "Test"
+
+    def test_load_chapter_returns_chapter(self, temp_destination_dir):
+        """Test load_chapter deserializes into Chapter model"""
+        chapter = Chapter()
+        chapter.part_type = PartType.Chapter
+        chapter.titles = {"en": "Test Chapter"}
+        chapter.path = "/books/test"
+        obj = {
+            "index": "test",
+            "kind": "chapter_list",
+            "data": jsonable_encoder(chapter)
+        }
+        write_file("/books/test", obj)
+
+        loaded = load_chapter("/books/test")
+        assert isinstance(loaded, Chapter)
+        assert loaded.titles["en"] == "Test Chapter"
+
+    def test_delete_file_removes_json(self, temp_destination_dir):
+        """Test delete_file removes the generated JSON file"""
+        obj = {"index": "test", "data": {"x": 1}}
+        result = write_file("/books/test", obj)
+        assert os.path.exists(result.id)
+
+        delete_file("/books/test")
+        assert not os.path.exists(result.id)
+
+    def test_delete_file_nonexistent_is_noop(self, temp_destination_dir):
+        """Test delete_file on nonexistent path does not raise"""
+        delete_file("/books/nonexistent")  # Should not raise
+
+    def test_delete_folder_removes_directory(self, temp_destination_dir):
+        """Test delete_folder removes entire directory tree"""
+        obj = {"index": "test", "data": {"x": 1}}
+        write_file("/books/test:1:1", obj)
+        write_file("/books/test:1:2", obj)
+
+        folder_path = os.path.join(str(temp_destination_dir), "books", "test")
+        assert os.path.exists(folder_path)
+
+        delete_folder("/books/test")
+        assert not os.path.exists(folder_path)
+
+    def test_delete_folder_nonexistent_is_noop(self, temp_destination_dir):
+        """Test delete_folder on nonexistent path does not raise"""
+        delete_folder("/books/nonexistent")  # Should not raise
+
+    def test_write_file_nones_stripped(self, temp_destination_dir):
+        """Test that None values are stripped from output JSON"""
+        obj = {
+            "index": "test",
+            "data": {"title": "Test", "description": None}
+        }
+        result = write_file("/books/test", obj)
+
+        with open(result.id, 'r', encoding='utf-8') as f:
+            loaded = json.load(f)
+        assert "description" not in loaded["data"]
+
+
+class TestInsertChapter:
+    """Test recursive chapter insertion"""
+
+    def test_insert_chapter_with_verses(self, temp_destination_dir):
+        """Test inserting a leaf chapter with verses"""
+        chapter = Chapter()
+        chapter.part_type = PartType.Chapter
+        chapter.titles = {"en": "Chapter 1"}
+        chapter.path = "/books/test:1"
+
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = ["Test text"]
+        v.index = 1
+        v.local_index = 1
+        v.path = "/books/test:1:1"
+        chapter.verses = [v]
+
+        insert_chapter(chapter)
+
+        # Should create the JSON file
+        loaded = load_json("/books/test:1")
+        assert loaded["kind"] == "verse_list"
+        assert loaded["index"] == "test:1"
+
+    def test_insert_chapter_with_subchapters(self, temp_destination_dir):
+        """Test inserting a chapter with nested subchapters"""
+        book = Chapter()
+        book.part_type = PartType.Book
+        book.titles = {"en": "Test Book"}
+        book.path = "/books/test"
+
+        ch = Chapter()
+        ch.part_type = PartType.Chapter
+        ch.titles = {"en": "Chapter 1"}
+        ch.path = "/books/test:1"
+
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = ["Verse text"]
+        v.index = 1
+        v.local_index = 1
+        v.path = "/books/test:1:1"
+        ch.verses = [v]
+        book.chapters = [ch]
+
+        insert_chapter(book)
+
+        # Parent chapter_list should be created
+        loaded_book = load_json("/books/test")
+        assert loaded_book["kind"] == "chapter_list"
+
+        # Child verse_list should be created
+        loaded_ch = load_json("/books/test:1")
+        assert loaded_ch["kind"] == "verse_list"
