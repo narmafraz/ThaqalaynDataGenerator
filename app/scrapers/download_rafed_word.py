@@ -1,13 +1,12 @@
 """
-Download Word (.doc) files from rafed.net (Maktabat Rafed) for Tahdhib al-Ahkam
-and al-Istibsar -- the remaining two of the Four Books (Al-Kutub Al-Arb'ah).
+Download Word (.doc) files from rafed.net (Maktabat Rafed) for the Four Books
+(Al-Kutub Al-Arb'ah) and other available hadith collections.
 
 rafed.net provides a Word download API: books.rafed.net/api/download/{id}/doc
 Each volume is a single HTTP GET returning a Word document.
 
 Output is saved to:
-  app/raw/rafed_net/tahdhib-al-ahkam/vol-{N}.doc
-  app/raw/rafed_net/al-istibsar/vol-{N}.doc
+  app/raw/rafed_net/{book-key}/vol-{N}.doc
 
 Usage:
     cd ThaqalaynDataGenerator
@@ -17,6 +16,8 @@ Usage:
     # Download specific book only:
     python app/scrapers/download_rafed_word.py --tahdhib
     python app/scrapers/download_rafed_word.py --istibsar
+    python app/scrapers/download_rafed_word.py --kafi
+    python app/scrapers/download_rafed_word.py --faqih
 
     # List volumes:
     python app/scrapers/download_rafed_word.py --list
@@ -41,10 +42,39 @@ DELAY_BETWEEN_REQUESTS = 2.0  # seconds - be respectful
 
 # Volume IDs confirmed via Playwright browser inspection of books.rafed.net
 BOOKS = {
+    "al-kafi": {
+        "title": "Al-Kafi",
+        "title_ar": "\u0627\u0644\u0643\u0627\u0641\u064a",
+        "author": "Sheikh al-Kulayni",
+        "purpose": "cross-validation",
+        "volumes": [
+            {"vol": 1, "view_id": 372},
+            {"vol": 2, "view_id": 825},
+            {"vol": 3, "view_id": 981},
+            {"vol": 4, "view_id": 982},
+            {"vol": 5, "view_id": 994},
+            {"vol": 6, "view_id": 995},
+            {"vol": 7, "view_id": 1066},
+            {"vol": 8, "view_id": 1125},
+        ],
+    },
+    "man-la-yahduruhu-al-faqih": {
+        "title": "Man La Yahduruhu al-Faqih",
+        "title_ar": "\u0645\u0646 \u0644\u0627 \u064a\u062d\u0636\u0631\u0647 \u0627\u0644\u0641\u0642\u064a\u0647",
+        "author": "Sheikh al-Saduq",
+        "purpose": "cross-validation",
+        "volumes": [
+            {"vol": 1, "view_id": 1414},
+            {"vol": 2, "view_id": 1415},
+            {"vol": 3, "view_id": 1416},
+            {"vol": 4, "view_id": 1432},
+        ],
+    },
     "tahdhib-al-ahkam": {
         "title": "Tahdhib al-Ahkam",
         "title_ar": "\u062a\u0647\u0630\u064a\u0628 \u0627\u0644\u0623\u062d\u0643\u0627\u0645",
         "author": "Sheikh al-Tusi",
+        "purpose": "primary",
         "volumes": [
             {"vol": 1, "view_id": 722},
             {"vol": 2, "view_id": 731},
@@ -62,6 +92,7 @@ BOOKS = {
         "title": "al-Istibsar",
         "title_ar": "\u0627\u0644\u0627\u0633\u062a\u0628\u0635\u0627\u0631",
         "author": "Sheikh al-Tusi",
+        "purpose": "primary",
         "volumes": [
             {"vol": 1, "view_id": 1266},
             {"vol": 2, "view_id": 1307},
@@ -224,10 +255,17 @@ if __name__ == "__main__":
         list_volumes()
         sys.exit(0)
 
+    BOOK_FLAGS = {
+        "--tahdhib": "tahdhib-al-ahkam",
+        "--istibsar": "al-istibsar",
+        "--kafi": "al-kafi",
+        "--faqih": "man-la-yahduruhu-al-faqih",
+    }
+
     book_filter = None
-    if "--tahdhib" in sys.argv:
-        book_filter = "tahdhib-al-ahkam"
-    elif "--istibsar" in sys.argv:
-        book_filter = "al-istibsar"
+    for flag, key in BOOK_FLAGS.items():
+        if flag in sys.argv:
+            book_filter = key
+            break
 
     main(book_filter)

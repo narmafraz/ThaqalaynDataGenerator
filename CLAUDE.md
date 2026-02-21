@@ -103,10 +103,12 @@ uv run pytest --cov=app --cov-report=html
 Scripts to fetch raw hadith data from external sources into `app/raw/`:
 - **`scrape_thaqalayn_api.py`**: Scrapes ThaqalaynAPI REST endpoint (`https://www.thaqalayn-api.net/api/v2/`). Fetches hadiths one-by-one with 0.5s delay. Supports `--list` to show available slugs, or pass specific slugs as args. Skips books that already have data on disk.
 - **`scrape_hubeali_sulaym.py`**: Scrapes Book of Sulaym ibn Qays from `hubeali.com`. Uses BeautifulSoup to parse HTML. Arabic text extraction currently broken due to encoding issues (see Common Issues).
-- **`download_rafed_word.py`**: Downloads Word (.doc) files from rafed.net API for Tahdhib al-Ahkam (10 vols) and al-Istibsar (4 vols). Single HTTP GET per volume via `books.rafed.net/api/download/{id}/doc`. Supports `--tahdhib`, `--istibsar`, `--list`. Skips files already on disk.
+- **`download_rafed_word.py`**: Downloads Word (.doc) files from rafed.net API for all Four Books. Single HTTP GET per volume via `books.rafed.net/api/download/{id}/doc`. Supports `--tahdhib`, `--istibsar`, `--kafi`, `--faqih`, `--list`. Skips files already on disk.
+- **`scrape_rafed_text.py`**: Scrapes page-by-page Arabic text from rafed.net using Playwright (SPA requires JS rendering). Extracts TOC (chapter/page structure) and page text for Tahdhib al-Ahkam and al-Istibsar. Supports `--toc-only`, `--tahdhib`, `--istibsar`, `--vol N`. Requires `playwright` package.
 - **`download_ghbook_html.py`**: Downloads HTML files from ghbook.ir (Qaimiyyah Digital Library) for Tahdhib al-Ahkam (book_id=378) and al-Istibsar (book_id=2628). Each book is a single large HTML file. Supports `--tahdhib`, `--istibsar`, `--list`. Skips files already on disk.
+- **`scrape_eshia_notes.md`**: Assessment of lib.eshia.ir -- found to be image-based scans (not text), not viable for automated scraping. See file for details and updated cross-validation matrix.
 
-All scrapers use `urllib.request` (not `requests`) because the `requests` library is not installed in the venv.
+All download scrapers use `urllib.request` (not `requests`). The `scrape_rafed_text.py` scraper requires Playwright for SPA rendering.
 
 ```bash
 # Run scrapers (from ThaqalaynDataGenerator root):
@@ -115,10 +117,13 @@ python app/scrapers/scrape_thaqalayn_api.py           # All books
 python app/scrapers/scrape_thaqalayn_api.py --list     # List available slugs
 python app/scrapers/scrape_thaqalayn_api.py Nahj-al-Balagha-Radi  # Specific book
 python app/scrapers/scrape_hubeali_sulaym.py           # Book of Sulaym
-python app/scrapers/download_rafed_word.py             # Tahdhib + Istibsar Word files
+python app/scrapers/download_rafed_word.py             # All Four Books Word files
 python app/scrapers/download_rafed_word.py --tahdhib   # Tahdhib only
+python app/scrapers/download_rafed_word.py --kafi      # Al-Kafi only
 python app/scrapers/download_ghbook_html.py            # Tahdhib + Istibsar HTML files
 python app/scrapers/download_ghbook_html.py --list     # Show download URLs
+python app/scrapers/scrape_rafed_text.py --toc-only    # Extract TOCs only (fast)
+python app/scrapers/scrape_rafed_text.py --tahdhib     # Scrape Tahdhib page text
 ```
 
 ### Raw Data Inventory (`app/raw/`)
