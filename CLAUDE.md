@@ -99,6 +99,37 @@ uv run pytest --cov=app --cov-report=html
 
 - **link_quran_kafi.py**: Creates bidirectional references between Quran verses cited in hadiths
 
+### Scrapers Directory (`app/scrapers/`)
+Scripts to fetch raw hadith data from external sources into `app/raw/`:
+- **`scrape_thaqalayn_api.py`**: Scrapes ThaqalaynAPI REST endpoint (`https://www.thaqalayn-api.net/api/v2/`). Fetches hadiths one-by-one with 0.5s delay. Supports `--list` to show available slugs, or pass specific slugs as args. Skips books that already have data on disk.
+- **`scrape_hubeali_sulaym.py`**: Scrapes Book of Sulaym ibn Qays from `hubeali.com`. Uses BeautifulSoup to parse HTML. Arabic text extraction currently broken due to encoding issues (see Common Issues).
+
+Both scrapers use `urllib.request` (not `requests`) because the `requests` library is not installed in the venv.
+
+```bash
+# Run scrapers (from ThaqalaynDataGenerator root):
+source .venv/Scripts/activate
+python app/scrapers/scrape_thaqalayn_api.py           # All books
+python app/scrapers/scrape_thaqalayn_api.py --list     # List available slugs
+python app/scrapers/scrape_thaqalayn_api.py Nahj-al-Balagha-Radi  # Specific book
+python app/scrapers/scrape_hubeali_sulaym.py           # Book of Sulaym
+```
+
+### Raw Data Inventory (`app/raw/`)
+
+The `raw/` directory is **gitignored** — only scraper scripts in `app/scrapers/` are tracked. Raw data must be re-scraped or restored separately.
+
+| Source Directory | Contents | Hadiths |
+|-----------------|----------|---------|
+| `thaqalayn_api/` | 25 book folders from ThaqalaynAPI, each with `hadiths.json` | 18,945 |
+| `hubeali_com/` | Al-Kafi Vols 1-8, Basair al-Darajaat (HTML), Book of Sulaym (JSON) | ~80 (Sulaym) |
+| `thaqalayn_net/` | 2020 site mirror — 23 books as HTML pages | N/A (HTML) |
+| `alhassanain_org/` | Usul al-Kafi Vols 1-3 (HTML) | N/A (HTML) |
+| `tanzil_net/` | Quran text + 27 translations (XML) | N/A (XML) |
+| `corrections/` | Manual JSON fixes for parser edge cases | N/A |
+
+See `raw/thaqalayn_api/README.md` for the full ThaqalaynAPI JSON schema documentation.
+
 ### Queries Directory (`app/queries/`)
 Ad-hoc scripts for analyzing generated data:
 - `kitab_hujjat_narrators.py`: Generates narrator graph visualization (outputs HTML)
@@ -138,3 +169,22 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 - **Sequence errors**: Parser validates chapter numbering; errors are logged to the `ProcessingReport.sequence_errors` list (and legacy `SEQUENCE_ERRORS` global) but don't halt execution
 - **logger.warn is deprecated**: Use `logger.warning()` instead of `logger.warn()` -- the latter triggers `DeprecationWarning` on Python 3.12+
 - **Windows shell rules**: When running tests from the root `scripture/` directory, use `cd ThaqalaynDataGenerator && DESTINATION_DIR=... PYTHONPATH=... .venv/Scripts/python.exe -m pytest` pattern. Do not chain `cd` with `&&` when following TEAM.md rules, but this is sometimes needed when the working directory resets between bash calls
+- **`uv` not in bash PATH on Windows**: The `uv` command may not be available in Git Bash even when installed. Use `source .venv/Scripts/activate && python` as a reliable alternative. Or call `.venv/Scripts/python.exe` directly if activation fails.
+- **`requests` not installed**: The venv does not include the `requests` library. Scrapers use `urllib.request` (stdlib) instead. If you need HTTP in new scripts, use `urllib.request.Request` with a `User-Agent` header.
+- **Arabic text on Windows console**: Printing Arabic text to Windows console causes `UnicodeEncodeError: 'charmap' codec can't encode character`. Fix with `sys.stdout.reconfigure(encoding='utf-8')` at the top of scripts that print Arabic.
+- **hubeali.com Arabic encoding**: The Book of Sulaym page on hubeali.com has encoding issues. Using `raw.decode("utf-8", errors="replace")` prevents crashes but corrupts Arabic characters, causing the scraper to extract 0 Arabic paragraphs. The raw HTML is saved at `raw/hubeali_com/book-of-sulaym/page.html` for future re-parsing with a different approach.
+
+## Data Sources and Gaps
+
+### ThaqalaynAPI (`https://www.thaqalayn-api.net/`)
+The primary source for structured hadith data. Provides REST JSON for 33 books from thaqalayn.net. API endpoint: `GET /api/v2/{book-slug}/{hadith-id}`. Book list: `GET /api/v2/allbooks`. Each hadith includes Arabic text, English translation, narrator chain separation (`thaqalaynSanad`/`thaqalaynMatn`), grading fields (`majlisiGrading`, `mohseniGrading`, `behbudiGrading`), and thaqalayn.net URLs. Rate limit: use >= 0.5s delay between requests.
+
+### Books Still Missing from Aspiration List
+These books have NO structured raw data and are not available on ThaqalaynAPI:
+1. **Tahdhib al-Ahkam** — one of the Four Books. No English structured data found online.
+2. **al-Istibsar** — one of the Four Books. No English structured data found online.
+3. **Tuhaf al-Uqul** — available on al-islam.org but English only (no Arabic text).
+4. **Al-Ihtijaj** — available on al-shia.org/downloadshiabooks.com (not yet scraped).
+5. **Daim al-Islam** — rare, may not have English translation online.
+6. **Khasais Al-Aemmah** — rare.
+7. **Al-Saqib Fi al-Manaqib** — rare.
