@@ -97,18 +97,12 @@ class TestUpdateIndexFiles:
 
     def test_merges_with_existing_index(self, temp_destination_dir):
         """Test that update_index_files merges with pre-existing index data"""
-        # Write a pre-existing index file
+        # Write a pre-existing index file at the DESTINATION_DIR location
         index_dir = temp_destination_dir / "index"
         index_dir.mkdir(parents=True, exist_ok=True)
         existing = {"/books/old": {"title": "Old Book"}}
-        # The file path that update_index_files checks is the raw path
-        # update_index_files uses os.path.exists on the raw filename
-        # But it reads from the get_dest_path which adds DESTINATION_DIR
-        # Actually, looking at the code: it checks os.path.exists(filename)
-        # where filename = f"/index/books.{lang}.json" — this is a bug in
-        # the source code. It checks the raw path, not the dest path.
-        # So the existing file check won't match in test environment.
-        # The function will just create a new file with only our data.
+        with open(index_dir / "books.en.json", "w", encoding="utf-8") as f:
+            json.dump(existing, f)
 
         index_maps = {
             "en": {
@@ -122,6 +116,7 @@ class TestUpdateIndexFiles:
         with open(outfile, "r", encoding="utf-8") as f:
             data = json.load(f)
         assert "/books/new" in data
+        assert "/books/old" in data, "Existing entries must be preserved when merging"
 
     def test_multiple_languages(self, temp_destination_dir):
         """Test that separate files are created per language"""
@@ -139,6 +134,41 @@ class TestUpdateIndexFiles:
         with open(ar_file, "r", encoding="utf-8") as f:
             data = json.load(f)
         assert data["/books/test"]["title"] == "عنوان عربي"
+
+
+    def test_sequential_updates_preserve_all_books(self, temp_destination_dir):
+        """Regression test: calling update_index_files for two books sequentially
+        must preserve entries from the first book when writing the second.
+        This was the root cause of Quran breadcrumbs being missing — Quran
+        entries were written first, then overwritten by Al-Kafi because the
+        existing-file check used a raw path instead of DESTINATION_DIR."""
+        quran_indexes = {
+            "en": {
+                "/books/quran": {"title": "The Holy Quran", "local_index": None, "part_type": "Book"},
+                "/books/quran:1": {"title": "The Opening", "local_index": 1, "part_type": "Chapter"},
+                "/books/quran:2": {"title": "The Cow", "local_index": 2, "part_type": "Chapter"},
+            }
+        }
+        update_index_files(quran_indexes)
+
+        kafi_indexes = {
+            "en": {
+                "/books/al-kafi": {"title": "Al-Kafi", "local_index": None, "part_type": "Book"},
+                "/books/al-kafi:1": {"title": "Volume One", "local_index": 1, "part_type": "Volume"},
+            }
+        }
+        update_index_files(kafi_indexes)
+
+        outfile = temp_destination_dir / "index" / "books.en.json"
+        with open(outfile, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Both books must be present
+        assert "/books/quran" in data, "Quran root must be in index"
+        assert "/books/quran:1" in data, "Quran chapters must be in index"
+        assert "/books/quran:2" in data, "Quran chapters must be in index"
+        assert "/books/al-kafi" in data, "Al-Kafi root must be in index"
+        assert "/books/al-kafi:1" in data, "Al-Kafi volumes must be in index"
 
 
 class TestAddTranslation:

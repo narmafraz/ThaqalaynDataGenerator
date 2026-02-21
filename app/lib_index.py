@@ -1,7 +1,7 @@
 import os
 import json
 import fastapi
-from app.lib_db import write_file, load_json
+from app.lib_db import write_file, load_json, get_dest_path
 from app.models.translation import Translation
 
 def collect_indexes(chapter, index_maps=None):
@@ -20,9 +20,9 @@ def collect_indexes(chapter, index_maps=None):
 
 def update_index_files(index_maps):
     for lang, idx in index_maps.items():
-        filename = f"/index/books.{lang}.json"
-        if os.path.exists(filename):
-            with open(filename, "r", encoding="utf8") as f:
+        dest_path = get_dest_path(f"/index/books.{lang}")
+        if os.path.exists(dest_path):
+            with open(dest_path, "r", encoding="utf8") as f:
                 existing = json.load(f)
         else:
             existing = {}
