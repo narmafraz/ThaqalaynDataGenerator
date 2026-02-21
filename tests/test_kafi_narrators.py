@@ -1,8 +1,10 @@
 from pprint import pprint
+from unittest.mock import patch, MagicMock
 
 from app.kafi_narrators import (
     extract_narrators, assign_narrator_id, getCombinations,
     compose_narrator_metadata, add_narrator_links, update_narrators,
+    process_chapter_verses, process_chapter,
 )
 from app.models import Chapter, Language, PartType, Translation, Verse
 from app.models.people import NarratorIndex, Narrator, ChainVerses
@@ -518,3 +520,179 @@ class TestComposeNarratorMetadataExtended:
         metadata = compose_narrator_metadata("test", narrator)
         assert metadata["narrated_to"] == 0
         assert metadata["narrated_from"] == 0
+
+
+def _make_narrator_index():
+    """Helper to create a fresh NarratorIndex."""
+    ni = NarratorIndex()
+    ni.name_id = {}
+    ni.id_name = {}
+    ni.last_id = 0
+    return ni
+
+
+class TestProcessChapterVerses:
+    """Test kafi_narrators.process_chapter_verses end-to-end processing"""
+
+    def test_extracts_narrators_and_builds_chain(self):
+        """Test that process_chapter_verses extracts narrators and builds chain parts"""
+        narrator_index = _make_narrator_index()
+        narrators = {}
+
+        chapter = Chapter()
+        chapter.verses = []
+
+        hadith = Verse()
+        hadith.part_type = PartType.Hadith
+        hadith.path = "/books/al-kafi:1:1:1:1"
+        hadith.text = [
+            "مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ test text"
+        ]
+        hadith.translations = {}
+        chapter.verses.append(hadith)
+
+        process_chapter_verses(chapter, narrator_index, narrators)
+
+        # Narrator chain should be populated
+        assert hadith.narrator_chain is not None
+        assert hadith.narrator_chain.text is not None
+        # Narrator parts should have been created
+        narrator_parts = [p for p in hadith.narrator_chain.parts if p.kind == "narrator"]
+        assert len(narrator_parts) >= 2
+        # Narrators should be tracked
+        assert len(narrators) >= 2
+
+    def test_skips_empty_text(self):
+        """Test that hadiths with empty text are skipped"""
+        narrator_index = _make_narrator_index()
+        narrators = {}
+
+        chapter = Chapter()
+        chapter.verses = []
+
+        hadith = Verse()
+        hadith.part_type = PartType.Hadith
+        hadith.path = "/books/al-kafi:7:3:15:5"
+        hadith.text = []  # Empty text
+        hadith.translations = {}
+        chapter.verses.append(hadith)
+
+        # Should not crash
+        process_chapter_verses(chapter, narrator_index, narrators)
+        assert len(narrators) == 0
+
+    def test_strips_span_tags(self):
+        """Test that HTML span tags are stripped from text before processing"""
+        narrator_index = _make_narrator_index()
+        narrators = {}
+
+        chapter = Chapter()
+        chapter.verses = []
+
+        hadith = Verse()
+        hadith.part_type = PartType.Hadith
+        hadith.path = "/books/test:1"
+        hadith.text = [
+            '<span class="x">مُحَمَّدُ بْنُ يَحْيَى</span> عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ text'
+        ]
+        hadith.translations = {}
+        chapter.verses.append(hadith)
+
+        process_chapter_verses(chapter, narrator_index, narrators)
+
+        # Span tags should have been removed before narrator extraction
+        assert "<span" not in hadith.text[0]
+
+    def test_multiple_hadiths_share_narrator_ids(self):
+        """Test that the same narrator name across hadiths gets the same ID"""
+        narrator_index = _make_narrator_index()
+        narrators = {}
+
+        chapter = Chapter()
+        chapter.verses = []
+
+        for i in range(1, 3):
+            hadith = Verse()
+            hadith.part_type = PartType.Hadith
+            hadith.path = f"/books/test:{i}"
+            hadith.text = [
+                "مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ text"
+            ]
+            hadith.translations = {}
+            chapter.verses.append(hadith)
+
+        process_chapter_verses(chapter, narrator_index, narrators)
+
+        # Both hadiths should reference the same narrator IDs
+        assert narrator_index.last_id == 2  # Only 2 unique narrators
+
+
+class TestProcessChapter:
+    """Test kafi_narrators.process_chapter recursive traversal"""
+
+    def test_recurses_into_subchapters(self):
+        """Test that process_chapter recurses into nested chapters"""
+        narrator_index = _make_narrator_index()
+        narrators = {}
+
+        book = Chapter()
+        book.chapters = []
+
+        ch = Chapter()
+        ch.verses = []
+        hadith = Verse()
+        hadith.part_type = PartType.Hadith
+        hadith.path = "/books/test:1:1"
+        hadith.text = [
+            "مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ text"
+        ]
+        hadith.translations = {}
+        ch.verses.append(hadith)
+        book.chapters.append(ch)
+
+        result = process_chapter(book, narrator_index, narrators)
+
+        # Should have processed the hadith
+        assert len(narrators) >= 2
+        assert result is narrators
+
+    def test_handles_empty_chapter(self):
+        """Test that empty chapters (no verses or subchapters) don't crash"""
+        narrator_index = _make_narrator_index()
+        narrators = {}
+
+        empty = Chapter()
+        result = process_chapter(empty, narrator_index, narrators)
+        assert result is narrators
+        assert len(narrators) == 0
+
+    def test_deeply_nested_chapters(self):
+        """Test recursion through multiple levels of nesting"""
+        narrator_index = _make_narrator_index()
+        narrators = {}
+
+        # Build: root -> level1 -> level2 -> hadith
+        root = Chapter()
+        root.chapters = []
+
+        level1 = Chapter()
+        level1.chapters = []
+
+        level2 = Chapter()
+        level2.verses = []
+        hadith = Verse()
+        hadith.part_type = PartType.Hadith
+        hadith.path = "/books/test:1:1:1"
+        hadith.text = [
+            "مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ text"
+        ]
+        hadith.translations = {}
+        level2.verses.append(hadith)
+        level1.chapters.append(level2)
+        root.chapters.append(level1)
+
+        process_chapter(root, narrator_index, narrators)
+
+        # Hadith at depth 3 should still be processed
+        assert len(narrators) >= 2
+        assert hadith.narrator_chain is not None

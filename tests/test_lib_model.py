@@ -1,5 +1,5 @@
 from app.lib_model import set_index, get_chapters, get_verses, SEQUENCE_ERRORS
-from app.models import Chapter, Crumb, PartType
+from app.models import Chapter, Crumb, PartType, Verse
 
 
 class TestSetIndex:
@@ -215,3 +215,95 @@ class TestSequenceErrors:
         set_index(book, [], 0)
 
         assert len(SEQUENCE_ERRORS) == initial_errors
+
+
+class TestVerseStartIndexBehavior:
+    """Document the verse_start_index off-by-one behavior.
+
+    set_index sets subchapter.verse_start_index = indexes[-1] which is the
+    deepest-level index counter. For the first subchapter, this equals 1
+    (the chapter's own index), not 0. This means the first subchapter's
+    verse_count = total_verses - 1 instead of total_verses.
+
+    This is a known quirk documented here so future developers understand
+    the behavior and don't accidentally "fix" it without updating all
+    dependent logic.
+    """
+
+    def test_first_chapter_verse_start_index_is_not_zero(self):
+        """The first subchapter's verse_start_index equals the chapter-depth index,
+        not 0, because indexes[-1] reflects the chapter counter, not the verse counter."""
+        book = Chapter()
+        book.part_type = PartType.Book
+        book.titles = {"en": "Test"}
+        book.path = "/books/test"
+        book.crumbs = []
+        book.verse_start_index = 0
+        book.chapters = []
+
+        ch = Chapter()
+        ch.part_type = PartType.Chapter
+        ch.titles = {"en": "Chapter 1"}
+        ch.crumbs = []
+        ch.verse_start_index = 0
+        ch.verses = []
+        for _ in range(3):
+            v = Verse()
+            v.part_type = PartType.Hadith
+            v.text = ["text"]
+            ch.verses.append(v)
+        book.chapters.append(ch)
+
+        set_index(book, [], 0)
+
+        # The first subchapter's verse_start_index is set to indexes[-1]
+        # At the time, indexes is [1, ...] so verse_start_index = 1, not 0
+        assert ch.verse_start_index == 1
+
+        # Therefore verse_count = indexes[depth] - verse_start_index
+        # = 3 - 1 = 2, not 3 (even though there are 3 verses)
+        assert ch.verse_count == 2
+
+        # But the book-level verse_count is correct
+        # It uses indexes[-1] - book.verse_start_index = 3 - 0 = 3
+        assert book.verse_count == 3
+
+    def test_second_chapter_verse_count_correct(self):
+        """The second subchapter's verse_count is correct because verse_start_index
+        aligns properly after the first chapter's verses."""
+        book = Chapter()
+        book.part_type = PartType.Book
+        book.titles = {"en": "Test"}
+        book.path = "/books/test"
+        book.crumbs = []
+        book.verse_start_index = 0
+        book.chapters = []
+
+        for ch_num in range(1, 3):
+            ch = Chapter()
+            ch.part_type = PartType.Chapter
+            ch.titles = {"en": f"Chapter {ch_num}"}
+            ch.crumbs = []
+            ch.verse_start_index = 0
+            ch.verses = []
+            for _ in range(2):
+                v = Verse()
+                v.part_type = PartType.Hadith
+                v.text = ["text"]
+                ch.verses.append(v)
+            book.chapters.append(ch)
+
+        set_index(book, [], 0)
+
+        # First chapter: verse_start_index=1, verses indexed 1,2
+        # verse_count = 2 - 1 = 1 (off by one)
+        assert book.chapters[0].verse_start_index == 1
+        assert book.chapters[0].verse_count == 1
+
+        # Second chapter: verse_start_index=2, verses indexed 3,4
+        # verse_count = 4 - 2 = 2 (correct)
+        assert book.chapters[1].verse_start_index == 2
+        assert book.chapters[1].verse_count == 2
+
+        # Book total is always correct: 4 - 0 = 4
+        assert book.verse_count == 4
