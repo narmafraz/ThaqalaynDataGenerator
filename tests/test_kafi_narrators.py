@@ -335,6 +335,51 @@ class TestGetCombinations:
         result = getCombinations([1])
         assert result == {}
 
+    def test_five_narrators_only_full_chain_and_pairs(self):
+        """Optimized getCombinations generates full chain + direct pairs only.
+
+        For [1,2,3,4,5]: full chain "1-2-3-4-5" + pairs "1-2","2-3","3-4","4-5".
+        Old implementation would also generate "1-2-3", "2-3-4", "3-4-5", etc.
+        """
+        result = getCombinations([1, 2, 3, 4, 5])
+
+        # All 5 narrators should be present
+        for n in [1, 2, 3, 4, 5]:
+            assert n in result
+
+        # Collect all unique subchain keys across all narrators
+        all_keys = set()
+        for entries in result.values():
+            for key, _ in entries:
+                all_keys.add(key)
+
+        # Expected: full chain + 4 consecutive pairs = 5 keys
+        assert all_keys == {"1-2-3-4-5", "1-2", "2-3", "3-4", "4-5"}
+
+        # Intermediate subsequences should NOT be present
+        assert "1-2-3" not in all_keys
+        assert "2-3-4" not in all_keys
+        assert "3-4-5" not in all_keys
+        assert "1-2-3-4" not in all_keys
+        assert "2-3-4-5" not in all_keys
+
+    def test_two_narrators_no_duplicate_entries(self):
+        """When chain has exactly 2 narrators, full chain equals the pair.
+
+        Should produce only 1 entry per narrator, not 2 duplicates.
+        """
+        result = getCombinations([1, 2])
+
+        # Each narrator should have exactly 1 entry (the full chain which is also the pair)
+        assert len(result[1]) == 1
+        assert len(result[2]) == 1
+        assert result[1][0][0] == "1-2"
+        assert result[2][0][0] == "1-2"
+
+    def test_empty_list(self):
+        """Empty list produces no combinations"""
+        result = getCombinations([])
+        assert result == {}
 
 class TestComposeNarratorMetadata:
     """Test narrator metadata composition"""

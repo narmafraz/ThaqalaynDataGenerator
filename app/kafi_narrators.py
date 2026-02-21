@@ -1,4 +1,3 @@
-import itertools
 import logging
 import re
 from typing import Dict, List, Set
@@ -124,16 +123,30 @@ def add_narrator_links(hadith: Verse, narrator_ids, narrator_index: NarratorInde
     hadith.narrator_chain.parts.append(lastPart)
 
 def getCombinations(lst) -> Dict[int, List[List[int]]]:
+    """Generate only full chain and direct pairs (not all subsequences).
+
+    Full chains preserve the complete transmission record.
+    Direct pairs preserve narrated_from/narrated_to metadata accuracy.
+    """
     result = {}
 
-    for i, j in itertools.combinations(range(len(lst) + 1), 2):
-        combi = lst[i:j]
-        combi_key = '-'.join(str(n) for n in combi)
-        if len(combi) > 1:
-            for n in combi:
+    # Full chain
+    if len(lst) > 1:
+        full_key = '-'.join(str(n) for n in lst)
+        for n in lst:
+            if n not in result:
+                result[n] = []
+            result[n].append((full_key, lst))
+
+    # Direct pairs (consecutive narrators only — needed for metadata)
+    for i in range(len(lst) - 1):
+        pair = [lst[i], lst[i + 1]]
+        pair_key = '-'.join(str(n) for n in pair)
+        if pair_key != '-'.join(str(n) for n in lst):  # skip if same as full chain
+            for n in pair:
                 if n not in result:
                     result[n] = []
-                result[n].append((combi_key, combi))
+                result[n].append((pair_key, pair))
 
     return result
 
