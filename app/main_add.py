@@ -7,6 +7,7 @@ from app.kafi_sarwar import add_kafi_sarwar
 from app.lib_model import ProcessingReport
 from app.link_quran_kafi import link_quran_kafi
 from app.quran import init_quran
+from app.thaqalayn_api import init_all_thaqalayn_api_books
 from app.create_indices import create_indices
 
 logging.basicConfig(level=logging.INFO)
@@ -21,6 +22,7 @@ def init():
     add_kafi_sarwar(report)
     link_quran_kafi()
     kafi_narrators(report)
+    init_all_thaqalayn_api_books()
     create_indices()
     report.print_summary()
 

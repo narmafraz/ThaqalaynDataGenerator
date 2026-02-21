@@ -334,65 +334,67 @@ THAQALAYN_API_BOOKS = {
     # Primary Collections
     "nahj-al-balagha": {
         "source_folders": ["nahj-al-balagha"],
-        "translator_name": "Yasin al-Jibouri",
+        "translator_name": "Sayed Ali Raza",
     },
     "al-amali-mufid": {
         "source_folders": ["al-amali-mufid"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Mulla Asgharali M M Jaffer",
     },
     "al-amali-saduq": {
         "source_folders": ["al-amali-saduq"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Bilal Muhammad",
     },
     "kamil-al-ziyarat": {
         "source_folders": ["kamil-al-ziyarat"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Sayyid Mohsen Al-Husayni Al-Milani",
     },
     "kitab-al-ghayba-numani": {
         "source_folders": ["kitab-al-ghayba-numani"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Abdullah al-Shahin",
     },
     "kitab-al-ghayba-tusi": {
         "source_folders": ["kitab-al-ghayba-tusi"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Sayyid Athar Husain S. H. Rizvi",
     },
     "kitab-al-mumin": {
         "source_folders": ["kitab-al-mumin"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Muhajir b. Ali",
     },
 
     # Additional Collections
     "al-tawhid": {
         "source_folders": ["al-tawhid-saduq"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Sayed Ali Raza Rizvi",
     },
     "uyun-akhbar-al-rida": {
         "source_folders": ["uyun-akhbar-al-rida-v1", "uyun-akhbar-al-rida-v2"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Dr. Ali Peiravi",
     },
     "al-khisal": {
         "source_folders": ["al-khisal"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Dr. Ali Peiravi",
     },
     "maani-al-akhbar": {
         "source_folders": ["maani-al-akhbar"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Basel Kadem",
     },
+    # NOTE: kamal-al-din has 659 hadiths in the API but 0 Arabic and 0 English
+    # text. The translator field is missing. Kept as placeholder for future data.
     "kamal-al-din": {
         "source_folders": ["kamal-al-din"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Unknown",
     },
     "thawab-al-amal": {
         "source_folders": ["thawab-al-amal"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Sayed Athar Husain Rizvi & Sayed Maqsood Athar",
     },
     "kitab-al-zuhd": {
         "source_folders": ["kitab-al-zuhd"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Shaykh Tahir Ridha Jaffer",
     },
     "risalat-al-huquq": {
         "source_folders": ["risalat-al-huquq"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "William C. Chittick",
     },
     "fadail-al-shia": {
         "source_folders": ["fadail-al-shia"],
@@ -404,11 +406,11 @@ THAQALAYN_API_BOOKS = {
     },
     "kitab-al-duafa": {
         "source_folders": ["kitab-al-duafa"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Tashayyu",
     },
     "mujam-al-ahadith-al-mutabara": {
         "source_folders": ["mujam-al-ahadith-al-mutabara"],
-        "translator_name": "Ahlul Bayt Digital Islamic Library",
+        "translator_name": "Ammaar Muslim",
     },
 }
 

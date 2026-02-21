@@ -1,24 +1,22 @@
 {
   "name": "thaqalayn-index-generator",
-  "version": "1.0.0",
-  "description": "A project to generate a FlexSearch index from Thaqalayn data",
-  "main": "createIndex.js",
+  "version": "2.0.0",
+  "description": "Generates Orama search indexes from Thaqalayn data",
+  "type": "module",
   "scripts": {
+    "build-search": "node search/buildOramaIndexes.mjs",
     "build-index": "node search/createIndex.js"
   },
   "keywords": [
-    "flexsearch",
+    "orama",
     "search",
     "index",
     "thaqalayn"
   ],
-  "author": "Your Name",
   "license": "MIT",
   "dependencies": {
+    "@orama/orama": "^3.1.5",
+    "@orama/plugin-data-persistence": "^3.1.5",
     "flexsearch": "^0.7.43"
-  },
-  "devDependencies": {
-    "fs": "0.0.1-security",
-    "path": "^0.12.7"
   }
 }

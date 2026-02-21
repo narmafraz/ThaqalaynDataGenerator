@@ -511,3 +511,107 @@ class TestTransformBook:
         config = _make_book_config()
         with pytest.raises(ValueError, match="No hadiths found"):
             transform_book(config, "test-book", "Test Translator")
+
+
+# ---------------------------------------------------------------------------
+# Tests: THAQALAYN_API_BOOKS configuration
+# ---------------------------------------------------------------------------
+
+class TestThaqalaynApiBooksConfig:
+    """Tests for the THAQALAYN_API_BOOKS source configuration dict."""
+
+    def test_all_slugs_have_book_registry_entry(self):
+        """Every slug in THAQALAYN_API_BOOKS has a corresponding BookConfig."""
+        from app.thaqalayn_api import THAQALAYN_API_BOOKS
+        from app.book_registry import get_book_config
+
+        for slug in THAQALAYN_API_BOOKS:
+            config = get_book_config(slug)
+            assert config is not None, "No BookConfig for slug: {}".format(slug)
+
+    def test_all_entries_have_required_fields(self):
+        """Every entry has source_folders and translator_name."""
+        from app.thaqalayn_api import THAQALAYN_API_BOOKS
+
+        for slug, entry in THAQALAYN_API_BOOKS.items():
+            assert "source_folders" in entry, "{} missing source_folders".format(slug)
+            assert "translator_name" in entry, "{} missing translator_name".format(slug)
+            assert isinstance(entry["source_folders"], list)
+            assert len(entry["source_folders"]) > 0
+            assert isinstance(entry["translator_name"], str)
+            assert len(entry["translator_name"]) > 0
+
+    def test_source_folder_names_unique(self):
+        """All source folder names across all books are unique."""
+        from app.thaqalayn_api import THAQALAYN_API_BOOKS
+
+        all_folders = []
+        for entry in THAQALAYN_API_BOOKS.values():
+            all_folders.extend(entry["source_folders"])
+        assert len(all_folders) == len(set(all_folders)), "Duplicate source folder names"
+
+    def test_translator_names_match_raw_data(self):
+        """Translator names match what's in the raw data (when available)."""
+        from app.thaqalayn_api import THAQALAYN_API_BOOKS, get_raw_path
+
+        # Expected translator names from the API data (verified by survey)
+        expected = {
+            "nahj-al-balagha": ("nahj-al-balagha", "Sayed Ali Raza"),
+            "al-amali-mufid": ("al-amali-mufid", "Mulla Asgharali M M Jaffer"),
+            "al-amali-saduq": ("al-amali-saduq", "Bilal Muhammad"),
+            "kamil-al-ziyarat": ("kamil-al-ziyarat", "Sayyid Mohsen Al-Husayni Al-Milani"),
+            "kitab-al-ghayba-numani": ("kitab-al-ghayba-numani", "Abdullah al-Shahin"),
+            "kitab-al-ghayba-tusi": ("kitab-al-ghayba-tusi", "Sayyid Athar Husain S. H. Rizvi"),
+            "kitab-al-mumin": ("kitab-al-mumin", "Muhajir b. Ali"),
+            "al-tawhid": ("al-tawhid-saduq", "Sayed Ali Raza Rizvi"),
+            "uyun-akhbar-al-rida": ("uyun-akhbar-al-rida-v1", "Dr. Ali Peiravi"),
+            "al-khisal": ("al-khisal", "Dr. Ali Peiravi"),
+            "maani-al-akhbar": ("maani-al-akhbar", "Basel Kadem"),
+            "thawab-al-amal": ("thawab-al-amal", "Sayed Athar Husain Rizvi & Sayed Maqsood Athar"),
+            "kitab-al-zuhd": ("kitab-al-zuhd", "Shaykh Tahir Ridha Jaffer"),
+            "risalat-al-huquq": ("risalat-al-huquq", "William C. Chittick"),
+            "fadail-al-shia": ("fadail-al-shia", "Badr Shahin"),
+            "sifat-al-shia": ("sifat-al-shia", "Badr Shahin"),
+            "kitab-al-duafa": ("kitab-al-duafa", "Tashayyu"),
+            "mujam-al-ahadith-al-mutabara": ("mujam-al-ahadith-al-mutabara", "Ammaar Muslim"),
+            "man-la-yahduruhu-al-faqih": ("man-la-yahduruhu-al-faqih-v1", "Bab Ul Qaim Publications"),
+        }
+
+        for slug, (folder, expected_name) in expected.items():
+            raw_path = get_raw_path(folder)
+            hadiths_file = os.path.join(raw_path, "hadiths.json")
+            if not os.path.exists(hadiths_file):
+                continue  # Skip if raw data not available
+
+            with open(hadiths_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            hadiths = data.get("hadiths", [])
+            if not hadiths:
+                continue
+
+            actual_name = hadiths[0].get("translator", "")
+            if not actual_name:
+                continue  # e.g. kamal-al-din has no translator
+
+            config_name = THAQALAYN_API_BOOKS[slug]["translator_name"]
+            assert config_name == expected_name, \
+                "Slug {} config translator '{}' != expected '{}'".format(
+                    slug, config_name, expected_name)
+
+    def test_multi_volume_books_have_multiple_folders(self):
+        """Multi-volume books have multiple source folders."""
+        from app.thaqalayn_api import THAQALAYN_API_BOOKS
+
+        multi_vol = {
+            "man-la-yahduruhu-al-faqih": 5,
+            "uyun-akhbar-al-rida": 2,
+        }
+        for slug, expected_count in multi_vol.items():
+            assert len(THAQALAYN_API_BOOKS[slug]["source_folders"]) == expected_count, \
+                "{} expected {} folders".format(slug, expected_count)
+
+    def test_twenty_books_registered(self):
+        """THAQALAYN_API_BOOKS has 20 books."""
+        from app.thaqalayn_api import THAQALAYN_API_BOOKS
+
+        assert len(THAQALAYN_API_BOOKS) == 20
