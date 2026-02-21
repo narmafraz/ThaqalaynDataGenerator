@@ -4,7 +4,7 @@ from fastapi.encoders import jsonable_encoder
 from app.lib_db import (
     index_from_path, get_dest_path, clean_nones,
     write_file, load_json, load_chapter, ensure_dir,
-    insert_chapter, delete_file, delete_folder,
+    insert_chapter, insert_verse_details, delete_file, delete_folder,
 )
 from app.models import Chapter, Verse, PartType
 
@@ -282,3 +282,190 @@ class TestInsertChapter:
         # Child verse_list should be created
         loaded_ch = load_json("/books/test:1")
         assert loaded_ch["kind"] == "verse_list"
+
+
+class TestInsertVerseDetails:
+    """Test per-verse detail file generation."""
+
+    def _make_chapter_with_verses(self, num_verses=3):
+        """Helper to create a chapter with hadiths."""
+        chapter = Chapter()
+        chapter.part_type = PartType.Chapter
+        chapter.titles = {"en": "Test Chapter", "ar": "\u0628\u0627\u0628 \u0627\u0644\u0627\u062e\u062a\u0628\u0627\u0631"}
+        chapter.path = "/books/test:1:1"
+        chapter.verses = []
+
+        for i in range(1, num_verses + 1):
+            v = Verse()
+            v.part_type = PartType.Hadith
+            v.text = [f"Arabic text {i}"]
+            v.translations = {"en.hubeali": [f"English translation {i}"]}
+            v.index = i
+            v.local_index = i
+            v.path = f"/books/test:1:1:{i}"
+            chapter.verses.append(v)
+
+        return chapter
+
+    def test_verse_detail_files_created(self, temp_destination_dir):
+        """insert_verse_details writes a JSON file for each verse."""
+        chapter = self._make_chapter_with_verses(3)
+        insert_verse_details(chapter)
+
+        for i in range(1, 4):
+            loaded = load_json(f"/books/test:1:1:{i}")
+            assert loaded["kind"] == "verse_detail"
+            assert loaded["index"] == f"test:1:1:{i}"
+
+    def test_verse_detail_contains_verse_data(self, temp_destination_dir):
+        """Verse detail includes the verse object."""
+        chapter = self._make_chapter_with_verses(1)
+        insert_verse_details(chapter)
+
+        loaded = load_json("/books/test:1:1:1")
+        data = loaded["data"]
+        assert data["verse"]["text"] == ["Arabic text 1"]
+        assert data["verse"]["translations"]["en.hubeali"] == ["English translation 1"]
+        assert data["verse"]["part_type"] == "Hadith"
+
+    def test_verse_detail_contains_chapter_context(self, temp_destination_dir):
+        """Verse detail includes chapter_path and chapter_title."""
+        chapter = self._make_chapter_with_verses(1)
+        insert_verse_details(chapter)
+
+        loaded = load_json("/books/test:1:1:1")
+        data = loaded["data"]
+        assert data["chapter_path"] == "/books/test:1:1"
+        assert data["chapter_title"]["en"] == "Test Chapter"
+        assert data["chapter_title"]["ar"] == "\u0628\u0627\u0628 \u0627\u0644\u0627\u062e\u062a\u0628\u0627\u0631"
+
+    def test_verse_detail_navigation_first(self, temp_destination_dir):
+        """First verse has next and up but no prev."""
+        chapter = self._make_chapter_with_verses(3)
+        insert_verse_details(chapter)
+
+        loaded = load_json("/books/test:1:1:1")
+        nav = loaded["data"]["nav"]
+        assert "prev" not in nav
+        assert nav["next"] == "/books/test:1:1:2"
+        assert nav["up"] == "/books/test:1:1"
+
+    def test_verse_detail_navigation_middle(self, temp_destination_dir):
+        """Middle verse has prev, next, and up."""
+        chapter = self._make_chapter_with_verses(3)
+        insert_verse_details(chapter)
+
+        loaded = load_json("/books/test:1:1:2")
+        nav = loaded["data"]["nav"]
+        assert nav["prev"] == "/books/test:1:1:1"
+        assert nav["next"] == "/books/test:1:1:3"
+        assert nav["up"] == "/books/test:1:1"
+
+    def test_verse_detail_navigation_last(self, temp_destination_dir):
+        """Last verse has prev and up but no next."""
+        chapter = self._make_chapter_with_verses(3)
+        insert_verse_details(chapter)
+
+        loaded = load_json("/books/test:1:1:3")
+        nav = loaded["data"]["nav"]
+        assert nav["prev"] == "/books/test:1:1:2"
+        assert "next" not in nav
+        assert nav["up"] == "/books/test:1:1"
+
+    def test_verse_detail_single_verse(self, temp_destination_dir):
+        """Single verse has only up navigation."""
+        chapter = self._make_chapter_with_verses(1)
+        insert_verse_details(chapter)
+
+        loaded = load_json("/books/test:1:1:1")
+        nav = loaded["data"]["nav"]
+        assert "prev" not in nav
+        assert "next" not in nav
+        assert nav["up"] == "/books/test:1:1"
+
+    def test_verse_detail_with_gradings(self, temp_destination_dir):
+        """Verse with gradings includes them in detail."""
+        chapter = self._make_chapter_with_verses(1)
+        chapter.verses[0].gradings = {
+            "majlisi": "Sahih",
+            "mohseni": "Mu'tabar",
+        }
+        insert_verse_details(chapter)
+
+        loaded = load_json("/books/test:1:1:1")
+        assert loaded["data"]["gradings"]["majlisi"] == "Sahih"
+        assert loaded["data"]["gradings"]["mohseni"] == "Mu'tabar"
+
+    def test_verse_detail_with_source_url(self, temp_destination_dir):
+        """Verse with source_url includes it in detail."""
+        chapter = self._make_chapter_with_verses(1)
+        chapter.verses[0].source_url = "https://thaqalayn.net/hadith/1/1/1/1"
+        insert_verse_details(chapter)
+
+        loaded = load_json("/books/test:1:1:1")
+        assert loaded["data"]["source_url"] == "https://thaqalayn.net/hadith/1/1/1/1"
+
+    def test_verse_detail_omits_empty_gradings(self, temp_destination_dir):
+        """Verse without gradings does not include gradings key."""
+        chapter = self._make_chapter_with_verses(1)
+        insert_verse_details(chapter)
+
+        loaded = load_json("/books/test:1:1:1")
+        assert "gradings" not in loaded["data"]
+        assert "source_url" not in loaded["data"]
+
+    def test_verse_detail_skips_headings(self, temp_destination_dir):
+        """Heading part_type verses are not given detail files."""
+        chapter = Chapter()
+        chapter.part_type = PartType.Chapter
+        chapter.titles = {"en": "Test"}
+        chapter.path = "/books/test:1"
+        chapter.verses = []
+
+        heading = Verse()
+        heading.part_type = PartType.Heading
+        heading.text = ["Heading text"]
+        heading.path = "/books/test:1:h1"
+        chapter.verses.append(heading)
+
+        hadith = Verse()
+        hadith.part_type = PartType.Hadith
+        hadith.text = ["Hadith text"]
+        hadith.index = 1
+        hadith.local_index = 1
+        hadith.path = "/books/test:1:1"
+        chapter.verses.append(hadith)
+
+        insert_verse_details(chapter)
+
+        # Hadith should have detail file
+        loaded = load_json("/books/test:1:1")
+        assert loaded["kind"] == "verse_detail"
+
+        # Heading should NOT have detail file
+        assert not os.path.exists(get_dest_path("/books/test:1:h1"))
+
+    def test_insert_chapter_creates_verse_details(self, temp_destination_dir):
+        """insert_chapter automatically creates verse detail files."""
+        chapter = Chapter()
+        chapter.part_type = PartType.Chapter
+        chapter.titles = {"en": "Chapter 1"}
+        chapter.path = "/books/test:1"
+        chapter.verses = []
+
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = ["Test text"]
+        v.index = 1
+        v.local_index = 1
+        v.path = "/books/test:1:1"
+        chapter.verses = [v]
+
+        insert_chapter(chapter)
+
+        # Both chapter verse_list and individual verse_detail should exist
+        chapter_json = load_json("/books/test:1")
+        assert chapter_json["kind"] == "verse_list"
+
+        verse_json = load_json("/books/test:1:1")
+        assert verse_json["kind"] == "verse_detail"

@@ -64,6 +64,52 @@ def insert_chapter_content(chapter):
 	book = write_file(chapter_data['path'], obj_in)
 	logger.info("Inserted chapter content into book_part ID %s with index %s", book.id, book.index)
 
+	insert_verse_details(chapter)
+
+
+def insert_verse_details(chapter):
+	"""Write individual verse_detail JSON files for each hadith/verse in a chapter."""
+	verses = get_verses(chapter)
+	if not verses:
+		return
+
+	from app.models.enums import PartType
+	addressable_verses = [v for v in verses if v.part_type in (PartType.Hadith, PartType.Verse)]
+	if not addressable_verses:
+		return
+
+	for i, verse in enumerate(addressable_verses):
+		if not verse.path:
+			continue
+
+		nav = {}
+		if i > 0:
+			nav["prev"] = addressable_verses[i - 1].path
+		if i < len(addressable_verses) - 1:
+			nav["next"] = addressable_verses[i + 1].path
+		nav["up"] = chapter.path
+
+		verse_data = jsonable_encoder(verse)
+		detail_data = {
+			"verse": verse_data,
+			"chapter_path": chapter.path,
+			"chapter_title": chapter.titles,
+			"nav": nav,
+		}
+
+		if verse.gradings:
+			detail_data["gradings"] = verse.gradings
+		if verse.source_url:
+			detail_data["source_url"] = verse.source_url
+
+		obj_in = {
+			"index": index_from_path(verse.path),
+			"kind": "verse_detail",
+			"data": detail_data,
+		}
+		result = write_file(verse.path, obj_in)
+		logger.debug("Inserted verse detail ID %s with index %s", result.id, result.index)
+
 def get_dest_path(filename: str) -> str:
 	sanitised_file = filename.replace(":", "/")
 	if sanitised_file.startswith("/"):
