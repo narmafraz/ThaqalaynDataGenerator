@@ -578,3 +578,86 @@ class TestVerseIndexing:
         for verse in data["verses"]:
             assert verse["part_type"] in ("Hadith", "Heading"), \
                 f"Al-Kafi verse should be Hadith or Heading, got '{verse['part_type']}'"
+
+
+# =========================================================================
+# 10. Data completeness – counts and coverage
+# =========================================================================
+
+class TestDataCompleteness:
+    """Verify known data counts for regression detection."""
+
+    def test_quran_total_verse_count(self):
+        data = _load_json("books/quran.json")["data"]
+        assert data["verse_count"] == 6236, \
+            f"Expected Quran to have 6236 verses, got {data['verse_count']}"
+
+    def test_quran_verse_sum_across_suras(self):
+        """Sum of all sura verse counts should equal 6236."""
+        data = _load_json("books/quran.json")["data"]
+        total = sum(ch["verse_count"] for ch in data["chapters"])
+        assert total == 6236, f"Sum of sura verse_counts is {total}, expected 6236"
+
+    def test_alkafi_total_verse_count(self):
+        data = _load_json("books/al-kafi.json")["data"]
+        assert data["verse_count"] == 15385, \
+            f"Expected Al-Kafi to have 15385 verses/headings, got {data['verse_count']}"
+
+    def test_alkafi_has_8_volumes(self):
+        data = _load_json("books/al-kafi.json")["data"]
+        assert len(data["chapters"]) == 8
+
+    def test_narrator_count(self):
+        data = _load_json("people/narrators/index.json")
+        assert len(data["data"]) == 4860, \
+            f"Expected 4860 narrators, got {len(data['data'])}"
+
+    def test_narrator_index_coverage(self):
+        """Every narrator ID in the index has a corresponding JSON file."""
+        data = _load_json("people/narrators/index.json")
+        missing = []
+        for nid in data["data"]:
+            fpath = os.path.join(DATA_DIR, "people", "narrators", f"{nid}.json")
+            if not os.path.isfile(fpath):
+                missing.append(nid)
+        assert not missing, \
+            f"{len(missing)} narrators in index have no file: {missing[:20]}"
+
+    def test_narrator_files_all_in_index(self):
+        """Every narrator JSON file should be listed in the index."""
+        data = _load_json("people/narrators/index.json")
+        index_ids = set(data["data"].keys())
+        narrators_dir = os.path.join(DATA_DIR, "people", "narrators")
+        orphans = []
+        for fname in os.listdir(narrators_dir):
+            if fname == "index.json" or not fname.endswith(".json"):
+                continue
+            nid = fname.replace(".json", "")
+            if nid not in index_ids:
+                orphans.append(nid)
+        assert not orphans, \
+            f"{len(orphans)} narrator files not in index: {orphans[:20]}"
+
+    def test_narrator_1_snapshot(self):
+        """Snapshot key properties of narrator 1."""
+        data = _load_json("people/narrators/1.json")["data"]
+        assert "ar" in data["titles"]
+        assert len(data["verse_paths"]) > 0
+        assert len(data["subchains"]) > 0
+        assert data["path"] == "/people/narrators/1"
+
+    def test_books_json_snapshot(self):
+        """Snapshot: books.json has exactly Quran and Al-Kafi."""
+        data = _load_json("books/books.json")["data"]
+        titles = {ch["titles"]["en"] for ch in data["chapters"]}
+        assert "The Holy Quran" in titles
+        assert "Al-Kafi" in titles
+
+    @pytest.mark.parametrize("sura", range(1, 115))
+    def test_every_quran_sura_has_verses(self, sura):
+        path = f"books/quran/{sura}.json"
+        if not os.path.isfile(os.path.join(DATA_DIR, path)):
+            pytest.skip(f"Sura {sura} not found")
+        data = _load_json(path)["data"]
+        assert len(data.get("verses", [])) > 0, \
+            f"Sura {sura} has no verses"
