@@ -1,4 +1,9 @@
 import logging
+import sys
+
+# Fix Windows console encoding for Arabic text output
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
 from app.books import init_books
 from app.kafi import init_kafi

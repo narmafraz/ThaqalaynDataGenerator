@@ -138,9 +138,12 @@ class TestUtf8Integrity:
         data = _load_json("books/al-kafi/1/1/1.json")
         verse = data["data"]["verses"][0]
         chain = verse.get("narrator_chain", {})
-        chain_text = chain.get("text", "")
-        assert re.search(r"[\u0600-\u06FF]", chain_text), \
-            "Narrator chain text should contain Arabic characters"
+        # narrator_chain.text was removed in Phase 2 (30 MB savings)
+        # Check parts instead for Arabic content
+        parts = chain.get("parts", [])
+        all_text = " ".join(p.get("text", "") for p in parts)
+        assert re.search(r"[\u0600-\u06FF]", all_text), \
+            "Narrator chain parts should contain Arabic characters"
 
     def test_quran_raw_file_no_unicode_escapes(self):
         """Read raw file bytes and verify no \\uXXXX for Arabic code points."""
@@ -312,16 +315,17 @@ class TestNarratorChains:
                 assert part["kind"] in ("narrator", "plain"), \
                     f"Invalid chain part kind: {part['kind']} in {verse.get('path')}"
 
-    def test_narrator_chain_has_text(self):
+    def test_narrator_chain_has_parts(self):
+        """Narrator chains have parts (text field removed in Phase 2 for 30 MB savings)."""
         data = _load_json("books/al-kafi/1/1/1.json")["data"]
         for verse in data.get("verses", []):
             chain = verse.get("narrator_chain")
             if not chain:
                 continue
-            assert "text" in chain, \
-                f"Narrator chain in {verse.get('path')} missing 'text' field"
-            assert len(chain["text"]) > 0, \
-                f"Narrator chain in {verse.get('path')} has empty text"
+            assert "parts" in chain, \
+                f"Narrator chain in {verse.get('path')} missing 'parts' field"
+            assert len(chain["parts"]) > 0, \
+                f"Narrator chain in {verse.get('path')} has empty parts"
 
     def test_narrator_file_has_required_fields(self):
         data = _load_json("people/narrators/1.json")
@@ -533,9 +537,9 @@ class TestSnapshotKeyChapters:
                 missing.append(sura)
         assert not missing, f"Missing sura files: {missing}"
 
-    def test_books_json_lists_two_books(self):
+    def test_books_json_lists_books(self):
         data = _load_json("books/books.json")["data"]
-        assert len(data["chapters"]) == 2
+        assert len(data["chapters"]) >= 2
         paths = {ch["path"] for ch in data["chapters"]}
         assert "/books/quran" in paths
         assert "/books/al-kafi" in paths

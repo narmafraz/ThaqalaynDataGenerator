@@ -218,6 +218,24 @@ class TestSchemaEvolution:
         restored = Verse(**json_data)
         assert restored.gradings == v.gradings
 
+    def test_verse_gradings_list(self):
+        """Gradings field accepts List[str] for Sarwar-style grading strings."""
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = ["Arabic text"]
+        v.gradings = [
+            "Allamah Baqir al-Majlisi: صحيح - Sahih",
+            "Shaykh Asif al-Mohseni: معتبر - Mu'tabar",
+        ]
+
+        json_data = jsonable_encoder(v)
+        assert isinstance(json_data["gradings"], list)
+        assert len(json_data["gradings"]) == 2
+        assert json_data["gradings"][0] == "Allamah Baqir al-Majlisi: صحيح - Sahih"
+
+        restored = Verse(**json_data)
+        assert restored.gradings == v.gradings
+
     def test_verse_source_url(self):
         """Verse source_url links back to source site."""
         v = Verse()

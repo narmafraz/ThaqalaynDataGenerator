@@ -38,6 +38,9 @@ def sitepath_from_filepath(filepath: str) -> str:
 def add_chapter_content(chapter: Chapter, filepath: str, hadith_index: int = 0, report: ProcessingReport = None):
 	if report is None:
 		report = get_default_report()
+	if os.path.isdir(filepath):
+		logger.info("Skipping directory %s", filepath)
+		return
 	if filepath.endswith(os.sep + '0.html') or filepath.endswith('/0.html'):
 		error_msg = f"Skipping zero file {filepath}"
 		logger.warning(error_msg)
@@ -240,7 +243,7 @@ def add_book_content(book: Chapter, dirname, volume, report: ProcessingReport = 
 		add_chapter_content(chapter, cfile, hadith_index, report)
 
 def add_content(volume: Chapter, dirname, report: ProcessingReport = None):
-	cfiles = glob.glob(dirname + "*")
+	cfiles = glob.glob(os.path.join(dirname, "*"))
 
 	for cfile in cfiles:
 		logger.info("Processing book dir %s", cfile)

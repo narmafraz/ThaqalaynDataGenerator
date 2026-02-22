@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Union
 
 from app.models.crumb import Crumb, Navigation
 from app.models.enums import Language, PartType
@@ -19,7 +19,7 @@ class NarratorChain(BaseModel):
 
 class Verse(BaseModel):
 	narrator_chain: Optional[NarratorChain] = None
-	gradings: Optional[Dict[str, str]] = None
+	gradings: Optional[Union[Dict[str, str], List[str]]] = None
 	index: Optional[int] = None
 	local_index: Optional[int] = None
 	part_type: Optional[PartType] = None

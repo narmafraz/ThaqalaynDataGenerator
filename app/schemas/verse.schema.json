@@ -51,9 +51,19 @@
       "description": "Cross-references: type → array of paths"
     },
     "gradings": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "Hadith grading strings in 'Scholar: <span>term</span>' format"
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Grading dict: scholar key to grading value (ThaqalaynAPI format)"
+        },
+        {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Grading strings in 'Scholar: <span>term</span>' format (Sarwar format)"
+        }
+      ],
+      "description": "Hadith gradings in either dict or array format"
     },
     "sajda_type": { "type": "string" },
     "source_url": { "type": "string", "format": "uri" }
