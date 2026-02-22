@@ -263,6 +263,44 @@ def generate_search_indexes(data_dir: Optional[str] = None) -> dict:
         write_search_json(data_dir, filename, docs)
         results[filename] = len(docs)
 
+    # 3. Write metadata file documenting the schema for the frontend
+    metadata = {
+        "version": 1,
+        "language": "arabic",
+        "schemas": {
+            "titles": {
+                "file": "titles.json",
+                "description": "Book/chapter/surah titles for instant navigation search",
+                "fields": {
+                    "p": {"type": "string", "description": "Path (e.g. /books/al-kafi:1:2)"},
+                    "pt": {"type": "string", "description": "Part type (Volume, Book, Chapter)"},
+                    "en": {"type": "string", "description": "English title", "searchable": True},
+                    "ar": {"type": "string", "description": "Arabic title (with diacritics, for display)"},
+                    "arn": {"type": "string", "description": "Normalized Arabic title (for search)", "searchable": True},
+                },
+                "orama_schema": {"p": "string", "pt": "string", "en": "string", "ar": "string", "arn": "string"},
+            },
+            "book": {
+                "files": {"quran": "quran-docs.json", "al-kafi": "al-kafi-docs.json"},
+                "description": "Full-text verse/hadith content for per-book search",
+                "fields": {
+                    "p": {"type": "string", "description": "Verse path (e.g. /books/quran:1:1)"},
+                    "t": {"type": "string", "description": "Chapter title (English)"},
+                    "ar": {"type": "string", "description": "Normalized Arabic text (for search)", "searchable": True},
+                    "en": {"type": "string", "description": "English translation (for search)", "searchable": True},
+                    "i": {"type": "number", "description": "Local index (verse/hadith number)"},
+                },
+                "orama_schema": {"p": "string", "t": "string", "ar": "string", "en": "string", "i": "number"},
+            },
+        },
+        "notes": {
+            "arabic_search": "Use 'arn' field for titles and 'ar' field for verses. Text is normalized: diacritics stripped, letter forms unified (hamza->alef, teh marbuta->heh, alef maksura->yeh), tatweel removed.",
+            "orama_config": "Create Orama instances with language: 'arabic' for proper Arabic tokenization. This also handles English text correctly.",
+            "loading_strategy": "Load titles.json immediately on app init. Load book doc files on-demand when user searches within a specific book.",
+        },
+    }
+    write_search_json(data_dir, "search-meta.json", metadata)
+
     return results
 
 
