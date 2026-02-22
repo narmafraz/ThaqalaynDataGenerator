@@ -13,8 +13,8 @@ from app.models import Chapter, Language, Translation, Verse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_destination_dir():
-	return os.getenv("DESTINATION_DIR")
+def get_destination_dir() -> str:
+	return os.getenv("DESTINATION_DIR", "../ThaqalaynData/")
 
 class InsertedObj():
 	id: str
@@ -31,7 +31,7 @@ def insert_chapter(chapter: Chapter):
 	if get_verses(chapter):
 		insert_chapter_content(chapter)
 
-def insert_chapters_list(chapter):
+def insert_chapters_list(chapter: Chapter) -> None:
 	chapter_data = jsonable_encoder(chapter,
 		exclude={'chapters': {'__all__': {
 			'chapters',
@@ -54,7 +54,7 @@ def insert_chapters_list(chapter):
 	for subchapter in subchapters:
 		insert_chapter(subchapter)
 
-def insert_chapter_content(chapter):
+def insert_chapter_content(chapter: Chapter) -> None:
 	chapter_data = jsonable_encoder(chapter)
 	obj_in = {
 		"index": index_from_path(chapter_data['path']),
@@ -67,7 +67,7 @@ def insert_chapter_content(chapter):
 	insert_verse_details(chapter)
 
 
-def insert_verse_details(chapter):
+def insert_verse_details(chapter: Chapter) -> None:
 	"""Write individual verse_detail JSON files for each hadith/verse in a chapter."""
 	verses = get_verses(chapter)
 	if not verses:
@@ -116,13 +116,13 @@ def get_dest_path(filename: str) -> str:
 		sanitised_file = sanitised_file[1:]
 	return os.path.join(get_destination_dir(), sanitised_file + ".json")
 
-def ensure_dir(file_path):
+def ensure_dir(file_path: str) -> str:
 	directory = os.path.dirname(file_path)
 	if not os.path.exists(directory):
 		os.makedirs(directory)
 	return file_path
 
-def write_file(path: str, obj):
+def write_file(path: str, obj: dict) -> InsertedObj:
 	result = InsertedObj()
 	result.path = path
 	if 'index' in obj:
@@ -143,23 +143,23 @@ def load_chapter(path: str) -> Chapter :
 			json_chapter = json_chapter['data']
 		return Chapter(**json_chapter)
 
-def load_json(path: str) :
+def load_json(path: str) -> dict:
 	with open(ensure_dir(get_dest_path(path)), 'r', encoding='utf-8') as f:
 		return json.load(f)
 
-def delete_file(path: str) :
+def delete_file(path: str) -> None:
 	filename = get_dest_path(path)
 	if os.path.exists(filename):
 		os.remove(filename)
 
-def delete_folder(path: str) :
+def delete_folder(path: str) -> None:
 	if path.startswith("/"):
 		path = path[1:]
 	filename = os.path.join(get_destination_dir(), path)
 	if os.path.exists(filename):
 		shutil.rmtree(filename)
 
-def clean_nones(value):
+def clean_nones(value: object) -> object:
 	"""
 	Recursively remove all None values from dictionaries and lists, and returns
 	the result as a new dictionary or list.
