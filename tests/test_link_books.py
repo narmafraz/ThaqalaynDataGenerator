@@ -1,11 +1,18 @@
 """Tests for the generalized cross-reference linker (link_books.py)."""
 
+import json
+import os
+
 from app.link_books import (
     QURAN_QUOTE,
+    _collect_verse_updates,
     _count_relations,
+    _get_leaf_chapter_paths,
+    _patch_modular_file,
     _process_chapter,
     _process_chapter_verses,
     _process_translation_text,
+    _propagate_to_modular_files,
     _update_refs,
 )
 from app.models import Chapter, PartType, Verse
@@ -240,3 +247,158 @@ class TestCountRelations:
 
     def test_empty_chapter(self):
         assert _count_relations(Chapter()) == 0
+
+
+class TestCollectVerseUpdates:
+    def test_collects_verses_with_relations(self):
+        chapter = Chapter()
+        chapter.path = "/books/test:1"
+        chapter.verses = []
+        v1 = Verse()
+        v1.path = "/books/test:1:1"
+        v1.relations = {"Mentions": {"/books/quran:1:1"}}
+        v1.translations = {"en.test": ["See [1:1]"]}
+        v2 = Verse()
+        v2.path = "/books/test:1:2"
+        chapter.verses = [v1, v2]
+
+        updates = {}
+        _collect_verse_updates(chapter, updates)
+        assert "/books/test:1:1" in updates
+        # v2 has no relations or translations, but still included if translations exist
+        # Actually v2 has neither, so should not be included
+        assert "/books/test:1:2" not in updates
+
+    def test_recurses_into_subchapters(self):
+        root = Chapter()
+        root.chapters = []
+        ch = Chapter()
+        ch.path = "/books/test:1"
+        ch.verses = []
+        v = Verse()
+        v.path = "/books/test:1:1"
+        v.relations = {"Mentions": {"/books/quran:2:1"}}
+        v.translations = {"en.t": ["ref [2:1]"]}
+        ch.verses.append(v)
+        root.chapters.append(ch)
+
+        updates = {}
+        _collect_verse_updates(root, updates)
+        assert "/books/test:1:1" in updates
+
+
+class TestGetLeafChapterPaths:
+    def test_returns_leaf_paths(self):
+        root = Chapter()
+        root.path = "/books/test"
+        root.chapters = []
+        ch = Chapter()
+        ch.path = "/books/test:1"
+        ch.verses = [Verse()]
+        root.chapters.append(ch)
+
+        paths = _get_leaf_chapter_paths(root)
+        assert "/books/test:1" in paths
+
+    def test_skips_non_leaf_chapters(self):
+        root = Chapter()
+        root.path = "/books/test"
+        root.chapters = []
+        mid = Chapter()
+        mid.path = "/books/test:1"
+        mid.chapters = []
+        leaf = Chapter()
+        leaf.path = "/books/test:1:1"
+        leaf.verses = [Verse()]
+        mid.chapters.append(leaf)
+        root.chapters.append(mid)
+
+        paths = _get_leaf_chapter_paths(root)
+        assert "/books/test:1:1" in paths
+        assert "/books/test:1" not in paths
+
+
+class TestPatchModularFile:
+    def test_patches_verse_list(self, tmp_path, monkeypatch):
+        """Patch a verse_list file with updated relations."""
+        # Create a mock verse_list JSON file
+        verse_list = {
+            "index": "test:1",
+            "kind": "verse_list",
+            "data": {
+                "path": "/books/test:1",
+                "verses": [
+                    {"path": "/books/test:1:1", "text": ["Arabic"]},
+                    {"path": "/books/test:1:2", "text": ["More Arabic"]},
+                ]
+            }
+        }
+        dest_file = tmp_path / "books" / "test" / "1.json"
+        dest_file.parent.mkdir(parents=True)
+        dest_file.write_text(json.dumps(verse_list), encoding="utf-8")
+
+        monkeypatch.setattr("app.link_books.get_dest_path", lambda p: str(dest_file))
+
+        updates = {
+            "/books/test:1:1": {
+                "relations": {"Mentions": ["/books/quran:1:1"]},
+                "translations": {"en.test": ["See <a>link</a>"]},
+            }
+        }
+        patched = _patch_modular_file("/books/test:1", updates)
+        assert patched == 1
+
+        result = json.loads(dest_file.read_text(encoding="utf-8"))
+        v1 = result["data"]["verses"][0]
+        assert v1["relations"] == {"Mentions": ["/books/quran:1:1"]}
+        assert v1["translations"] == {"en.test": ["See <a>link</a>"]}
+        # v2 should be unchanged
+        v2 = result["data"]["verses"][1]
+        assert "relations" not in v2
+
+    def test_patches_verse_detail(self, tmp_path, monkeypatch):
+        """Patch a verse_detail file with updated relations."""
+        verse_detail = {
+            "index": "test:1:1",
+            "kind": "verse_detail",
+            "data": {
+                "verse": {"path": "/books/test:1:1", "text": ["Arabic"]},
+                "chapter_path": "/books/test:1",
+                "nav": {},
+            }
+        }
+        dest_file = tmp_path / "books" / "test" / "1" / "1.json"
+        dest_file.parent.mkdir(parents=True)
+        dest_file.write_text(json.dumps(verse_detail), encoding="utf-8")
+
+        monkeypatch.setattr("app.link_books.get_dest_path", lambda p: str(dest_file))
+
+        updates = {
+            "/books/test:1:1": {
+                "relations": {"Mentions": ["/books/quran:2:3"]},
+            }
+        }
+        patched = _patch_modular_file("/books/test:1:1", updates)
+        assert patched == 1
+
+        result = json.loads(dest_file.read_text(encoding="utf-8"))
+        assert result["data"]["verse"]["relations"] == {"Mentions": ["/books/quran:2:3"]}
+
+    def test_returns_zero_for_missing_file(self, monkeypatch):
+        monkeypatch.setattr("app.link_books.get_dest_path", lambda p: "/nonexistent/path.json")
+        assert _patch_modular_file("/books/fake:1", {}) == 0
+
+    def test_returns_zero_when_no_matching_updates(self, tmp_path, monkeypatch):
+        verse_list = {
+            "index": "test:1",
+            "kind": "verse_list",
+            "data": {"verses": [{"path": "/books/test:1:1"}]}
+        }
+        dest_file = tmp_path / "test.json"
+        dest_file.write_text(json.dumps(verse_list), encoding="utf-8")
+
+        monkeypatch.setattr("app.link_books.get_dest_path", lambda p: str(dest_file))
+
+        # No matching verse path in updates
+        updates = {"/books/other:1:1": {"relations": {"Mentions": ["/books/quran:1:1"]}}}
+        assert _patch_modular_file("/books/test:1", updates) == 0
