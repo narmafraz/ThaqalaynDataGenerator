@@ -36,7 +36,7 @@ def _process_translation_text(translation_text_list: List[str], quran_refs: Set[
     """
     for i, ttext in enumerate(translation_text_list):
         translation_text_list[i] = QURAN_QUOTE.sub(
-            r'<a href="/#/books/quran:\1#h\2">[\1:\2]</a>', ttext
+            r'<a href="/books/quran:\1#h\2">[\1:\2]</a>', ttext
         )
         all_matches = QURAN_QUOTE.findall(ttext)
         for match in all_matches:

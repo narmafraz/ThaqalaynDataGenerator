@@ -54,7 +54,7 @@ class TestProcessTranslationText:
         text = ["See [2:255]"]
         refs = set()
         _process_translation_text(text, refs)
-        assert '<a href="/#/books/quran:2#h255">[2:255]</a>' in text[0]
+        assert '<a href="/books/quran:2#h255">[2:255]</a>' in text[0]
         assert (2, 255) in refs
 
     def test_multiple_refs_collected(self):
