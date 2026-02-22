@@ -15,6 +15,7 @@ dependencies = [
 dev = [
     "pylint",
     "autopep8",
+    "mypy>=1.0",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-mock>=3.10",
@@ -49,3 +50,27 @@ exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",
 ]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "app.base_parser"
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "app.config"
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "app.lib_db"
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "app.lib_model"
+disallow_untyped_defs = false
