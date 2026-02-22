@@ -10,6 +10,7 @@ from app.kafi import init_kafi
 from app.kafi_narrators import kafi_narrators
 from app.kafi_sarwar import add_kafi_sarwar
 from app.lib_model import ProcessingReport
+from app.link_books import link_all_books_to_quran
 from app.link_quran_kafi import link_quran_kafi
 from app.quran import init_quran
 from app.thaqalayn_api import init_all_thaqalayn_api_books
@@ -28,6 +29,7 @@ def init():
     link_quran_kafi()
     kafi_narrators(report)
     init_all_thaqalayn_api_books()
+    link_all_books_to_quran()
     create_indices()
     report.print_summary()
 
