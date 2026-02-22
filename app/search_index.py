@@ -2,8 +2,9 @@
 
 Reads ThaqalaynData JSON files and produces:
 1. titles.json - lightweight index of all book/chapter/surah titles for instant search
-2. quran-docs.json - full-text Quran search documents (Arabic + English translations)
-3. al-kafi-docs.json - full-text Al-Kafi search documents (Arabic + English translations)
+2. {book-slug}-docs.json - full-text search documents per book (Arabic + English translations)
+
+All book directories under books/ are automatically discovered and indexed.
 
 Arabic text is normalized (strip tashkeel, normalize letter forms, remove tatweel)
 to enable fuzzy Arabic search. The original text is preserved for display; the
@@ -229,6 +230,28 @@ def build_book_docs(data_dir: str, book_slug: str) -> List[dict]:
     return docs
 
 
+def discover_book_slugs(data_dir: str) -> List[str]:
+    """Discover all book slugs by listing directories under books/.
+
+    Returns a sorted list of directory names (e.g. ['al-kafi', 'quran', ...]),
+    excluding the 'complete' directory which contains aggregated files.
+    """
+    books_dir = os.path.join(data_dir, "books")
+    if not os.path.isdir(books_dir):
+        logger.warning("Books directory not found: %s", books_dir)
+        return []
+
+    slugs = []
+    for entry in os.listdir(books_dir):
+        entry_path = os.path.join(books_dir, entry)
+        if os.path.isdir(entry_path) and entry != "complete":
+            slugs.append(entry)
+
+    slugs.sort()
+    logger.info("Discovered %d book directories: %s", len(slugs), ", ".join(slugs))
+    return slugs
+
+
 def write_search_json(data_dir: str, filename: str, docs: list) -> str:
     """Write search documents to the search index directory."""
     search_dir = os.path.join(data_dir, "index", "search")
@@ -257,11 +280,14 @@ def generate_search_indexes(data_dir: Optional[str] = None) -> dict:
     results["titles.json"] = len(titles)
 
     # 2. Per-book full-text indexes (lazy-loaded on demand)
-    for book_slug in ["quran", "al-kafi"]:
+    book_slugs = discover_book_slugs(data_dir)
+    book_files: Dict[str, str] = {}
+    for book_slug in book_slugs:
         filename = f"{book_slug}-docs.json"
         docs = build_book_docs(data_dir, book_slug)
         write_search_json(data_dir, filename, docs)
         results[filename] = len(docs)
+        book_files[book_slug] = filename
 
     # 3. Write metadata file documenting the schema for the frontend
     metadata = {
@@ -281,7 +307,7 @@ def generate_search_indexes(data_dir: Optional[str] = None) -> dict:
                 "orama_schema": {"p": "string", "pt": "string", "en": "string", "ar": "string", "arn": "string"},
             },
             "book": {
-                "files": {"quran": "quran-docs.json", "al-kafi": "al-kafi-docs.json"},
+                "files": book_files,
                 "description": "Full-text verse/hadith content for per-book search",
                 "fields": {
                     "p": {"type": "string", "description": "Verse path (e.g. /books/quran:1:1)"},

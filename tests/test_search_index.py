@@ -9,6 +9,7 @@ from app.search_index import (
     build_titles_index,
     extract_verse_docs,
     build_book_docs,
+    discover_book_slugs,
     generate_search_indexes,
     write_search_json,
     _is_generic_chapter_title,
@@ -447,6 +448,61 @@ class TestWriteSearchJson:
 
 
 # ---------------------------------------------------------------------------
+# discover_book_slugs tests
+# ---------------------------------------------------------------------------
+
+class TestDiscoverBookSlugs:
+    def test_discovers_book_directories(self, tmp_path):
+        books_dir = tmp_path / "books"
+        books_dir.mkdir()
+        (books_dir / "quran").mkdir()
+        (books_dir / "al-kafi").mkdir()
+        (books_dir / "nahj-al-balagha").mkdir()
+
+        slugs = discover_book_slugs(str(tmp_path))
+        assert slugs == ["al-kafi", "nahj-al-balagha", "quran"]
+
+    def test_excludes_complete_directory(self, tmp_path):
+        books_dir = tmp_path / "books"
+        books_dir.mkdir()
+        (books_dir / "quran").mkdir()
+        (books_dir / "complete").mkdir()
+
+        slugs = discover_book_slugs(str(tmp_path))
+        assert "complete" not in slugs
+        assert slugs == ["quran"]
+
+    def test_excludes_json_files(self, tmp_path):
+        books_dir = tmp_path / "books"
+        books_dir.mkdir()
+        (books_dir / "quran").mkdir()
+        # Create a JSON file (not a directory)
+        (books_dir / "quran.json").write_text("{}")
+
+        slugs = discover_book_slugs(str(tmp_path))
+        assert slugs == ["quran"]
+
+    def test_returns_sorted(self, tmp_path):
+        books_dir = tmp_path / "books"
+        books_dir.mkdir()
+        (books_dir / "zzz-book").mkdir()
+        (books_dir / "aaa-book").mkdir()
+        (books_dir / "mmm-book").mkdir()
+
+        slugs = discover_book_slugs(str(tmp_path))
+        assert slugs == ["aaa-book", "mmm-book", "zzz-book"]
+
+    def test_no_books_directory(self, tmp_path):
+        slugs = discover_book_slugs(str(tmp_path))
+        assert slugs == []
+
+    def test_empty_books_directory(self, tmp_path):
+        (tmp_path / "books").mkdir()
+        slugs = discover_book_slugs(str(tmp_path))
+        assert slugs == []
+
+
+# ---------------------------------------------------------------------------
 # generate_search_indexes integration test
 # ---------------------------------------------------------------------------
 
@@ -531,6 +587,12 @@ class TestGenerateSearchIndexes:
         assert meta["language"] == "arabic"
         assert "titles" in meta["schemas"]
         assert "book" in meta["schemas"]
+        # Verify metadata lists all discovered books dynamically
+        book_files = meta["schemas"]["book"]["files"]
+        assert "quran" in book_files
+        assert "al-kafi" in book_files
+        assert book_files["quran"] == "quran-docs.json"
+        assert book_files["al-kafi"] == "al-kafi-docs.json"
 
     def test_empty_book_produces_empty_docs(self, full_data_dir):
         results = generate_search_indexes(full_data_dir)
