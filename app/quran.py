@@ -125,8 +125,8 @@ def insert_quran_translation(verses, verse_translations, file, key, lang, author
 				verses[index].translations[id] = [text]
 				index = index + 1
 
-def get_path(file):
-	return os.path.join(os.path.dirname(__file__), "raw\\" + file)
+def get_path(file: str) -> str:
+	return os.path.join(os.path.dirname(__file__), "raw", file)
 
 
 def build_quran() -> Chapter:

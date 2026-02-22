@@ -20,7 +20,7 @@ from app.lib_db import insert_chapter, write_file
 from app.lib_model import ProcessingReport, SEQUENCE_ERRORS, get_default_report, set_index
 from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
 
-def set_titles_and_index(chapter, titles):
+def set_titles_and_index(chapter: Chapter, titles: Dict[str, str]) -> None:
     chapter.titles = titles
 
 logging.basicConfig(level=logging.INFO)
@@ -31,9 +31,9 @@ BOOK_PATH = "/books/al-kafi"
 
 TITLE_NUMBERING = re.compile(r' \(\d+\)')
 
-def extract_headings(headings):
+def extract_headings(headings: List[Tag]) -> Dict[str, str]:
 	assert len(headings) > 0, "Did not find headings in " + str(headings)
-	names = {}
+	names: Dict[str, str] = {}
 	if len(headings) > 1:
 		names[Language.AR.value] = headings[0].get_text(strip=True)
 		names[Language.EN.value] = TITLE_NUMBERING.sub('', headings[1].get_text(strip=True))
@@ -42,7 +42,7 @@ def extract_headings(headings):
 	return names
 
 
-def build_alhassanain_baabs(file) -> List[Chapter]:
+def build_alhassanain_baabs(file: str) -> List[Chapter]:
 	baabs: List[Chapter] = []
 	logger.info("Adding Al-Kafi file %s", file)
 
@@ -145,7 +145,7 @@ hubbeali_translation = Translation(name = "HubeAli.com", lang = Language.EN.valu
 from app.lib_index import add_translation
 add_translation(hubbeali_translation)
 
-def we_dont_care(heading):
+def we_dont_care(heading: Tag) -> bool:
 	if heading is None:
 		return True
 	
@@ -155,7 +155,7 @@ def we_dont_care(heading):
 	
 	return False
 
-def table_of_contents(heading):
+def table_of_contents(heading: Tag) -> bool:
 	htext = heading.get_text(strip=True).upper()
 	return TABLE_OF_CONTENTS_PATTERN.match(htext)
 
@@ -279,7 +279,7 @@ def build_hubeali_books(dirname) -> List[Chapter]:
 
 					# hubeali put chapters on ziyarat as separate book but we're going to stay true to the indexing on 
 					# other copies out there and have the chapters under this as part of book of Hajj
-					if not cfile.endswith('Al-Kafi-Volume-4\\c346.xhtml'):
+					if not cfile.endswith(os.path.join('Al-Kafi-Volume-4', 'c346.xhtml')):
 						book_title_ar = element_content
 						chapter = None
 				elif is_chapter_title(last_element):
@@ -440,8 +440,8 @@ def build_volume(file, title_en: str, title_ar: str, description: str, last_volu
 
 	return volume
 
-def get_path(file):
-	return os.path.join(os.path.dirname(__file__), "raw\\" + file)
+def get_path(file: str) -> str:
+	return os.path.join(os.path.dirname(__file__), "raw", file)
 
 
 def build_kafi(report: ProcessingReport = None) -> Chapter:
@@ -455,49 +455,49 @@ def build_kafi(report: ProcessingReport = None) -> Chapter:
 	kafi.chapters = []
 
 	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-1\\"),
+		get_path("hubeali_com/Al-Kafi-Volume-1\\"),
 		"Volume One",
 		"الجزء الأول‏",
 		"First volume of Al-Kafi"))
 
 	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-2\\"),
+		get_path("hubeali_com/Al-Kafi-Volume-2\\"),
 		"Volume Two",
 		"الجزء الثاني‏",
 		"Second volume of Al-Kafi"))
 
 	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-3\\"),
+		get_path("hubeali_com/Al-Kafi-Volume-3\\"),
 		"Volume Three",
 		"الجزء الثالث‏",
 		"Third volume of Al-Kafi"))
 
 	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-4\\"),
+		get_path("hubeali_com/Al-Kafi-Volume-4\\"),
 		"Volume Four",
 		"الجزء الرابع‏",
 		"Forth volume of Al-Kafi"))
 
 	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-5\\"),
+		get_path("hubeali_com/Al-Kafi-Volume-5\\"),
 		"Volume Five",
 		"الجزء الخامس‏",
 		"Fifth volume of Al-Kafi"))
 
 	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-6\\"),
+		get_path("hubeali_com/Al-Kafi-Volume-6\\"),
 		"Volume Six",
 		"الجزء السادس‏",
 		"Sixth volume of Al-Kafi"))
 
 	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-7\\"),
+		get_path("hubeali_com/Al-Kafi-Volume-7\\"),
 		"Volume Seven",
 		"الجزء السابع‏",
 		"Seventh volume of Al-Kafi"))
 
 	kafi.chapters.append(build_volume(
-		get_path("hubeali_com\\Al-Kafi-Volume-8\\"),
+		get_path("hubeali_com/Al-Kafi-Volume-8\\"),
 		"Volume Eight",
 		"الجزء الثامن‏",
 		"Eighth volume of Al-Kafi", True))

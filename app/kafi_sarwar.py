@@ -32,12 +32,13 @@ def we_dont_care(html: str) -> bool:
 	return '<body>' in html or '</body>' in html
 
 def sitepath_from_filepath(filepath: str) -> str:
-	return filepath[filepath.index('\\chapter\\')+9:].replace('.html', '').replace('\\', '/')
+	normalized = filepath.replace('\\', '/')
+	return normalized[normalized.index('/chapter/')+9:].replace('.html', '')
 
-def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0, report: ProcessingReport = None):
+def add_chapter_content(chapter: Chapter, filepath: str, hadith_index: int = 0, report: ProcessingReport = None):
 	if report is None:
 		report = get_default_report()
-	if filepath.endswith('\\0.html'):
+	if filepath.endswith(os.sep + '0.html') or filepath.endswith('/0.html'):
 		error_msg = f"Skipping zero file {filepath}"
 		logger.warning(error_msg)
 		report.add_sequence_error(error_msg)
@@ -144,14 +145,14 @@ def add_chapter_content(chapter: Chapter, filepath, hadith_index = 0, report: Pr
 		report.add_sequence_error(error_msg)
 		SEQUENCE_ERRORS.append(error_msg)
 
-def load_chapter_from_file(filename):
+def load_chapter_from_file(filename: str) -> Chapter:
 	filepath = os.path.join(os.path.dirname(__file__), filename)
 	with open(filepath, 'r', encoding='utf8') as qfile:
 		file_content = qfile.read()
 		file_json = json.loads(file_content)
 		return Chapter(**file_json['data'])
 
-def create_chapter(title_ar) -> Chapter:
+def create_chapter(title_ar: str) -> Chapter:
 	chapter = {
 		'part_type': PartType.Chapter.value,
 		'titles': {'ar': title_ar},
@@ -178,7 +179,7 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 				# Chapter 82 missing in hubeali
 				book.chapters.insert(81, {})
 			if chapter_index == 81:
-				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b2_c82.json")
+				book.chapters[chapter_index] = load_chapter_from_file("raw/corrections/al-kafi_v5_b2_c82.json")
 		if book.local_index == 3:
 			# TODO: hadith 3 in chapter 120 missing, based on noor
 			# TODO: one hadith in chapter 124 missing, based on noor
@@ -192,10 +193,10 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 				book.chapters.insert(190, create_chapter("بَابُ تَفْسِيرِ مَا يَحِلُّ مِنَ النِّكَاحِ وَ مَا يَحْرُمُ وَ الْفَرْقِ بَيْنَ النِّكَاحِ وَ السِّفَاحِ وَ الزِّنَى وَ هُوَ مِنْ كَلَامِ يُونُس‏"))
 			# Hadith 2 and 3 missing in chapter 22 of hubeali 
 			if chapter_index == 21:
-				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c22.json")
+				book.chapters[chapter_index] = load_chapter_from_file("raw/corrections/al-kafi_v5_b3_c22.json")
 			# Hadith 4-9 missing in chapter 190 of hubeali
 			if chapter_index == 189:
-				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v5_b3_c190.json")
+				book.chapters[chapter_index] = load_chapter_from_file("raw/corrections/al-kafi_v5_b3_c190.json")
 
 	if volume.local_index == 6:
 		if book.local_index == 2:
@@ -210,7 +211,7 @@ def get_adjusted_chapter(volume: Chapter, book: Chapter, cfile, chapter_index):
 			if chapter_index == 0:
 				book.chapters.insert(86, create_chapter("بَابُ أَلْبَانِ الْإِبِل‏"))
 			if chapter_index == 133:
-				book.chapters[chapter_index] = load_chapter_from_file("raw\\corrections\\al-kafi_v6_b6_c134.json")
+				book.chapters[chapter_index] = load_chapter_from_file("raw/corrections/al-kafi_v6_b6_c134.json")
 
 	if volume.local_index == 7:
 		if book.local_index == 2:
@@ -246,21 +247,21 @@ def add_content(volume: Chapter, dirname, report: ProcessingReport = None):
 		book_index = int(os.path.basename(cfile)) - 1
 		add_book_content(volume.chapters[book_index], cfile, volume, report)
 
-def get_path(file):
-	return os.path.join(os.path.dirname(__file__), "raw\\thaqalayn_net\\Thaqalayn\\thaqalayn.net\\" + file)
+def get_path(file: str) -> str:
+	return os.path.join(os.path.dirname(__file__), "raw", "thaqalayn_net", "Thaqalayn", "thaqalayn.net", file)
 
 def add_kafi_sarwar(report: ProcessingReport = None):
 	if report is None:
 		report = get_default_report()
 	kafi = load_chapter("/books/complete/al-kafi")
-	add_content(kafi.chapters[0], get_path("chapter\\1\\"), report)
-	add_content(kafi.chapters[1], get_path("chapter\\2\\"), report)
-	add_content(kafi.chapters[2], get_path("chapter\\3\\"), report)
-	add_content(kafi.chapters[3], get_path("chapter\\4\\"), report)
-	add_content(kafi.chapters[4], get_path("chapter\\5\\"), report)
-	add_content(kafi.chapters[5], get_path("chapter\\6\\"), report)
-	add_content(kafi.chapters[6], get_path("chapter\\7\\"), report)
-	add_content(kafi.chapters[7], get_path("chapter\\8\\"), report)
+	add_content(kafi.chapters[0], get_path(os.path.join("chapter", "1")), report)
+	add_content(kafi.chapters[1], get_path(os.path.join("chapter", "2")), report)
+	add_content(kafi.chapters[2], get_path(os.path.join("chapter", "3")), report)
+	add_content(kafi.chapters[3], get_path(os.path.join("chapter", "4")), report)
+	add_content(kafi.chapters[4], get_path(os.path.join("chapter", "5")), report)
+	add_content(kafi.chapters[5], get_path(os.path.join("chapter", "6")), report)
+	add_content(kafi.chapters[6], get_path(os.path.join("chapter", "7")), report)
+	add_content(kafi.chapters[7], get_path(os.path.join("chapter", "8")), report)
 
 	set_index(kafi, [0, 0, 0, 0], 0, report)
 	insert_chapter(kafi)
