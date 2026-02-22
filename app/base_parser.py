@@ -61,10 +61,7 @@ def register_translation(
     name: str,
 ) -> Translation:
     """Create and register a translation in the global index."""
-    translation = Translation()
-    translation.id = translation_id
-    translation.lang = language
-    translation.name = name
+    translation = Translation(id=translation_id, lang=language, name=name)
     add_translation(translation)
     return translation
 
