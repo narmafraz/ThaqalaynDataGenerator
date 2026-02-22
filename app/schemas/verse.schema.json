@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thaqalayndata.netlify.app/schemas/verse.schema.json",
+  "title": "Thaqalayn Verse",
+  "description": "A verse (Quran ayah) or hadith with text, translations, narrator chain, and metadata.",
+  "type": "object",
+  "required": ["local_index", "part_type", "path"],
+  "properties": {
+    "index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Global index within the book"
+    },
+    "local_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Index within the parent chapter"
+    },
+    "part_type": {
+      "type": "string",
+      "enum": ["Verse", "Hadith", "Heading"],
+      "description": "Content type"
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^/books/",
+      "description": "Canonical path (e.g., '/books/al-kafi:1:2:1:1')"
+    },
+    "text": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Arabic text segments"
+    },
+    "translations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "description": "Map of translation ID to translated text segments"
+    },
+    "narrator_chain": {
+      "$ref": "#/$defs/narratorChain"
+    },
+    "relations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "description": "Cross-references: type → array of paths"
+    },
+    "gradings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Hadith grading strings in 'Scholar: <span>term</span>' format"
+    },
+    "sajda_type": { "type": "string" },
+    "source_url": { "type": "string", "format": "uri" }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "narratorChain": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": ["string", "null"],
+          "description": "Full narrator chain as plain text"
+        },
+        "parts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/specialText" },
+          "description": "Structured narrator chain with linked narrators"
+        }
+      }
+    },
+    "specialText": {
+      "type": "object",
+      "required": ["kind", "text"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["narrator", "plain"],
+          "description": "Whether this is a narrator reference or plain text"
+        },
+        "text": {
+          "type": "string",
+          "description": "Display text"
+        },
+        "path": {
+          "type": ["string", "null"],
+          "description": "Link to narrator page (only for kind=narrator)"
+        }
+      }
+    }
+  }
+}

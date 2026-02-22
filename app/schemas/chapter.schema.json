@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thaqalayndata.netlify.app/schemas/chapter.schema.json",
+  "title": "Thaqalayn Chapter",
+  "description": "A chapter or section within a book. May contain sub-chapters (chapter_list) or verses (verse_list).",
+  "type": "object",
+  "required": ["path", "part_type"],
+  "properties": {
+    "index": {
+      "type": "integer",
+      "description": "Global index within the book"
+    },
+    "local_index": {
+      "type": ["integer", "string"],
+      "description": "Index within the parent chapter"
+    },
+    "part_type": {
+      "type": "string",
+      "enum": ["Verse", "Volume", "Book", "Chapter", "Hadith", "Heading", "Section"],
+      "description": "Content type of this node in the hierarchy"
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^/books/",
+      "description": "Canonical path (e.g., '/books/al-kafi:1:2:1')"
+    },
+    "titles": {
+      "$ref": "#/$defs/multiLingualText",
+      "description": "Chapter titles in multiple languages"
+    },
+    "descriptions": {
+      "$ref": "#/$defs/multiLingualTextArray",
+      "description": "Chapter descriptions in multiple languages"
+    },
+    "verse_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of verses in this chapter"
+    },
+    "verse_start_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Global index of the first verse"
+    },
+    "verse_translations": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z]{2}\\." },
+      "description": "Available translation IDs (e.g., 'en.hubeali')"
+    },
+    "default_verse_translation_ids": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Default translation per language (e.g., {'en': 'en.hubeali'})"
+    },
+    "nav": {
+      "$ref": "#/$defs/navigation"
+    },
+    "chapters": {
+      "type": "array",
+      "items": { "$ref": "#" },
+      "description": "Sub-chapters (present when kind=chapter_list)"
+    },
+    "verses": {
+      "type": "array",
+      "items": { "$ref": "verse.schema.json" },
+      "description": "Verse/hadith content (present when kind=verse_list)"
+    },
+    "order": { "type": "integer" },
+    "rukus": { "type": "integer" },
+    "reveal_type": { "type": "string" },
+    "sajda_type": { "type": "string" },
+    "author": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "multiLingualText": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["string", "null"]
+      },
+      "description": "Map of language code to text string"
+    },
+    "multiLingualTextArray": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "description": "Map of language code to text array"
+    },
+    "navigation": {
+      "type": "object",
+      "properties": {
+        "prev": { "type": "string" },
+        "next": { "type": "string" },
+        "up": { "type": "string" }
+      },
+      "description": "Navigation links to adjacent and parent chapters"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thaqalayndata.netlify.app/schemas/response_wrapper.schema.json",
+  "title": "Thaqalayn API Response Wrapper",
+  "description": "Every JSON file in the ThaqalaynData API has this wrapper structure",
+  "type": "object",
+  "required": ["index", "kind", "data"],
+  "properties": {
+    "index": {
+      "type": "string",
+      "description": "Colon-separated path identifier (e.g., 'al-kafi:1:2:1')",
+      "pattern": "^[a-z0-9_-]+(:[a-z0-9_-]+)*$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["chapter_list", "verse_list", "verse_content", "verse_detail", "person_content", "person_list"],
+      "description": "Discriminator for the data field type"
+    },
+    "data": {
+      "type": "object",
+      "description": "Content varies by kind"
+    }
+  },
+  "additionalProperties": false
+}

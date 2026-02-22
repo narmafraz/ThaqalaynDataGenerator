@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thaqalayndata.netlify.app/schemas/narrator.schema.json",
+  "title": "Thaqalayn Narrator",
+  "description": "A narrator (rawi) with biographical data and hadith participation.",
+  "type": "object",
+  "required": ["index", "path", "titles"],
+  "properties": {
+    "index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unique narrator ID"
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^/people/narrators/",
+      "description": "Canonical path (e.g., '/people/narrators/100')"
+    },
+    "titles": {
+      "type": "object",
+      "properties": {
+        "ar": { "type": ["string", "null"] },
+        "en": { "type": ["string", "null"] }
+      },
+      "additionalProperties": { "type": ["string", "null"] },
+      "description": "Narrator name in multiple languages"
+    },
+    "verse_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of hadiths this narrator appears in"
+    },
+    "verse_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Paths to all hadiths containing this narrator"
+    },
+    "relations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "description": "Related narrators and hadith references"
+    },
+    "subchains": {
+      "type": "object",
+      "description": "Narrator chain segments and their associated verse data"
+    }
+  },
+  "additionalProperties": true
+}
