@@ -1,0 +1,349 @@
+{
+  "_description": "3 complete few-shot examples for the AI pipeline prompt. Each shows an input verse and the expected JSON output format. Covers: (1) hadith with narrator chain, (2) Quran verse, (3) hadith without chain.",
+  "examples": [
+    {
+      "_scenario": "Hadith with full narrator chain (Al-Kafi, Book of Knowledge)",
+      "input": {
+        "arabic_text": "عِدَّةٌ مِنْ أَصْحَابِنَا عَنْ أَحْمَدَ بْنِ مُحَمَّدِ بْنِ خَالِدٍ عَنْ أَبِيهِ عَنْ أَبِي عَبْدِ اللَّهِ عليه السلام قَالَ طَلَبُ الْعِلْمِ فَرِيضَةٌ",
+        "english_text": "A number of our companions, from Ahmad ibn Muhammad ibn Khalid, from his father, that Abu Abdillah (peace be upon him) said: Seeking knowledge is an obligation.",
+        "book_name": "al-kafi",
+        "chapter_title": "The Obligation of Seeking Knowledge",
+        "hadith_number": 1,
+        "existing_narrator_chain": "عِدَّةٌ مِنْ أَصْحَابِنَا عَنْ أَحْمَدَ بْنِ مُحَمَّدِ بْنِ خَالِدٍ عَنْ أَبِيهِ عَنْ أَبِي عَبْدِ اللَّهِ عليه السلام قَالَ"
+      },
+      "output": {
+        "diacritized_text": "عِدَّةٌ مِنْ أَصْحَابِنَا عَنْ أَحْمَدَ بْنِ مُحَمَّدِ بْنِ خَالِدٍ عَنْ أَبِيهِ عَنْ أَبِي عَبْدِ اللَّهِ عَلَيْهِ السَّلَامُ قَالَ طَلَبُ الْعِلْمِ فَرِيضَةٌ",
+        "diacritics_status": "validated",
+        "diacritics_changes": [],
+        "word_analysis": [
+          {"word": "عِدَّةٌ", "translation_en": "a number of", "root": "ع د د", "pos": "N", "is_proper_noun": false},
+          {"word": "مِنْ", "translation_en": "from", "root": "م ن", "pos": "PREP", "is_proper_noun": false},
+          {"word": "أَصْحَابِنَا", "translation_en": "our companions", "root": "ص ح ب", "pos": "N", "is_proper_noun": false},
+          {"word": "عَنْ", "translation_en": "from", "root": "ع ن", "pos": "PREP", "is_proper_noun": false},
+          {"word": "أَحْمَدَ", "translation_en": "Ahmad", "root": "ح م د", "pos": "N", "is_proper_noun": true},
+          {"word": "بْنِ", "translation_en": "son of", "root": "ب ن ي", "pos": "N", "is_proper_noun": false},
+          {"word": "مُحَمَّدِ", "translation_en": "Muhammad", "root": "ح م د", "pos": "N", "is_proper_noun": true},
+          {"word": "بْنِ", "translation_en": "son of", "root": "ب ن ي", "pos": "N", "is_proper_noun": false},
+          {"word": "خَالِدٍ", "translation_en": "Khalid", "root": "خ ل د", "pos": "N", "is_proper_noun": true},
+          {"word": "عَنْ", "translation_en": "from", "root": "ع ن", "pos": "PREP", "is_proper_noun": false},
+          {"word": "أَبِيهِ", "translation_en": "his father", "root": "أ ب و", "pos": "N", "is_proper_noun": false},
+          {"word": "عَنْ", "translation_en": "from", "root": "ع ن", "pos": "PREP", "is_proper_noun": false},
+          {"word": "أَبِي", "translation_en": "Abu (father of)", "root": "أ ب و", "pos": "N", "is_proper_noun": false},
+          {"word": "عَبْدِ", "translation_en": "servant of", "root": "ع ب د", "pos": "N", "is_proper_noun": false},
+          {"word": "اللَّهِ", "translation_en": "Allah/God", "root": "أ ل ه", "pos": "N", "is_proper_noun": true},
+          {"word": "عَلَيْهِ", "translation_en": "upon him", "root": "ع ل و", "pos": "PREP", "is_proper_noun": false},
+          {"word": "السَّلَامُ", "translation_en": "peace", "root": "س ل م", "pos": "N", "is_proper_noun": false},
+          {"word": "قَالَ", "translation_en": "he said", "root": "ق و ل", "pos": "V", "is_proper_noun": false},
+          {"word": "طَلَبُ", "translation_en": "seeking", "root": "ط ل ب", "pos": "N", "is_proper_noun": false},
+          {"word": "الْعِلْمِ", "translation_en": "knowledge", "root": "ع ل م", "pos": "N", "is_proper_noun": false},
+          {"word": "فَرِيضَةٌ", "translation_en": "an obligation", "root": "ف ر ض", "pos": "N", "is_proper_noun": false}
+        ],
+        "tags": ["knowledge", "ethics"],
+        "hadith_type": "ethical_teaching",
+        "related_quran": [
+          {"ref": "96:1", "relationship": "thematic"},
+          {"ref": "20:114", "relationship": "thematic"}
+        ],
+        "isnad_matn": {
+          "isnad_ar": "عِدَّةٌ مِنْ أَصْحَابِنَا عَنْ أَحْمَدَ بْنِ مُحَمَّدِ بْنِ خَالِدٍ عَنْ أَبِيهِ عَنْ أَبِي عَبْدِ اللَّهِ عَلَيْهِ السَّلَامُ قَالَ",
+          "matn_ar": "طَلَبُ الْعِلْمِ فَرِيضَةٌ",
+          "has_chain": true,
+          "narrators": [
+            {
+              "name_ar": "عِدَّةٌ مِنْ أَصْحَابِنَا",
+              "name_en": "A number of our companions",
+              "role": "narrator",
+              "position": 1,
+              "identity_confidence": "ambiguous",
+              "ambiguity_note": "Generic reference to multiple unnamed companions of the Imam. Common in al-Kafi to refer to a group of direct students of al-Kulayni.",
+              "known_identity": null
+            },
+            {
+              "name_ar": "أَحْمَدُ بْنُ مُحَمَّدِ بْنِ خَالِدٍ",
+              "name_en": "Ahmad ibn Muhammad ibn Khalid",
+              "role": "narrator",
+              "position": 2,
+              "identity_confidence": "definite",
+              "ambiguity_note": null,
+              "known_identity": "Ahmad ibn Muhammad ibn Khalid al-Barqi (d. 274 AH), author of al-Mahasin"
+            },
+            {
+              "name_ar": "أَبِيهِ",
+              "name_en": "his father",
+              "role": "narrator",
+              "position": 3,
+              "identity_confidence": "likely",
+              "ambiguity_note": "Refers to Muhammad ibn Khalid al-Barqi, father of Ahmad. Identification based on preceding narrator.",
+              "known_identity": "Muhammad ibn Khalid al-Barqi"
+            },
+            {
+              "name_ar": "أَبُو عَبْدِ اللَّهِ",
+              "name_en": "Abu Abdillah",
+              "role": "imam",
+              "position": 4,
+              "identity_confidence": "definite",
+              "ambiguity_note": null,
+              "known_identity": "Imam Ja'far al-Sadiq (AS), the sixth Imam (d. 148 AH)"
+            }
+          ]
+        },
+        "translations": {
+          "ur": {
+            "text": "ہمارے بہت سے اصحاب نے احمد بن محمد بن خالد سے، انہوں نے اپنے والد سے، انہوں نے ابو عبد اللہ علیہ السلام سے روایت کی کہ آپ نے فرمایا: علم حاصل کرنا فرض ہے۔",
+            "summary": "امام صادق علیہ السلام نے فرمایا کہ علم حاصل کرنا ہر مسلمان پر فرض ہے۔",
+            "key_terms": {"العلم": "علم، خاص طور پر دینی علم", "فريضة": "دینی فریضہ، واجب عمل"},
+            "seo_question": "کیا اسلام میں علم حاصل کرنا فرض ہے؟"
+          },
+          "tr": {
+            "text": "Ashaptan bir grup, Ahmed b. Muhammed b. Halid'den, o babasından, o da Ebu Abdullah (a.s.)'dan rivayet etmiştir ki buyurdu: İlim talebi farzdır.",
+            "summary": "İmam Sadık (a.s.) ilim öğrenmenin her Müslüman için farz olduğunu beyan etmiştir.",
+            "key_terms": {"العلم": "İlim, özellikle dini bilgi", "فريضة": "Dini yükümlülük, farz"},
+            "seo_question": "İslam'da ilim öğrenmek farz mıdır?"
+          },
+          "fa": {
+            "text": "عده‌ای از اصحاب ما از احمد بن محمد بن خالد، از پدرش، از ابوعبدالله علیه السلام روایت کرده‌اند که فرمود: طلب علم واجب است.",
+            "summary": "امام صادق علیه السلام فرمودند که طلب علم بر هر مسلمانی واجب است.",
+            "key_terms": {"العلم": "علم، به ویژه علم دینی", "فريضة": "واجب، تکلیف شرعی"},
+            "seo_question": "آیا کسب علم در اسلام واجب است؟"
+          },
+          "id": {
+            "text": "Sejumlah sahabat kami meriwayatkan dari Ahmad bin Muhammad bin Khalid, dari ayahnya, dari Abu Abdillah alaihis salam yang bersabda: Menuntut ilmu adalah kewajiban.",
+            "summary": "Imam Shadiq (a.s.) menyatakan bahwa menuntut ilmu adalah kewajiban bagi setiap Muslim.",
+            "key_terms": {"العلم": "Ilmu, khususnya ilmu agama", "فريضة": "Kewajiban agama, fardhu"},
+            "seo_question": "Apakah menuntut ilmu wajib dalam Islam?"
+          },
+          "bn": {
+            "text": "আমাদের কিছু সাথী আহমাদ ইবনে মুহাম্মাদ ইবনে খালিদ থেকে, তিনি তাঁর পিতা থেকে, তিনি আবু আবদিল্লাহ আলাইহিস সালাম থেকে বর্ণনা করেছেন যে তিনি বলেছেন: জ্ঞান অর্জন করা ফরজ।",
+            "summary": "ইমাম সাদিক (আ.) বলেছেন যে জ্ঞান অর্জন প্রতিটি মুসলমানের জন্য ফরজ।",
+            "key_terms": {"العلم": "ইলম, বিশেষত দ্বীনি জ্ঞান", "فريضة": "ধর্মীয় বাধ্যবাধকতা, ফরজ"},
+            "seo_question": "ইসলামে জ্ঞান অর্জন কি ফরজ?"
+          },
+          "es": {
+            "text": "Varios de nuestros compañeros narraron de Ahmad ibn Muhammad ibn Khalid, de su padre, de Abu Abdillah (la paz sea con él) quien dijo: La búsqueda del conocimiento es una obligación.",
+            "summary": "El Imam Sadiq (P) declaró que la búsqueda del conocimiento es una obligación para todo musulmán.",
+            "key_terms": {"العلم": "Conocimiento, especialmente conocimiento religioso", "فريضة": "Obligación religiosa"},
+            "seo_question": "¿Es obligatorio buscar el conocimiento en el Islam?"
+          },
+          "fr": {
+            "text": "Plusieurs de nos compagnons ont rapporté d'Ahmad ibn Muhammad ibn Khalid, de son père, d'Abu Abdillah (que la paix soit sur lui) qui a dit : La recherche du savoir est une obligation.",
+            "summary": "L'Imam Sadiq (P) a déclaré que la recherche du savoir est une obligation pour tout musulman.",
+            "key_terms": {"العلم": "Savoir, en particulier le savoir religieux", "فريضة": "Obligation religieuse"},
+            "seo_question": "La recherche du savoir est-elle obligatoire en Islam ?"
+          },
+          "de": {
+            "text": "Einige unserer Gefährten überlieferten von Ahmad ibn Muhammad ibn Khalid, von seinem Vater, von Abu Abdillah (Friede sei mit ihm), der sagte: Das Streben nach Wissen ist eine Pflicht.",
+            "summary": "Imam Sadiq (F) erklärte, dass das Streben nach Wissen für jeden Muslim eine Pflicht ist.",
+            "key_terms": {"العلم": "Wissen, insbesondere religiöses Wissen", "فريضة": "Religiöse Pflicht"},
+            "seo_question": "Ist das Streben nach Wissen im Islam eine Pflicht?"
+          },
+          "ru": {
+            "text": "Несколько наших сподвижников передали от Ахмада ибн Мухаммада ибн Халида, от его отца, от Абу Абдиллаха (мир ему), который сказал: Стремление к знанию — обязанность.",
+            "summary": "Имам Садик (мир ему) заявил, что стремление к знанию является обязанностью для каждого мусульманина.",
+            "key_terms": {"العلم": "Знание, особенно религиозное", "فريضة": "Религиозная обязанность"},
+            "seo_question": "Является ли стремление к знанию обязанностью в Исламе?"
+          },
+          "zh": {
+            "text": "我们的一些同伴从艾哈迈德·本·穆罕默德·本·哈立德传述，他从他的父亲传述，他从阿布·阿卜杜拉（愿主赐他平安）传述，他说：求知是一项义务。",
+            "summary": "伊玛目萨迪格（愿主赐他平安）宣称，求知是每个穆斯林的义务。",
+            "key_terms": {"العلم": "知识，特别是宗教知识", "فريضة": "宗教义务"},
+            "seo_question": "在伊斯兰教中，求知是否是一项义务？"
+          }
+        }
+      }
+    },
+    {
+      "_scenario": "Quran verse (Al-Fatiha, verse 1 - Bismillah)",
+      "input": {
+        "arabic_text": "بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ",
+        "english_text": "In the Name of Allah, the All-beneficent, the All-merciful.",
+        "book_name": "quran",
+        "chapter_title": "Al-Fatiha (The Opening)",
+        "hadith_number": null,
+        "existing_narrator_chain": null
+      },
+      "output": {
+        "diacritized_text": "بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ",
+        "diacritics_status": "validated",
+        "diacritics_changes": [],
+        "word_analysis": [
+          {"word": "بِسْمِ", "translation_en": "In the name of", "root": "س م و", "pos": "PREP", "is_proper_noun": false},
+          {"word": "اللَّهِ", "translation_en": "Allah/God", "root": "أ ل ه", "pos": "N", "is_proper_noun": true},
+          {"word": "الرَّحْمٰنِ", "translation_en": "the All-beneficent", "root": "ر ح م", "pos": "ADJ", "is_proper_noun": false},
+          {"word": "الرَّحِيمِ", "translation_en": "the All-merciful", "root": "ر ح م", "pos": "ADJ", "is_proper_noun": false}
+        ],
+        "tags": ["theology", "worship"],
+        "hadith_type": "creedal",
+        "related_quran": [],
+        "isnad_matn": {
+          "isnad_ar": "",
+          "matn_ar": "بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ",
+          "has_chain": false,
+          "narrators": []
+        },
+        "translations": {
+          "ur": {
+            "text": "اللہ کے نام سے جو بے حد مہربان، نہایت رحم والا ہے۔",
+            "summary": "اللہ تعالیٰ کے نام سے آغاز، جو رحمٰن اور رحیم ہے۔",
+            "key_terms": {"الرحمن": "رحمٰن - بے حد مہربان", "الرحيم": "رحیم - نہایت رحم والا"},
+            "seo_question": "بسم اللہ الرحمٰن الرحیم کا ترجمہ اور مفہوم کیا ہے؟"
+          },
+          "tr": {
+            "text": "Rahman ve Rahim olan Allah'ın adıyla.",
+            "summary": "Rahman ve Rahim olan Allah'ın adıyla başlangıç.",
+            "key_terms": {"الرحمن": "Rahman - Sonsuz merhamet sahibi", "الرحيم": "Rahim - Çok merhametli"},
+            "seo_question": "Besmele'nin anlamı nedir?"
+          },
+          "fa": {
+            "text": "به نام خداوند بخشنده بخشایشگر.",
+            "summary": "آغاز به نام خداوند رحمان و رحیم.",
+            "key_terms": {"الرحمن": "رحمان - بخشنده بی‌حد", "الرحيم": "رحیم - مهربان"},
+            "seo_question": "معنی و مفهوم بسم الله الرحمن الرحیم چیست؟"
+          },
+          "id": {
+            "text": "Dengan nama Allah Yang Maha Pengasih, Maha Penyayang.",
+            "summary": "Pembukaan dengan menyebut nama Allah yang Maha Pengasih dan Maha Penyayang.",
+            "key_terms": {"الرحمن": "Ar-Rahman - Yang Maha Pengasih", "الرحيم": "Ar-Rahim - Yang Maha Penyayang"},
+            "seo_question": "Apa arti Bismillahirrahmanirrahim?"
+          },
+          "bn": {
+            "text": "পরম করুণাময় অতি দয়ালু আল্লাহর নামে।",
+            "summary": "পরম করুণাময় ও অতি দয়ালু আল্লাহর নামে শুরু।",
+            "key_terms": {"الرحمن": "আর-রাহমান - পরম করুণাময়", "الرحيم": "আর-রাহীম - অতি দয়ালু"},
+            "seo_question": "বিসমিল্লাহির রাহমানির রাহীম এর অর্থ কী?"
+          },
+          "es": {
+            "text": "En el nombre de Dios, el Compasivo, el Misericordioso.",
+            "summary": "Invocación en el nombre de Dios, el Compasivo y Misericordioso.",
+            "key_terms": {"الرحمن": "Ar-Rahman - El Compasivo", "الرحيم": "Ar-Rahim - El Misericordioso"},
+            "seo_question": "¿Cuál es el significado de Bismillah ar-Rahman ar-Rahim?"
+          },
+          "fr": {
+            "text": "Au nom de Dieu, le Tout Miséricordieux, le Très Miséricordieux.",
+            "summary": "Invocation au nom de Dieu, le Tout Miséricordieux et le Très Miséricordieux.",
+            "key_terms": {"الرحمن": "Ar-Rahmân - Le Tout Miséricordieux", "الرحيم": "Ar-Rahîm - Le Très Miséricordieux"},
+            "seo_question": "Quelle est la signification de Bismillah ar-Rahman ar-Rahim ?"
+          },
+          "de": {
+            "text": "Im Namen Gottes, des Allerbarmers, des Barmherzigen.",
+            "summary": "Anrufung im Namen Gottes, des Allerbarmers und Barmherzigen.",
+            "key_terms": {"الرحمن": "Ar-Rahmân - Der Allerbarmer", "الرحيم": "Ar-Rahîm - Der Barmherzige"},
+            "seo_question": "Was bedeutet Bismillah ar-Rahman ar-Rahim?"
+          },
+          "ru": {
+            "text": "Во имя Аллаха, Милостивого, Милосердного.",
+            "summary": "Начало с именем Аллаха, Милостивого и Милосердного.",
+            "key_terms": {"الرحمن": "Ар-Рахман - Милостивый", "الرحيم": "Ар-Рахим - Милосердный"},
+            "seo_question": "Каково значение Бисмиллях ар-Рахман ар-Рахим?"
+          },
+          "zh": {
+            "text": "奉至仁至慈的安拉之名。",
+            "summary": "以至仁至慈的安拉之名开始。",
+            "key_terms": {"الرحمن": "至仁主 - 普慈的", "الرحيم": "至慈主 - 特慈的"},
+            "seo_question": "比斯米拉·拉赫曼·拉希姆的含义是什么？"
+          }
+        }
+      }
+    },
+    {
+      "_scenario": "Short hadith without narrator chain (direct Imam statement, Al-Kafi)",
+      "input": {
+        "arabic_text": "قَالَ أَمِيرُ الْمُؤْمِنِينَ عليه السلام قِيمَةُ كُلِّ امْرِئٍ مَا يُحْسِنُهُ",
+        "english_text": "The Commander of the Faithful (peace be upon him) said: The value of every person is in what they excel at.",
+        "book_name": "al-kafi",
+        "chapter_title": "The Merit of Knowledge and Scholars",
+        "hadith_number": 5,
+        "existing_narrator_chain": null
+      },
+      "output": {
+        "diacritized_text": "قَالَ أَمِيرُ الْمُؤْمِنِينَ عَلَيْهِ السَّلَامُ قِيمَةُ كُلِّ امْرِئٍ مَا يُحْسِنُهُ",
+        "diacritics_status": "validated",
+        "diacritics_changes": [],
+        "word_analysis": [
+          {"word": "قَالَ", "translation_en": "he said", "root": "ق و ل", "pos": "V", "is_proper_noun": false},
+          {"word": "أَمِيرُ", "translation_en": "commander", "root": "أ م ر", "pos": "N", "is_proper_noun": false},
+          {"word": "الْمُؤْمِنِينَ", "translation_en": "of the faithful", "root": "أ م ن", "pos": "N", "is_proper_noun": false},
+          {"word": "عَلَيْهِ", "translation_en": "upon him", "root": "ع ل و", "pos": "PREP", "is_proper_noun": false},
+          {"word": "السَّلَامُ", "translation_en": "peace", "root": "س ل م", "pos": "N", "is_proper_noun": false},
+          {"word": "قِيمَةُ", "translation_en": "value/worth", "root": "ق و م", "pos": "N", "is_proper_noun": false},
+          {"word": "كُلِّ", "translation_en": "every", "root": "ك ل ل", "pos": "N", "is_proper_noun": false},
+          {"word": "امْرِئٍ", "translation_en": "person", "root": "م ر أ", "pos": "N", "is_proper_noun": false},
+          {"word": "مَا", "translation_en": "what/that which", "root": "م ا", "pos": "REL", "is_proper_noun": false},
+          {"word": "يُحْسِنُهُ", "translation_en": "he excels at", "root": "ح س ن", "pos": "V", "is_proper_noun": false}
+        ],
+        "tags": ["knowledge", "ethics"],
+        "hadith_type": "ethical_teaching",
+        "related_quran": [
+          {"ref": "39:9", "relationship": "thematic"}
+        ],
+        "isnad_matn": {
+          "isnad_ar": "",
+          "matn_ar": "قَالَ أَمِيرُ الْمُؤْمِنِينَ عَلَيْهِ السَّلَامُ قِيمَةُ كُلِّ امْرِئٍ مَا يُحْسِنُهُ",
+          "has_chain": false,
+          "narrators": []
+        },
+        "translations": {
+          "ur": {
+            "text": "امیر المؤمنین علیہ السلام نے فرمایا: ہر شخص کی قدر و قیمت اس چیز میں ہے جس میں وہ مہارت رکھتا ہے۔",
+            "summary": "حضرت علی علیہ السلام نے فرمایا کہ انسان کی قدر اس کی مہارت سے ہے۔",
+            "key_terms": {"قيمة": "قدر و قیمت", "يحسنه": "مہارت رکھنا، اچھا کرنا"},
+            "seo_question": "حضرت علی علیہ السلام نے انسان کی قدر و قیمت کے بارے میں کیا فرمایا؟"
+          },
+          "tr": {
+            "text": "Müminlerin Emiri (a.s.) buyurdu: Her kişinin değeri, en iyi yaptığı şeydedir.",
+            "summary": "Hz. Ali (a.s.) insanın değerinin maharetinde olduğunu beyan etmiştir.",
+            "key_terms": {"قيمة": "Değer, kıymet", "يحسنه": "Ustalık, maharet"},
+            "seo_question": "Hz. Ali insanın değeri hakkında ne buyurmuştur?"
+          },
+          "fa": {
+            "text": "امیرالمؤمنین علیه السلام فرمود: ارزش هر کسی به آن چیزی است که در آن مهارت دارد.",
+            "summary": "حضرت علی علیه السلام فرمودند ارزش انسان به مهارت اوست.",
+            "key_terms": {"قيمة": "ارزش، قدر", "يحسنه": "مهارت داشتن، نیکو انجام دادن"},
+            "seo_question": "حضرت علی علیه السلام درباره ارزش انسان چه فرمودند؟"
+          },
+          "id": {
+            "text": "Amirul Mukminin alaihis salam bersabda: Nilai setiap orang ada pada apa yang ia kuasai.",
+            "summary": "Imam Ali (a.s.) menyatakan bahwa nilai seseorang terletak pada keahliannya.",
+            "key_terms": {"قيمة": "Nilai, harga diri", "يحسنه": "Keahlian, kemahiran"},
+            "seo_question": "Apa yang dikatakan Imam Ali tentang nilai seseorang?"
+          },
+          "bn": {
+            "text": "আমীরুল মু'মিনীন আলাইহিস সালাম বলেছেন: প্রতিটি মানুষের মূল্য সে যাতে দক্ষ তাতেই।",
+            "summary": "ইমাম আলী (আ.) বলেছেন যে মানুষের মূল্য তার দক্ষতায়।",
+            "key_terms": {"قيمة": "মূল্য, মর্যাদা", "يحسنه": "দক্ষতা, পারদর্শিতা"},
+            "seo_question": "ইমাম আলী মানুষের মূল্য সম্পর্কে কী বলেছেন?"
+          },
+          "es": {
+            "text": "El Comandante de los Fieles (la paz sea con él) dijo: El valor de cada persona está en aquello en lo que sobresale.",
+            "summary": "El Imam Ali (P) declaró que el valor de una persona reside en su destreza.",
+            "key_terms": {"قيمة": "Valor, mérito", "يحسنه": "Destreza, excelencia"},
+            "seo_question": "¿Qué dijo el Imam Ali sobre el valor de las personas?"
+          },
+          "fr": {
+            "text": "Le Commandeur des Croyants (que la paix soit sur lui) a dit : La valeur de chaque personne réside dans ce en quoi elle excelle.",
+            "summary": "L'Imam Ali (P) a déclaré que la valeur d'une personne réside dans sa compétence.",
+            "key_terms": {"قيمة": "Valeur, mérite", "يحسنه": "Compétence, excellence"},
+            "seo_question": "Qu'a dit l'Imam Ali sur la valeur des personnes ?"
+          },
+          "de": {
+            "text": "Der Befehlshaber der Gläubigen (Friede sei mit ihm) sagte: Der Wert eines jeden Menschen liegt in dem, worin er sich auszeichnet.",
+            "summary": "Imam Ali (F) erklärte, dass der Wert eines Menschen in seinen Fähigkeiten liegt.",
+            "key_terms": {"قيمة": "Wert, Verdienst", "يحسنه": "Können, Fähigkeit"},
+            "seo_question": "Was sagte Imam Ali über den Wert des Menschen?"
+          },
+          "ru": {
+            "text": "Повелитель правоверных (мир ему) сказал: Ценность каждого человека — в том, в чём он преуспевает.",
+            "summary": "Имам Али (мир ему) заявил, что ценность человека определяется его мастерством.",
+            "key_terms": {"قيمة": "Ценность, достоинство", "يحسنه": "Мастерство, умение"},
+            "seo_question": "Что сказал Имам Али о ценности человека?"
+          },
+          "zh": {
+            "text": "信士的长官（愿主赐他平安）说：每个人的价值在于他所擅长的事。",
+            "summary": "伊玛目阿里（愿主赐他平安）说人的价值在于其所长。",
+            "key_terms": {"قيمة": "价值，尊严", "يحسنه": "擅长，精通"},
+            "seo_question": "伊玛目阿里关于人的价值说了什么？"
+          }
+        }
+      }
+    }
+  ]
+}
