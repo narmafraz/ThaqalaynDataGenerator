@@ -17,7 +17,7 @@ DEFAULT_SOURCE_DATA_DIR = "../ThaqalaynDataSources/"
 SOURCE_DATA_DIR = os.environ.get("SOURCE_DATA_DIR", DEFAULT_SOURCE_DATA_DIR)
 
 # Raw source data directory
-RAW_DIR = os.path.join(SOURCE_DATA_DIR, "raw")
+RAW_DIR = os.path.join(SOURCE_DATA_DIR, "scraped")
 
 # AI pipeline data and content directories
 AI_PIPELINE_DATA_DIR = os.path.join(SOURCE_DATA_DIR, "ai-pipeline-data")
@@ -52,7 +52,7 @@ THAQALAYN_API_DELAY_SECONDS = 0.5
 
 
 def get_raw_path(*parts: str) -> str:
-    """Build an absolute path under the raw/ data directory.
+    """Build an absolute path under the scraped/ data directory.
 
     Usage:
         get_raw_path("tanzil_net", "quran_simple.txt")

@@ -292,15 +292,15 @@ class TestGetParserRawPath:
 
     def test_returns_raw_subdirectory(self):
         result = get_parser_raw_path(__file__, "tanzil_net", "quran-data.xml")
-        assert os.path.join("raw", "tanzil_net", "quran-data.xml") in result
+        assert os.path.join("scraped", "tanzil_net", "quran-data.xml") in result
 
     def test_single_file_part(self):
         result = get_parser_raw_path(__file__, "file.txt")
-        assert result.endswith(os.path.join("raw", "file.txt"))
+        assert result.endswith(os.path.join("scraped", "file.txt"))
 
     def test_no_extra_parts(self):
         result = get_parser_raw_path(__file__)
-        assert result.endswith("raw")
+        assert result.endswith("scraped")
 
     def test_parser_file_param_is_ignored(self):
         """parser_file is kept for compat but not used for path resolution."""

@@ -9,8 +9,8 @@ since the site requires JavaScript execution. It also extracts the table
 of contents (chapter names + page numbers) from the sidebar.
 
 Output is saved to:
-  app/raw/rafed_net/{book-key}/toc.json          (table of contents)
-  app/raw/rafed_net/{book-key}/pages/page-{N}.json (per-page text)
+  ThaqalaynDataSources/scraped/rafed_net/{book-key}/toc.json          (table of contents)
+  ThaqalaynDataSources/scraped/rafed_net/{book-key}/pages/page-{N}.json (per-page text)
 
 Usage:
     cd ThaqalaynDataGenerator
@@ -43,10 +43,10 @@ import time
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-# Output to ThaqalaynDataSources/raw/rafed_net/
+# Output to ThaqalaynDataSources/scraped/rafed_net/
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _SOURCE_DATA_DIR = os.environ.get("SOURCE_DATA_DIR", os.path.join(_PROJECT_ROOT, "..", "ThaqalaynDataSources"))
-OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "raw", "rafed_net")
+OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "scraped", "rafed_net")
 
 BASE_URL = "https://books.rafed.net"
 

@@ -6,8 +6,8 @@ ghbook.ir provides direct download links for complete HTML files per book.
 Each book is a single large HTML file containing all volumes.
 
 Output is saved to:
-  app/raw/ghbook_ir/tahdhib-al-ahkam/book.htm
-  app/raw/ghbook_ir/al-istibsar/book.htm
+  ThaqalaynDataSources/scraped/ghbook_ir/tahdhib-al-ahkam/book.htm
+  ThaqalaynDataSources/scraped/ghbook_ir/al-istibsar/book.htm
 
 Usage:
     cd ThaqalaynDataGenerator
@@ -32,10 +32,10 @@ import urllib.error
 sys.stdout.reconfigure(encoding="utf-8")
 
 DOWNLOAD_BASE = "https://download.ghbook.ir/downloads.php"
-# Output to ThaqalaynDataSources/raw/ghbook_ir/
+# Output to ThaqalaynDataSources/scraped/ghbook_ir/
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _SOURCE_DATA_DIR = os.environ.get("SOURCE_DATA_DIR", os.path.join(_PROJECT_ROOT, "..", "ThaqalaynDataSources"))
-OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "raw", "ghbook_ir")
+OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "scraped", "ghbook_ir")
 
 DELAY_BETWEEN_REQUESTS = 2.0  # seconds
 

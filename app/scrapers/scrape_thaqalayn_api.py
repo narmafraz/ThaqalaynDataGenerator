@@ -5,7 +5,7 @@ for books not yet present in our raw data collection.
 The ThaqalaynAPI provides REST access to hadith data originally from thaqalayn.net.
 API docs: https://www.thaqalayn-api.net/api-docs/
 
-Output is saved to: app/raw/thaqalayn_api/<book-folder>/hadiths.json
+Output is saved to: ThaqalaynDataSources/scraped/thaqalayn_api/<book-folder>/hadiths.json
 
 Usage:
     # From ThaqalaynDataGenerator root:
@@ -26,10 +26,10 @@ import urllib.request
 import urllib.error
 
 BASE_URL = "https://www.thaqalayn-api.net/api/v2"
-# Output to ThaqalaynDataSources/raw/thaqalayn_api/
+# Output to ThaqalaynDataSources/scraped/thaqalayn_api/
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _SOURCE_DATA_DIR = os.environ.get("SOURCE_DATA_DIR", os.path.join(_PROJECT_ROOT, "..", "ThaqalaynDataSources"))
-OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "raw", "thaqalayn_api")
+OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "scraped", "thaqalayn_api")
 
 # Books to scrape: slug -> (output_folder_name, hadith_count)
 # Source: https://www.thaqalayn-api.net/api/v2/allbooks

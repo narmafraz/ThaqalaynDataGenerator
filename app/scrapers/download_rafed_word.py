@@ -6,7 +6,7 @@ rafed.net provides a Word download API: books.rafed.net/api/download/{id}/doc
 Each volume is a single HTTP GET returning a Word document.
 
 Output is saved to:
-  app/raw/rafed_net/{book-key}/vol-{N}.doc
+  ThaqalaynDataSources/scraped/rafed_net/{book-key}/vol-{N}.doc
 
 Usage:
     cd ThaqalaynDataGenerator
@@ -33,10 +33,10 @@ import urllib.error
 sys.stdout.reconfigure(encoding="utf-8")
 
 BASE_URL = "https://books.rafed.net/api/download"
-# Output to ThaqalaynDataSources/raw/rafed_net/
+# Output to ThaqalaynDataSources/scraped/rafed_net/
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _SOURCE_DATA_DIR = os.environ.get("SOURCE_DATA_DIR", os.path.join(_PROJECT_ROOT, "..", "ThaqalaynDataSources"))
-OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "raw", "rafed_net")
+OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "scraped", "rafed_net")
 
 DELAY_BETWEEN_REQUESTS = 2.0  # seconds - be respectful
 

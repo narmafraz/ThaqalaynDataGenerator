@@ -26,10 +26,10 @@ except ImportError:
     from bs4 import BeautifulSoup
 
 SOURCE_URL = "https://hubeali.com/the-book-of-sulaym-bin-qays-al-hilali/"
-# Output to ThaqalaynDataSources/raw/hubeali_com/book-of-sulaym/
+# Output to ThaqalaynDataSources/scraped/hubeali_com/book-of-sulaym/
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _SOURCE_DATA_DIR = os.environ.get("SOURCE_DATA_DIR", os.path.join(_PROJECT_ROOT, "..", "ThaqalaynDataSources"))
-OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "raw", "hubeali_com", "book-of-sulaym")
+OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "scraped", "hubeali_com", "book-of-sulaym")
 
 
 def fetch_page():

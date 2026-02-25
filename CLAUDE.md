@@ -100,7 +100,7 @@ uv run pytest --cov=app --cov-report=html
 - **link_quran_kafi.py**: Creates bidirectional references between Quran verses cited in hadiths
 
 ### Scrapers Directory (`app/scrapers/`)
-Scripts to fetch raw hadith data from external sources into `app/raw/`:
+Scripts to fetch raw hadith data from external sources into `ThaqalaynDataSources/scraped/`:
 - **`scrape_thaqalayn_api.py`**: Scrapes ThaqalaynAPI REST endpoint (`https://www.thaqalayn-api.net/api/v2/`). Fetches hadiths one-by-one with 0.5s delay. Supports `--list` to show available slugs, or pass specific slugs as args. Skips books that already have data on disk.
 - **`scrape_hubeali_sulaym.py`**: Scrapes Book of Sulaym ibn Qays from `hubeali.com`. Uses BeautifulSoup to parse HTML. Arabic text extraction currently broken due to encoding issues (see Common Issues).
 - **`download_rafed_word.py`**: Downloads Word (.doc) files from rafed.net API for all Four Books. Single HTTP GET per volume via `books.rafed.net/api/download/{id}/doc`. Supports `--tahdhib`, `--istibsar`, `--kafi`, `--faqih`, `--list`. Skips files already on disk.
@@ -126,7 +126,7 @@ python app/scrapers/scrape_rafed_text.py --toc-only    # Extract TOCs only (fast
 python app/scrapers/scrape_rafed_text.py --tahdhib     # Scrape Tahdhib page text
 ```
 
-### Raw Data Inventory (`ThaqalaynDataSources/raw/`)
+### Raw Data Inventory (`ThaqalaynDataSources/scraped/`)
 
 Raw source data has been moved to the **ThaqalaynDataSources** sibling repo. The generator reads from it via `SOURCE_DATA_DIR` env var (defaults to `../ThaqalaynDataSources/`). Scrapers also write to ThaqalaynDataSources.
 
@@ -139,7 +139,7 @@ Raw source data has been moved to the **ThaqalaynDataSources** sibling repo. The
 | `tanzil_net/` | Quran text + 27 translations (XML) | N/A (XML) |
 | `corrections/` | Manual JSON fixes for parser edge cases | N/A |
 
-See `raw/thaqalayn_api/README.md` for the full ThaqalaynAPI JSON schema documentation.
+See `scraped/thaqalayn_api/README.md` for the full ThaqalaynAPI JSON schema documentation.
 
 ### Queries Directory (`app/queries/`)
 Ad-hoc scripts for analyzing generated data:
@@ -169,7 +169,7 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 
 ## Environment Variables
 
-- `SOURCE_DATA_DIR`: Source data directory containing raw/, ai-pipeline-data/, ai-content/ (default: `../ThaqalaynDataSources/`)
+- `SOURCE_DATA_DIR`: Source data directory containing scraped/, ai-pipeline-data/, ai-content/ (default: `../ThaqalaynDataSources/`)
 - `DESTINATION_DIR`: Output directory for generated JSON files (default: `../ThaqalaynData/`)
 - `PYTHONPATH`: Must include project root for imports to work
 
@@ -193,7 +193,7 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 - **`uv` not in bash PATH on Windows**: The `uv` command may not be available in Git Bash even when installed. Activate the venv first (`source .venv/Scripts/activate`) and then use `python` directly.
 - **`requests` not installed**: The venv does not include the `requests` library. Scrapers use `urllib.request` (stdlib) instead. If you need HTTP in new scripts, use `urllib.request.Request` with a `User-Agent` header.
 - **Arabic text on Windows console**: Printing Arabic text to Windows console causes `UnicodeEncodeError: 'charmap' codec can't encode character`. Fix with `sys.stdout.reconfigure(encoding='utf-8')` at the top of scripts that print Arabic.
-- **hubeali.com Arabic encoding**: The Book of Sulaym page on hubeali.com has encoding issues. Using `raw.decode("utf-8", errors="replace")` prevents crashes but corrupts Arabic characters, causing the scraper to extract 0 Arabic paragraphs. The raw HTML is saved at `raw/hubeali_com/book-of-sulaym/page.html` for future re-parsing with a different approach.
+- **hubeali.com Arabic encoding**: The Book of Sulaym page on hubeali.com has encoding issues. Using `raw.decode("utf-8", errors="replace")` prevents crashes but corrupts Arabic characters, causing the scraper to extract 0 Arabic paragraphs. The raw HTML is saved at `scraped/hubeali_com/book-of-sulaym/page.html` for future re-parsing with a different approach.
 
 ## Data Sources and Gaps
 
