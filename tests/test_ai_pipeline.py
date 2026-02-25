@@ -44,14 +44,14 @@ def _make_valid_result(**overrides):
         "word_analysis": [
             {
                 "word": "بِسْمِ",
-                "translation_en": "In the name of",
+                "translation": {lang: f"In the name of ({lang})" for lang in VALID_LANGUAGE_KEYS},
                 "root": "س م و",
                 "pos": "PREP",
                 "is_proper_noun": False,
             },
             {
                 "word": "اللَّهِ",
-                "translation_en": "Allah",
+                "translation": {lang: f"Allah ({lang})" for lang in VALID_LANGUAGE_KEYS},
                 "root": "أ ل ه",
                 "pos": "N",
                 "is_proper_noun": True,
@@ -615,8 +615,8 @@ class TestEstimateCost:
 
     def test_full_corpus_estimate(self):
         cost = estimate_cost(46857)
-        # Should be around $3,900 per AI_CONTENT_PIPELINE.md
-        assert 3000 < cost["total_cost_usd"] < 5000
+        # Should be around $4,700 (11 languages + multilingual word translations)
+        assert 3500 < cost["total_cost_usd"] < 6000
 
 
 # ===================================================================
@@ -679,7 +679,7 @@ class TestEnumConstants:
         assert len(VALID_HADITH_TYPES) == 10
 
     def test_valid_language_keys_complete(self):
-        assert VALID_LANGUAGE_KEYS == {"ur", "tr", "fa", "id", "bn", "es", "fr", "de", "ru", "zh"}
+        assert VALID_LANGUAGE_KEYS == {"en", "ur", "tr", "fa", "id", "bn", "es", "fr", "de", "ru", "zh"}
 
     def test_valid_narrator_roles_complete(self):
         assert VALID_NARRATOR_ROLES == {"narrator", "companion", "imam", "author"}

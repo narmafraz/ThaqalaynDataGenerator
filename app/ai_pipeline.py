@@ -62,7 +62,7 @@ VALID_HADITH_TYPES = {
     "creedal", "eschatological", "biographical",
 }
 
-VALID_LANGUAGE_KEYS = {"ur", "tr", "fa", "id", "bn", "es", "fr", "de", "ru", "zh"}
+VALID_LANGUAGE_KEYS = {"en", "ur", "tr", "fa", "id", "bn", "es", "fr", "de", "ru", "zh"}
 
 VALID_QURAN_RELATIONSHIPS = {"explicit", "thematic"}
 
@@ -245,13 +245,14 @@ def build_user_message(request: PipelineRequest) -> str:
 2. "diacritics_status": (enum) "added" | "completed" | "validated" | "corrected"
 3. "diacritics_changes": (array) Corrections made. Empty [] if status is "added" or "validated".
 4. "word_analysis": (array) One entry per Arabic word:
-   {"word": "...", "translation_en": "...", "root": "...", "pos": (enum N|V|ADJ|ADV|PREP|CONJ|PRON|DET|PART|INTJ|REL|DEM|NEG|COND|INTERR), "is_proper_noun": boolean}
+   {"word": "...", "translation": {"en": "...", "ur": "...", "tr": "...", "fa": "...", "id": "...", "bn": "...", "es": "...", "fr": "...", "de": "...", "ru": "...", "zh": "..."}, "root": "...", "pos": (enum N|V|ADJ|ADV|PREP|CONJ|PRON|DET|PART|INTJ|REL|DEM|NEG|COND|INTERR), "is_proper_noun": boolean}
+   The "translation" object must have all 11 language keys with context-appropriate translations for the word as used in this specific verse/hadith.
 5. "tags": (array of 2-5 enums) theology|ethics|jurisprudence|worship|quran_commentary|prophetic_tradition|family|social_relations|knowledge|dua|afterlife|history|economy|governance
 6. "hadith_type": (enum) legal_ruling|ethical_teaching|dua|narrative|prophetic_tradition|quranic_commentary|supplication|creedal|eschatological|biographical
 7. "related_quran": (array) [{"ref": "surah:ayah", "relationship": "explicit"|"thematic"}] or []
 8. "isnad_matn": {"isnad_ar": "...", "matn_ar": "...", "has_chain": boolean, "narrators": [...]}
    Each narrator: {"name_ar": "...", "name_en": "...", "role": "narrator"|"companion"|"imam"|"author", "position": int, "identity_confidence": "definite"|"likely"|"ambiguous", "ambiguity_note": string|null, "known_identity": string|null}
-9. "translations": Object with keys ur, tr, fa, id, bn, es, fr, de, ru, zh. Each:
+9. "translations": Object with keys en, ur, tr, fa, id, bn, es, fr, de, ru, zh. Each:
    {"text": "...", "summary": "...", "key_terms": {"arabic_term": "explanation"}, "seo_question": "..."}""")
 
     return "\n".join(parts)
@@ -462,9 +463,17 @@ def validate_result(result: dict) -> List[str]:
                 if not isinstance(word, dict):
                     errors.append(f"word_analysis[{i}] must be object")
                     continue
-                for wf in ("word", "translation_en", "root", "pos"):
+                for wf in ("word", "translation", "root", "pos"):
                     if wf not in word:
                         errors.append(f"word_analysis[{i}] missing field: {wf}")
+                # Validate translation object (multilingual word translations)
+                if "translation" in word:
+                    if not isinstance(word["translation"], dict):
+                        errors.append(f"word_analysis[{i}] translation must be object, got {type(word['translation']).__name__}")
+                    else:
+                        missing_word_langs = VALID_LANGUAGE_KEYS - set(word["translation"].keys())
+                        if missing_word_langs:
+                            errors.append(f"word_analysis[{i}] translation missing languages: {sorted(missing_word_langs)}")
                 if word.get("pos") not in VALID_POS_TAGS:
                     errors.append(f"invalid pos: {word.get('pos')} for word {word.get('word', '?')}")
                 if "is_proper_noun" in word and not isinstance(word["is_proper_noun"], bool):
@@ -653,8 +662,9 @@ def estimate_cost(num_verses: int = 46857) -> dict:
         Cost breakdown dict.
     """
     # Generation (Opus 4.6 Batch)
+    # Updated for 11 languages (en added) + multilingual word translations
     gen_input_per_req = 3150
-    gen_output_per_req = 4400
+    gen_output_per_req = 5640  # was 4400; +1240 for en translation + multilingual word translations
     gen_total_input = num_verses * gen_input_per_req
     gen_total_output = num_verses * gen_output_per_req
     gen_input_cost = (gen_total_input / 1_000_000) * 2.50
@@ -662,7 +672,7 @@ def estimate_cost(num_verses: int = 46857) -> dict:
     gen_total = gen_input_cost + gen_output_cost
 
     # Validation (Sonnet 4.6 Batch, per-language)
-    val_requests = num_verses * 10
+    val_requests = num_verses * 11  # 11 languages including English
     val_input_per_req = 600
     val_output_per_req = 100
     val_total_input = val_requests * val_input_per_req
