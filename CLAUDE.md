@@ -126,9 +126,9 @@ python app/scrapers/scrape_rafed_text.py --toc-only    # Extract TOCs only (fast
 python app/scrapers/scrape_rafed_text.py --tahdhib     # Scrape Tahdhib page text
 ```
 
-### Raw Data Inventory (`app/raw/`)
+### Raw Data Inventory (`ThaqalaynDataSources/raw/`)
 
-The `raw/` directory is **gitignored** — only scraper scripts in `app/scrapers/` are tracked. Raw data must be re-scraped or restored separately.
+Raw source data has been moved to the **ThaqalaynDataSources** sibling repo. The generator reads from it via `SOURCE_DATA_DIR` env var (defaults to `../ThaqalaynDataSources/`). Scrapers also write to ThaqalaynDataSources.
 
 | Source Directory | Contents | Hadiths |
 |-----------------|----------|---------|
@@ -169,6 +169,7 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 
 ## Environment Variables
 
+- `SOURCE_DATA_DIR`: Source data directory containing raw/, ai-pipeline-data/, ai-content/ (default: `../ThaqalaynDataSources/`)
 - `DESTINATION_DIR`: Output directory for generated JSON files (default: `../ThaqalaynData/`)
 - `PYTHONPATH`: Must include project root for imports to work
 

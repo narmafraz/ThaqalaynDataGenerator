@@ -9,6 +9,7 @@ import fastapi
 # make sure all SQL Alchemy models are imported before initializing DB
 # otherwise, SQL Alchemy might fail to initialize relationships properly
 # for more details: https://github.com/tiangolo/full-stack-fastapi-postgresql/issues/28
+from app import config
 from app.lib_db import index_from_path, insert_chapter, write_file
 from app.lib_model import set_index
 from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
@@ -126,7 +127,7 @@ def insert_quran_translation(verses, verse_translations, file, key, lang, author
 				index = index + 1
 
 def get_path(file: str) -> str:
-	return os.path.join(os.path.dirname(__file__), "raw", file)
+	return config.get_raw_path(file)
 
 
 def build_quran() -> Chapter:

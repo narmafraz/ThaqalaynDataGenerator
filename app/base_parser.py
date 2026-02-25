@@ -101,10 +101,13 @@ def publish_book(
 
 
 def get_parser_raw_path(parser_file: str, *parts: str) -> str:
-    """Get path to a raw data file relative to a parser module's location.
+    """Get path to a raw data file under the source data directory.
+
+    The parser_file parameter is kept for backward compatibility but is
+    no longer used — all raw paths now resolve via config.RAW_DIR.
 
     Usage:
         get_parser_raw_path(__file__, "some_dir", "file.xml")
     """
-    dirname = os.path.dirname(os.path.abspath(parser_file))
-    return os.path.join(dirname, "raw", *parts)
+    from app import config
+    return config.get_raw_path(*parts)

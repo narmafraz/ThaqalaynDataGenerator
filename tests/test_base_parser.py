@@ -284,12 +284,10 @@ class TestPublishBook:
 class TestGetParserRawPath:
     """Tests for get_parser_raw_path()."""
 
-    def test_returns_path_relative_to_parser(self):
-        # Use this test file as the parser reference
+    def test_returns_path_under_source_data_dir(self):
+        from app import config
         result = get_parser_raw_path(__file__, "some_dir", "file.xml")
-        expected = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "raw", "some_dir", "file.xml"
-        )
+        expected = os.path.join(config.RAW_DIR, "some_dir", "file.xml")
         assert result == expected
 
     def test_returns_raw_subdirectory(self):
@@ -304,6 +302,8 @@ class TestGetParserRawPath:
         result = get_parser_raw_path(__file__)
         assert result.endswith("raw")
 
-    def test_uses_absolute_path(self):
-        result = get_parser_raw_path(__file__, "test.xml")
-        assert os.path.isabs(result)
+    def test_parser_file_param_is_ignored(self):
+        """parser_file is kept for compat but not used for path resolution."""
+        result_a = get_parser_raw_path(__file__, "test.xml")
+        result_b = get_parser_raw_path("/some/other/file.py", "test.xml")
+        assert result_a == result_b

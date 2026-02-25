@@ -26,11 +26,10 @@ import urllib.request
 import urllib.error
 
 BASE_URL = "https://www.thaqalayn-api.net/api/v2"
-# Output to raw/thaqalayn_api/ directory
-OUTPUT_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "raw", "thaqalayn_api"
-)
+# Output to ThaqalaynDataSources/raw/thaqalayn_api/
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_SOURCE_DATA_DIR = os.environ.get("SOURCE_DATA_DIR", os.path.join(_PROJECT_ROOT, "..", "ThaqalaynDataSources"))
+OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "raw", "thaqalayn_api")
 
 # Books to scrape: slug -> (output_folder_name, hadith_count)
 # Source: https://www.thaqalayn-api.net/api/v2/allbooks

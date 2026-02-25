@@ -32,10 +32,10 @@ import urllib.error
 sys.stdout.reconfigure(encoding="utf-8")
 
 DOWNLOAD_BASE = "https://download.ghbook.ir/downloads.php"
-OUTPUT_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "raw", "ghbook_ir"
-)
+# Output to ThaqalaynDataSources/raw/ghbook_ir/
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_SOURCE_DATA_DIR = os.environ.get("SOURCE_DATA_DIR", os.path.join(_PROJECT_ROOT, "..", "ThaqalaynDataSources"))
+OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "raw", "ghbook_ir")
 
 DELAY_BETWEEN_REQUESTS = 2.0  # seconds
 

@@ -1,16 +1,17 @@
 """Tests for the Quran parser (quran.py).
 
-These tests use the actual raw source files in app/raw/tanzil_net/.
+These tests use the actual raw source files from ThaqalaynDataSources.
 Tests are skipped if the source files are not available.
 """
 import os
 
 import pytest
 
+from app.config import get_raw_path
 from app.models import PartType
 
 # Check if source files exist
-_raw_dir = os.path.join(os.path.dirname(__file__), "..", "app", "raw", "tanzil_net")
+_raw_dir = get_raw_path("tanzil_net")
 _has_quran_text = os.path.isfile(os.path.join(_raw_dir, "quran_simple.txt"))
 _has_quran_xml = os.path.isfile(os.path.join(_raw_dir, "quran-data.xml"))
 

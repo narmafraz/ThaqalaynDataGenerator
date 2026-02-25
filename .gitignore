@@ -131,7 +131,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Data folder
+# Data folders (source data lives in ThaqalaynDataSources)
 raw/
 reports/
 

@@ -33,7 +33,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.config import DEFAULT_DESTINATION_DIR, JSON_ENCODING, JSON_ENSURE_ASCII, JSON_INDENT
+from app.config import AI_CONTENT_DIR, AI_PIPELINE_DATA_DIR, DEFAULT_DESTINATION_DIR, JSON_ENCODING, JSON_ENSURE_ASCII, JSON_INDENT
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ class PipelineConfig:
     model: str = DEFAULT_MODEL
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = DEFAULT_MAX_TOKENS
-    output_dir: str = "ai-content/samples"
+    output_dir: str = os.path.join(AI_CONTENT_DIR, "samples")
     data_dir: str = DEFAULT_DESTINATION_DIR
 
 
@@ -108,8 +108,8 @@ class PipelineConfig:
 # ---------------------------------------------------------------------------
 
 def _data_dir() -> str:
-    """Return the path to the ai_pipeline_data directory."""
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_pipeline_data")
+    """Return the path to the ai-pipeline-data directory."""
+    return AI_PIPELINE_DATA_DIR
 
 
 def load_glossary() -> dict:
@@ -776,7 +776,7 @@ def main():
         help="Generate batch request JSONL for sample verses"
     )
     gen_parser.add_argument(
-        "--output", default="ai-content/samples/requests/sample_requests.jsonl",
+        "--output", default=os.path.join(AI_CONTENT_DIR, "samples", "requests", "sample_requests.jsonl"),
         help="Output JSONL file path"
     )
     gen_parser.add_argument(
@@ -790,7 +790,7 @@ def main():
         help="Validate AI response files"
     )
     val_parser.add_argument(
-        "--dir", default="ai-content/samples/responses/",
+        "--dir", default=os.path.join(AI_CONTENT_DIR, "samples", "responses"),
         help="Directory containing response JSON files"
     )
 

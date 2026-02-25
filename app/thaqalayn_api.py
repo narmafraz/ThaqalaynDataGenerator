@@ -16,6 +16,7 @@ from typing import Dict, List, Optional
 
 import fastapi
 
+from app import config
 from app.book_registry import BOOK_REGISTRY, BookConfig, get_book_config
 from app.lib_db import insert_chapter, write_file
 from app.lib_index import add_translation, collect_indexes, update_index_files
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 def get_raw_path(folder: str) -> str:
     """Get the path to a raw data folder."""
-    return os.path.join(os.path.dirname(__file__), "raw", "thaqalayn_api", folder)
+    return config.get_raw_path("thaqalayn_api", folder)
 
 
 def load_hadiths(folder: str) -> List[dict]:

@@ -12,8 +12,16 @@ import os
 # Root directory of the app/ package
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Source data directory (defaults to sibling ThaqalaynDataSources directory)
+DEFAULT_SOURCE_DATA_DIR = "../ThaqalaynDataSources/"
+SOURCE_DATA_DIR = os.environ.get("SOURCE_DATA_DIR", DEFAULT_SOURCE_DATA_DIR)
+
 # Raw source data directory
-RAW_DIR = os.path.join(APP_DIR, "raw")
+RAW_DIR = os.path.join(SOURCE_DATA_DIR, "raw")
+
+# AI pipeline data and content directories
+AI_PIPELINE_DATA_DIR = os.path.join(SOURCE_DATA_DIR, "ai-pipeline-data")
+AI_CONTENT_DIR = os.path.join(SOURCE_DATA_DIR, "ai-content")
 
 # Output destination (defaults to sibling ThaqalaynData directory)
 DEFAULT_DESTINATION_DIR = "../ThaqalaynData/"

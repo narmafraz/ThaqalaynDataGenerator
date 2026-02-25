@@ -43,10 +43,10 @@ import time
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-OUTPUT_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "raw", "rafed_net"
-)
+# Output to ThaqalaynDataSources/raw/rafed_net/
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_SOURCE_DATA_DIR = os.environ.get("SOURCE_DATA_DIR", os.path.join(_PROJECT_ROOT, "..", "ThaqalaynDataSources"))
+OUTPUT_DIR = os.path.join(_SOURCE_DATA_DIR, "raw", "rafed_net")
 
 BASE_URL = "https://books.rafed.net"
 

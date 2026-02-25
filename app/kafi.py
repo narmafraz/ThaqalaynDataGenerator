@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 # make sure all SQL Alchemy models are imported before initializing DB
 # otherwise, SQL Alchemy might fail to initialize relationships properly
 # for more details: https://github.com/tiangolo/full-stack-fastapi-postgresql/issues/28
+from app import config
 from app.kafi_corrections import file_correction
 from app.lib_bs4 import get_contents, is_rtl_tag, is_tag
 from app.lib_db import insert_chapter, write_file
@@ -441,7 +442,7 @@ def build_volume(file, title_en: str, title_ar: str, description: str, last_volu
 	return volume
 
 def get_path(file: str) -> str:
-	return os.path.join(os.path.dirname(__file__), "raw", file)
+	return config.get_raw_path(file)
 
 
 def build_kafi(report: ProcessingReport = None) -> Chapter:
