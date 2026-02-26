@@ -246,6 +246,7 @@ def build_user_message(request: PipelineRequest) -> str:
 3. "diacritics_changes": (array) Corrections made. Empty [] if status is "added" or "validated".
 4. "word_analysis": (array) One entry per Arabic word:
    {"word": "...", "translation": {"en": "...", "ur": "...", "tr": "...", "fa": "...", "id": "...", "bn": "...", "es": "...", "fr": "...", "de": "...", "ru": "...", "zh": "..."}, "pos": (enum N|V|ADJ|ADV|PREP|CONJ|PRON|DET|PART|INTJ|REL|DEM|NEG|COND|INTERR)}
+   IMPORTANT: The "word" field must contain the fully diacritized form of the word (with complete tashkeel), matching the corresponding word in "diacritized_text". This is critical because the same consonantal skeleton can represent different words with different meanings (e.g. عَلِمَ "he knew" vs عَلَّمَ "he taught"), and diacritics are needed to distinguish them.
    The "translation" object must have all 11 language keys with context-appropriate translations for the word as used in this specific verse/hadith.
 5. "tags": (array of 2-5 enums) theology|ethics|jurisprudence|worship|quran_commentary|prophetic_tradition|family|social_relations|knowledge|dua|afterlife|history|economy|governance
 6. "hadith_type": (enum) legal_ruling|ethical_teaching|dua|narrative|prophetic_tradition|quranic_commentary|supplication|creedal|eschatological|biographical
@@ -476,6 +477,11 @@ def validate_result(result: dict) -> List[str]:
                             errors.append(f"word_analysis[{i}] translation missing languages: {sorted(missing_word_langs)}")
                 if word.get("pos") not in VALID_POS_TAGS:
                     errors.append(f"invalid pos: {word.get('pos')} for word {word.get('word', '?')}")
+                # Validate word is fully diacritized (contains tashkeel marks)
+                if "word" in word and isinstance(word["word"], str):
+                    _DIACRITIC_MARKS = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0670")  # tanwin, fatha, damma, kasra, shadda, sukun, superscript alef
+                    if not any(ch in _DIACRITIC_MARKS for ch in word["word"]):
+                        errors.append(f"word_analysis[{i}] word '{word['word']}' has no diacritics (must be fully diacritized)")
 
     # --- tags ---
     if "tags" in result:

@@ -431,6 +431,18 @@ class TestValidateResultWrongTypes:
         errors = validate_result(result)
         assert any("2-5 items" in e for e in errors)
 
+    def test_word_missing_diacritics(self):
+        result = _make_valid_result()
+        result["word_analysis"][0]["word"] = "بسم"  # no tashkeel
+        errors = validate_result(result)
+        assert any("no diacritics" in e for e in errors)
+
+    def test_word_with_diacritics_passes(self):
+        result = _make_valid_result()
+        # Default words already have diacritics (بِسْمِ, اللَّهِ)
+        errors = validate_result(result)
+        assert not any("no diacritics" in e for e in errors)
+
 
 # ===================================================================
 # Parse response tests
