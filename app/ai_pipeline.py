@@ -245,7 +245,7 @@ def build_user_message(request: PipelineRequest) -> str:
 2. "diacritics_status": (enum) "added" | "completed" | "validated" | "corrected"
 3. "diacritics_changes": (array) Corrections made. Empty [] if status is "added" or "validated".
 4. "word_analysis": (array) One entry per Arabic word:
-   {"word": "...", "translation": {"en": "...", "ur": "...", "tr": "...", "fa": "...", "id": "...", "bn": "...", "es": "...", "fr": "...", "de": "...", "ru": "...", "zh": "..."}, "root": "...", "pos": (enum N|V|ADJ|ADV|PREP|CONJ|PRON|DET|PART|INTJ|REL|DEM|NEG|COND|INTERR), "is_proper_noun": boolean}
+   {"word": "...", "translation": {"en": "...", "ur": "...", "tr": "...", "fa": "...", "id": "...", "bn": "...", "es": "...", "fr": "...", "de": "...", "ru": "...", "zh": "..."}, "pos": (enum N|V|ADJ|ADV|PREP|CONJ|PRON|DET|PART|INTJ|REL|DEM|NEG|COND|INTERR)}
    The "translation" object must have all 11 language keys with context-appropriate translations for the word as used in this specific verse/hadith.
 5. "tags": (array of 2-5 enums) theology|ethics|jurisprudence|worship|quran_commentary|prophetic_tradition|family|social_relations|knowledge|dua|afterlife|history|economy|governance
 6. "hadith_type": (enum) legal_ruling|ethical_teaching|dua|narrative|prophetic_tradition|quranic_commentary|supplication|creedal|eschatological|biographical
@@ -463,7 +463,7 @@ def validate_result(result: dict) -> List[str]:
                 if not isinstance(word, dict):
                     errors.append(f"word_analysis[{i}] must be object")
                     continue
-                for wf in ("word", "translation", "root", "pos"):
+                for wf in ("word", "translation", "pos"):
                     if wf not in word:
                         errors.append(f"word_analysis[{i}] missing field: {wf}")
                 # Validate translation object (multilingual word translations)
@@ -476,8 +476,6 @@ def validate_result(result: dict) -> List[str]:
                             errors.append(f"word_analysis[{i}] translation missing languages: {sorted(missing_word_langs)}")
                 if word.get("pos") not in VALID_POS_TAGS:
                     errors.append(f"invalid pos: {word.get('pos')} for word {word.get('word', '?')}")
-                if "is_proper_noun" in word and not isinstance(word["is_proper_noun"], bool):
-                    errors.append(f"is_proper_noun must be boolean for word {word.get('word', '?')}")
 
     # --- tags ---
     if "tags" in result:
@@ -664,7 +662,7 @@ def estimate_cost(num_verses: int = 46857) -> dict:
     # Generation (Opus 4.6 Batch)
     # Updated for 11 languages (en added) + multilingual word translations
     gen_input_per_req = 3150
-    gen_output_per_req = 5640  # was 4400; +1240 for en translation + multilingual word translations
+    gen_output_per_req = 5200  # was 5640; -440 for removing root + is_proper_noun (deferred to word dict)
     gen_total_input = num_verses * gen_input_per_req
     gen_total_output = num_verses * gen_output_per_req
     gen_input_cost = (gen_total_input / 1_000_000) * 2.50

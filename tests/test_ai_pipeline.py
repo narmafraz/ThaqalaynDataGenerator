@@ -45,16 +45,12 @@ def _make_valid_result(**overrides):
             {
                 "word": "بِسْمِ",
                 "translation": {lang: f"In the name of ({lang})" for lang in VALID_LANGUAGE_KEYS},
-                "root": "س م و",
                 "pos": "PREP",
-                "is_proper_noun": False,
             },
             {
                 "word": "اللَّهِ",
                 "translation": {lang: f"Allah ({lang})" for lang in VALID_LANGUAGE_KEYS},
-                "root": "أ ل ه",
                 "pos": "N",
-                "is_proper_noun": True,
             },
         ],
         "tags": ["theology", "worship"],
@@ -435,12 +431,6 @@ class TestValidateResultWrongTypes:
         errors = validate_result(result)
         assert any("2-5 items" in e for e in errors)
 
-    def test_is_proper_noun_not_boolean(self):
-        result = _make_valid_result()
-        result["word_analysis"][0]["is_proper_noun"] = "yes"
-        errors = validate_result(result)
-        assert any("is_proper_noun must be boolean" in e for e in errors)
-
 
 # ===================================================================
 # Parse response tests
@@ -615,8 +605,8 @@ class TestEstimateCost:
 
     def test_full_corpus_estimate(self):
         cost = estimate_cost(46857)
-        # Should be around $4,700 (11 languages + multilingual word translations)
-        assert 3500 < cost["total_cost_usd"] < 6000
+        # Should be around $4,400 (11 languages, root/is_proper_noun deferred to word dict)
+        assert 3000 < cost["total_cost_usd"] < 5500
 
 
 # ===================================================================
