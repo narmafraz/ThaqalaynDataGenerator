@@ -781,9 +781,12 @@ def validate_result(result: dict) -> List[str]:
                 if word.get("pos") not in VALID_POS_TAGS:
                     errors.append(f"invalid pos: {word.get('pos')} for word {word.get('word', '?')}")
                 # Validate word is fully diacritized (contains tashkeel marks)
+                # Skip check for punctuation-only words (no Arabic letters)
                 if "word" in word and isinstance(word["word"], str):
                     _DIACRITIC_MARKS = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0670")  # tanwin, fatha, damma, kasra, shadda, sukun, superscript alef
-                    if not any(ch in _DIACRITIC_MARKS for ch in word["word"]):
+                    _ARABIC_LETTER_RANGE = range(0x0621, 0x064B)  # Arabic letters (alef..ya)
+                    has_arabic_letter = any(ord(ch) in _ARABIC_LETTER_RANGE for ch in word["word"])
+                    if has_arabic_letter and not any(ch in _DIACRITIC_MARKS for ch in word["word"]):
                         errors.append(f"word_analysis[{i}] word '{word['word']}' has no diacritics (must be fully diacritized)")
 
     # --- tags ---

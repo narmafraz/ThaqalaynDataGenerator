@@ -522,6 +522,20 @@ class TestValidateResultWrongTypes:
         errors = validate_result(result)
         assert not any("no diacritics" in e for e in errors)
 
+    def test_punctuation_word_skips_diacritics_check(self):
+        """Punctuation-only words like (, ), . should not require diacritics."""
+        result = _make_valid_result()
+        # Insert a punctuation word in the middle
+        result["word_analysis"].insert(1, {
+            "word": "(",
+            "translation": {lang: "(" for lang in VALID_LANGUAGE_KEYS},
+            "pos": "PART",
+        })
+        # Adjust chunk word_end to match new word count
+        result["chunks"][0]["word_end"] = 3
+        errors = validate_result(result)
+        assert not any("no diacritics" in e and "'('" in e for e in errors)
+
 
 # ===================================================================
 # Parse response tests
