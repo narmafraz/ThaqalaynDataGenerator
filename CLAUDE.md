@@ -172,6 +172,7 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 - `SOURCE_DATA_DIR`: Source data directory containing scraped/, ai-pipeline-data/, ai-content/ (default: `../ThaqalaynDataSources/`)
 - `DESTINATION_DIR`: Output directory for generated JSON files (default: `../ThaqalaynData/`)
 - `PYTHONPATH`: Must include project root for imports to work
+- `AI_CONTENT_SUBDIR`: Output subdirectory for AI pipeline (default: `samples`, set to `corpus` for full runs)
 
 ## AI Content Pipeline (Claude Code Agents)
 
@@ -226,7 +227,7 @@ Key functions: `save_structure_cache()`, `save_chunk_cache()`, `check_cache_stal
 
 ### Quality Review Checks (`review_result()`)
 
-Seven automated checks beyond schema validation:
+Ten automated checks beyond schema validation:
 
 | # | Check | Category | Catches |
 |---|-------|----------|---------|
@@ -237,6 +238,9 @@ Seven automated checks beyond schema validation:
 | 5 | Chunk coherence | `chunk_translation_mismatch` | Chunk/verse length divergence >30% |
 | 6 | Missing isnad chunk | `missing_isnad_chunk` | has_chain=True without isnad chunk |
 | 7 | Back-reference detection | `back_reference_no_chain` | Back-ref patterns with has_chain=False |
+| 8 | Key terms disparity | `key_terms_count_disparity` | One language has >2x more key_terms |
+| 9 | Word analysis text match | `word_count_mismatch` / `word_text_mismatch` | word_analysis doesn't match original Arabic |
+| 10 | Narrator word ranges | `narrator_word_range_mismatch` | word_ranges point to wrong words |
 
 ### Wrapper format
 
@@ -249,6 +253,7 @@ Seven automated checks beyond schema validation:
     "pipeline_version": "2.0.0",
     "generation_method": "claude_code_direct"
   },
+  "generation_attempts": 1,
   "result": { /* validated pipeline result */ }
 }
 ```
@@ -277,7 +282,7 @@ The pipeline generates 13 fields per hadith/verse. Fields 1-10 are original, fie
 
 | # | Field | Type | Purpose | Downstream Use |
 |---|-------|------|---------|----------------|
-| 11 | `topics` | array of 1-3 strings | Level 2 sub-topics from controlled vocabulary (`topic_taxonomy.json`) | Topic browsing page, Bihar-style pages, related hadith matching |
+| 11 | `topics` | array of 1-5 strings | Level 2 sub-topics from controlled vocabulary (`topic_taxonomy.json`) | Topic browsing page, Bihar-style pages, related hadith matching |
 | 12 | `key_phrases` | array of 0-5 objects | Multi-word Arabic expressions with English translations and categories | Phrase cross-reference index, clickable phrase highlights, phrase detail pages |
 | 13 | `similar_content_hints` | array of 0-3 objects | Unverified LLM suggestions for similar narrations (description + theme) | Seeds similarity pipeline with high-confidence starting points |
 
@@ -288,6 +293,16 @@ The pipeline generates 13 fields per hadith/verse. Fields 1-10 are original, fie
 **Enhanced summary**: The `summary` field in each language's translation now includes guidance to note historical context — who the audience was, what prompted the teaching, and how the original audience would have understood key terms.
 
 **Cache invalidation**: `STRUCTURE_SCHEMA_VERSION` bumped to `"2.0.0"`, which invalidates all cached structure pass results. Existing chunk caches will also be regenerated since `PIPELINE_VERSION` changed to `"2.0.0"`.
+
+### Corpus Infrastructure
+
+**Corpus manifest**: `python -m app.ai_pipeline manifest [--book X] [--volume N] [--range N-M]` generates `ai-pipeline-data/corpus_manifest.json` listing all verse paths. Supports filtering by book, volume, and numeric range.
+
+**Configurable output**: Set `AI_CONTENT_SUBDIR=corpus` for full-corpus runs. Paths: `AI_RESPONSES_DIR`, `AI_CACHE_DIR`, `AI_QUARANTINE_DIR` in `config.py`.
+
+**Generation attempts**: Each wrapper tracks `generation_attempts` (max 3). Verses exceeding the limit are quarantined in `ai-content/{subdir}/quarantine/`. `validate_wrapper()` validates the outer wrapper format.
+
+**Narrator word_ranges**: Optional `word_ranges` field per narrator in `isnad_matn.narrators` enables UI narrator highlighting. Format: `[{"word_start": int, "word_end": int}]`.
 
 ## API-Only Code (Not Used)
 

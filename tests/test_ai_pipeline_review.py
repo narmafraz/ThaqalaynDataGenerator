@@ -32,7 +32,11 @@ from app.ai_pipeline_review import (
 # ===================================================================
 
 def _make_valid_result(**overrides):
-    """Build a minimally valid pipeline result dict."""
+    """Build a minimally valid pipeline result dict.
+
+    The word_analysis must match the arabic_text in _make_request() — 4 words:
+    بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ
+    """
     result = {
         "diacritized_text": "\u0628\u0650\u0633\u0652\u0645\u0650 \u0627\u0644\u0644\u0651\u064e\u0647\u0650 \u0627\u0644\u0631\u0651\u064e\u062d\u0652\u0645\u0670\u0646\u0650 \u0627\u0644\u0631\u0651\u064e\u062d\u0650\u064a\u0645\u0650",
         "diacritics_status": "validated",
@@ -48,13 +52,23 @@ def _make_valid_result(**overrides):
                 "translation": {lang: f"Allah ({lang})" for lang in VALID_LANGUAGE_KEYS},
                 "pos": "N",
             },
+            {
+                "word": "\u0627\u0644\u0631\u0651\u064e\u062d\u0652\u0645\u0670\u0646\u0650",
+                "translation": {lang: f"the Most Merciful ({lang})" for lang in VALID_LANGUAGE_KEYS},
+                "pos": "ADJ",
+            },
+            {
+                "word": "\u0627\u0644\u0631\u0651\u064e\u062d\u0650\u064a\u0645\u0650",
+                "translation": {lang: f"the Most Compassionate ({lang})" for lang in VALID_LANGUAGE_KEYS},
+                "pos": "ADJ",
+            },
         ],
         "tags": ["theology", "worship"],
         "content_type": "creedal",
         "related_quran": [],
         "isnad_matn": {
             "isnad_ar": "",
-            "matn_ar": "\u0628\u0650\u0633\u0652\u0645\u0650 \u0627\u0644\u0644\u0651\u064e\u0647\u0650",
+            "matn_ar": "\u0628\u0650\u0633\u0652\u0645\u0650 \u0627\u0644\u0644\u0651\u064e\u0647\u0650 \u0627\u0644\u0631\u0651\u064e\u062d\u0652\u0645\u0670\u0646\u0650 \u0627\u0644\u0631\u0651\u064e\u062d\u0650\u064a\u0645\u0650",
             "has_chain": False,
             "narrators": [],
         },
@@ -62,9 +76,9 @@ def _make_valid_result(**overrides):
         "chunks": [
             {
                 "chunk_type": "body",
-                "arabic_text": "\u0628\u0650\u0633\u0652\u0645\u0650 \u0627\u0644\u0644\u0651\u064e\u0647\u0650",
+                "arabic_text": "\u0628\u0650\u0633\u0652\u0645\u0650 \u0627\u0644\u0644\u0651\u064e\u0647\u0650 \u0627\u0644\u0631\u0651\u064e\u062d\u0652\u0645\u0670\u0646\u0650 \u0627\u0644\u0631\u0651\u064e\u062d\u0650\u064a\u0645\u0650",
                 "word_start": 0,
-                "word_end": 2,
+                "word_end": 4,
                 "translations": {lang: f"Body text ({lang})" for lang in VALID_LANGUAGE_KEYS},
             },
         ],
@@ -283,6 +297,131 @@ class TestReviewResult:
 
 
 # ===================================================================
+# TestNarratorWordRanges — Check 10
+# ===================================================================
+
+class TestNarratorWordRanges:
+    def test_valid_word_ranges_no_warning(self):
+        """Narrator with correct word_ranges produces no warning."""
+        result = _make_valid_result()
+        result["isnad_matn"] = {
+            "isnad_ar": "\u0645\u064f\u062d\u064e\u0645\u0651\u064e\u062f\u064f \u0628\u0652\u0646\u064f \u064a\u064e\u062d\u0652\u064a\u064e\u0649",
+            "matn_ar": "text",
+            "has_chain": True,
+            "narrators": [
+                {
+                    "name_ar": "\u0628\u0650\u0633\u0652\u0645\u0650",
+                    "name_en": "Bismi",
+                    "role": "narrator",
+                    "position": 1,
+                    "identity_confidence": "definite",
+                    "ambiguity_note": None,
+                    "known_identity": None,
+                    "word_ranges": [{"word_start": 0, "word_end": 1}],
+                },
+            ],
+        }
+        request = _make_request()
+        warnings = review_result(result, request)
+        range_warnings = [w for w in warnings if w.category == "narrator_word_range_mismatch"]
+        assert len(range_warnings) == 0
+
+    def test_word_ranges_mismatch_warns(self):
+        """Narrator word_ranges pointing to wrong words produces warning."""
+        result = _make_valid_result()
+        result["isnad_matn"] = {
+            "isnad_ar": "\u0645\u064f\u062d\u064e\u0645\u0651\u064e\u062f\u064f",
+            "matn_ar": "text",
+            "has_chain": True,
+            "narrators": [
+                {
+                    "name_ar": "\u0645\u064f\u062d\u064e\u0645\u0651\u064e\u062f\u064f",
+                    "name_en": "Muhammad",
+                    "role": "narrator",
+                    "position": 1,
+                    "identity_confidence": "definite",
+                    "ambiguity_note": None,
+                    "known_identity": None,
+                    # Points to word 1 (Allah) not word 0 where Muhammad would be
+                    "word_ranges": [{"word_start": 1, "word_end": 2}],
+                },
+            ],
+        }
+        request = _make_request()
+        warnings = review_result(result, request)
+        range_warnings = [w for w in warnings if w.category == "narrator_word_range_mismatch"]
+        assert len(range_warnings) == 1
+
+    def test_missing_word_ranges_in_chain_warns(self):
+        """Narrator without word_ranges in a chained hadith produces low warning."""
+        result = _make_valid_result()
+        result["isnad_matn"] = {
+            "isnad_ar": "\u0645\u064f\u062d\u064e\u0645\u0651\u064e\u062f\u064f",
+            "matn_ar": "text",
+            "has_chain": True,
+            "narrators": [
+                {
+                    "name_ar": "\u0645\u064f\u062d\u064e\u0645\u0651\u064e\u062f\u064f",
+                    "name_en": "Muhammad",
+                    "role": "narrator",
+                    "position": 1,
+                    "identity_confidence": "definite",
+                    "ambiguity_note": None,
+                    "known_identity": None,
+                    # No word_ranges field
+                },
+            ],
+        }
+        request = _make_request()
+        warnings = review_result(result, request)
+        missing = [w for w in warnings if w.category == "missing_narrator_word_ranges"]
+        assert len(missing) == 1
+        assert missing[0].severity == "low"
+
+
+# ===================================================================
+# TestWordAnalysisTextMatch — Check 9
+# ===================================================================
+
+class TestWordAnalysisTextMatch:
+    def test_word_count_mismatch_flagged(self):
+        """Extra word in word_analysis triggers word_count_mismatch warning."""
+        result = _make_valid_result()
+        # Add an extra word to word_analysis (5 words vs 4 in original)
+        result["word_analysis"].append({
+            "word": "\u0639\u064e\u0644\u0650\u064a\u0645\u064c",
+            "translation": {lang: f"Knowing ({lang})" for lang in VALID_LANGUAGE_KEYS},
+            "pos": "ADJ",
+        })
+        # Fix chunk word_end to match new word count
+        result["chunks"][0]["word_end"] = 5
+        request = _make_request()
+        warnings = review_result(result, request)
+        mismatch = [w for w in warnings if w.category == "word_count_mismatch"]
+        assert len(mismatch) == 1
+        assert "5 words but original has" in mismatch[0].message
+
+    def test_word_text_mismatch_flagged(self):
+        """Wrong word text in word_analysis triggers word_text_mismatch warning."""
+        result = _make_valid_result()
+        # Replace a word with a different one (same count, different text)
+        result["word_analysis"][0]["word"] = "\u0643\u064e\u0628\u0650\u064a\u0631\u064c"  # kabeer (different word)
+        request = _make_request()
+        warnings = review_result(result, request)
+        text_mismatch = [w for w in warnings if w.category == "word_text_mismatch"]
+        assert len(text_mismatch) == 1
+        assert "word_analysis[0]" in text_mismatch[0].field
+
+    def test_matching_words_no_warning(self):
+        """Matching word_analysis produces no word match warnings."""
+        result = _make_valid_result()
+        request = _make_request()
+        warnings = review_result(result, request)
+        word_warnings = [w for w in warnings if w.category in ("word_count_mismatch", "word_text_mismatch")]
+        assert len(word_warnings) == 0
+
+
+# ===================================================================
 # TestChunkedProcessing — 8 tests
 # ===================================================================
 
@@ -331,14 +470,24 @@ class TestChunkedProcessing:
                     "translation": {lang: f"Allah ({lang})" for lang in VALID_LANGUAGE_KEYS},
                     "pos": "N",
                 },
+                {
+                    "word": "\u0627\u0644\u0631\u0651\u064e\u062d\u0652\u0645\u0670\u0646\u0650",
+                    "translation": {lang: f"the Most Merciful ({lang})" for lang in VALID_LANGUAGE_KEYS},
+                    "pos": "ADJ",
+                },
+                {
+                    "word": "\u0627\u0644\u0631\u0651\u064e\u062d\u0650\u064a\u0645\u0650",
+                    "translation": {lang: f"the Most Compassionate ({lang})" for lang in VALID_LANGUAGE_KEYS},
+                    "pos": "ADJ",
+                },
             ],
             "translations": {lang: f"Body text ({lang})" for lang in VALID_LANGUAGE_KEYS},
         }
 
         result = assemble_chunked_result(structure, [chunk_detail])
-        assert len(result["word_analysis"]) == 2
+        assert len(result["word_analysis"]) == 4
         assert result["chunks"][0]["word_start"] == 0
-        assert result["chunks"][0]["word_end"] == 2
+        assert result["chunks"][0]["word_end"] == 4
         errors = validate_result(result)
         assert errors == [], f"Validation errors: {errors}"
 

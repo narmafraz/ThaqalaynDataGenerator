@@ -30,10 +30,11 @@ import json
 import logging
 import os
 import sys
+import xml.etree.ElementTree
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.config import AI_CONTENT_DIR, AI_PIPELINE_DATA_DIR, DEFAULT_DESTINATION_DIR, JSON_ENCODING, JSON_ENSURE_ASCII, JSON_INDENT
+from app.config import AI_CONTENT_DIR, AI_PIPELINE_DATA_DIR, DEFAULT_DESTINATION_DIR, JSON_ENCODING, JSON_ENSURE_ASCII, JSON_INDENT, SOURCE_DATA_DIR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -87,6 +88,14 @@ PIPELINE_VERSION = "2.0.0"
 # VALID_TOPICS is loaded dynamically from topic_taxonomy.json at module init.
 # It is a set of all Level 2 topic keys across all Level 1 categories.
 VALID_TOPICS: set = set()
+
+# QURAN_SURAH_AYAH_COUNTS maps surah number -> max ayah count.
+# Loaded lazily from quran-data.xml at module init. If the XML is missing,
+# ayah-level validation is silently skipped (surah range 1-114 still enforced).
+QURAN_SURAH_AYAH_COUNTS: Dict[int, int] = {}
+
+# Maximum number of generation attempts before quarantining a verse.
+MAX_GENERATION_ATTEMPTS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -201,14 +210,39 @@ def _extract_valid_topics(taxonomy: Optional[dict] = None) -> set:
     return topics
 
 
-def _init_valid_topics() -> None:
-    """Initialize VALID_TOPICS from the taxonomy file at module load time."""
-    global VALID_TOPICS
+def _load_quran_ayah_counts() -> Dict[int, int]:
+    """Parse quran-data.xml and return {surah_number: ayah_count}.
+
+    Returns empty dict if the XML file is missing (validation silently skips
+    ayah-level checks in that case).
+    """
+    xml_path = os.path.join(SOURCE_DATA_DIR, "scraped", "tanzil_net", "quran-data.xml")
+    if not os.path.exists(xml_path):
+        return {}
+    try:
+        tree = xml.etree.ElementTree.parse(xml_path)
+        root = tree.getroot()
+        counts: Dict[int, int] = {}
+        for sura in root.iter("sura"):
+            idx = sura.get("index")
+            ayas = sura.get("ayas")
+            if idx and ayas:
+                counts[int(idx)] = int(ayas)
+        return counts
+    except Exception:
+        logger.warning("Failed to parse quran-data.xml for ayah counts")
+        return {}
+
+
+def _init_module_data() -> None:
+    """Initialize module-level data at import time."""
+    global VALID_TOPICS, QURAN_SURAH_AYAH_COUNTS
     VALID_TOPICS = _extract_valid_topics()
+    QURAN_SURAH_AYAH_COUNTS = _load_quran_ayah_counts()
 
 
-# Initialize VALID_TOPICS at module load
-_init_valid_topics()
+# Initialize module data at load time
+_init_module_data()
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +461,8 @@ def build_user_message(request: PipelineRequest) -> str:
    - "cosmological": Creation narratives, nature of the universe, jinn, angels
 7. "related_quran": (array) [{"ref": "surah:ayah", "relationship": "explicit"|"thematic"}] or []
 8. "isnad_matn": {"isnad_ar": "...", "matn_ar": "...", "has_chain": boolean, "narrators": [...]}
-   Each narrator: {"name_ar": "...", "name_en": "...", "role": "narrator"|"companion"|"imam"|"author", "position": int, "identity_confidence": "definite"|"likely"|"ambiguous", "ambiguity_note": string|null, "known_identity": string|null}
+   Each narrator: {"name_ar": "...", "name_en": "...", "role": "narrator"|"companion"|"imam"|"author", "position": int, "identity_confidence": "definite"|"likely"|"ambiguous", "ambiguity_note": string|null, "known_identity": string|null, "word_ranges": [{"word_start": int, "word_end": int}]}
+   "word_ranges" is optional but recommended — array of {word_start, word_end} marking where this narrator's name appears in word_analysis (half-open indexing, same as chunk word ranges). This enables clickable narrator highlighting in the UI.
 9. "translations": Object with keys en, ur, tr, fa, id, bn, es, fr, de, ru, zh. Each:
    {"text": "...", "summary": "...", "key_terms": {"arabic_term": "explanation"}, "seo_question": "..."}
    SUMMARY GUIDANCE: The "summary" should be 2-3 sentences explaining the verse's meaning and significance. Where relevant, note the historical context — who the audience was, what circumstances prompted this teaching, and how the original audience would have understood the key terms.
@@ -441,7 +476,7 @@ def build_user_message(request: PipelineRequest) -> str:
    - Chunk translations are plain text strings (NOT objects with summary/key_terms/seo_question — those stay at verse level in field #9).
    - All 11 language keys are required in each chunk's translations object.
    - CJK CONVENTION: For Chinese (zh), Japanese, and Korean text, chunk translations must NOT assume space-joining. When concatenating chunk translations to reconstruct full text, Chinese text should be joined with empty string (""), not space (" "). Write Chinese chunk translations so they form coherent text when concatenated directly without spaces.
-11. "topics": (array of 1-3 strings) Level 2 topic keys from the TOPIC TAXONOMY above.
+11. "topics": (array of 1-5 strings) Level 2 topic keys from the TOPIC TAXONOMY above.
    Select the most specific and relevant topics that describe this verse/hadith's subject matter.
    Use ONLY keys listed in the taxonomy. Do not invent new topic keys.
 12. "key_phrases": (array of 0-5 objects) Multi-word Arabic expressions found in this text.
@@ -831,6 +866,15 @@ def validate_result(result: dict) -> List[str]:
                     errors.append(f"invalid quran ref format: {ref}")
                 elif not (1 <= int(parts[0]) <= 114):
                     errors.append(f"invalid surah number: {parts[0]} in ref {ref}")
+                elif QURAN_SURAH_AYAH_COUNTS:
+                    surah_num = int(parts[0])
+                    ayah_num = int(parts[1])
+                    max_ayas = QURAN_SURAH_AYAH_COUNTS.get(surah_num)
+                    if max_ayas and not (1 <= ayah_num <= max_ayas):
+                        errors.append(
+                            f"invalid ayah number: {ayah_num} exceeds max {max_ayas} "
+                            f"for surah {surah_num} in ref {ref}"
+                        )
 
     # --- isnad_matn ---
     if "isnad_matn" in result:
@@ -867,6 +911,25 @@ def validate_result(result: dict) -> List[str]:
                     )
                 if narrator.get("position") != i + 1:
                     errors.append(f"narrator position mismatch: expected {i+1}, got {narrator.get('position')}")
+                # Validate optional word_ranges
+                if "word_ranges" in narrator:
+                    wr = narrator["word_ranges"]
+                    if not isinstance(wr, list):
+                        errors.append(f"narrator[{i}] word_ranges must be array")
+                    else:
+                        word_count = len(result.get("word_analysis", []))
+                        for j, rng in enumerate(wr):
+                            if not isinstance(rng, dict):
+                                errors.append(f"narrator[{i}] word_ranges[{j}] must be object")
+                                continue
+                            ws = rng.get("word_start")
+                            we = rng.get("word_end")
+                            if not isinstance(ws, int) or not isinstance(we, int):
+                                errors.append(f"narrator[{i}] word_ranges[{j}] word_start/word_end must be int")
+                            elif we <= ws:
+                                errors.append(f"narrator[{i}] word_ranges[{j}] word_end ({we}) must be > word_start ({ws})")
+                            elif word_count > 0 and we > word_count:
+                                errors.append(f"narrator[{i}] word_ranges[{j}] word_end ({we}) exceeds word_analysis length ({word_count})")
 
     # --- translations ---
     if "translations" in result:
@@ -966,8 +1029,8 @@ def validate_result(result: dict) -> List[str]:
         if not isinstance(result["topics"], list):
             errors.append(f"topics must be array, got {type(result['topics']).__name__}")
         else:
-            if len(result["topics"]) < 1 or len(result["topics"]) > 3:
-                errors.append(f"topics must have 1-3 items, got {len(result['topics'])}")
+            if len(result["topics"]) < 1 or len(result["topics"]) > 5:
+                errors.append(f"topics must have 1-5 items, got {len(result['topics'])}")
             if VALID_TOPICS:
                 for topic in result["topics"]:
                     if topic not in VALID_TOPICS:
@@ -1012,6 +1075,129 @@ def validate_result(result: dict) -> List[str]:
                         errors.append(f"similar_content_hints[{i}] missing field: {hf}")
 
     return errors
+
+
+def validate_wrapper(wrapper: dict) -> List[str]:
+    """Validate the outer wrapper format of a pipeline response file.
+
+    Checks:
+    - Required fields: verse_path, ai_attribution, result
+    - ai_attribution has required sub-fields
+    - generation_attempts does not exceed MAX_GENERATION_ATTEMPTS
+
+    Args:
+        wrapper: The full response file dict.
+
+    Returns:
+        List of error strings. Empty means valid.
+    """
+    errors: List[str] = []
+
+    if not isinstance(wrapper, dict):
+        return [f"wrapper must be object, got {type(wrapper).__name__}"]
+
+    for field in ("verse_path", "ai_attribution", "result"):
+        if field not in wrapper:
+            errors.append(f"wrapper missing field: {field}")
+
+    attr = wrapper.get("ai_attribution")
+    if isinstance(attr, dict):
+        for af in ("model", "generated_date", "pipeline_version", "generation_method"):
+            if af not in attr:
+                errors.append(f"ai_attribution missing field: {af}")
+
+    attempts = wrapper.get("generation_attempts")
+    if attempts is not None:
+        if not isinstance(attempts, int) or attempts < 1:
+            errors.append(f"generation_attempts must be a positive integer, got {attempts}")
+        elif attempts > MAX_GENERATION_ATTEMPTS:
+            errors.append(
+                f"generation_attempts ({attempts}) exceeds max ({MAX_GENERATION_ATTEMPTS}) — "
+                f"verse should be quarantined"
+            )
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Corpus manifest generation
+# ---------------------------------------------------------------------------
+
+def generate_corpus_manifest(
+    data_dir: Optional[str] = None,
+    book_filter: Optional[str] = None,
+    volume_filter: Optional[int] = None,
+    range_start: Optional[int] = None,
+    range_end: Optional[int] = None,
+) -> dict:
+    """Walk ThaqalaynData/books/ and build a manifest of all verse paths.
+
+    Args:
+        data_dir: Base data directory. Defaults to DEFAULT_DESTINATION_DIR.
+        book_filter: Only include this book (e.g., "al-kafi", "quran").
+        volume_filter: Only include this volume (requires book_filter).
+        range_start: Start index (1-based) for slicing the verse list.
+        range_end: End index (1-based, inclusive) for slicing the verse list.
+
+    Returns:
+        Dict with "total", "verses" (list of {"path", "book"}).
+    """
+    if data_dir is None:
+        data_dir = DEFAULT_DESTINATION_DIR
+
+    books_dir = os.path.join(data_dir, "books")
+    if not os.path.isdir(books_dir):
+        logger.warning("Books directory not found: %s", books_dir)
+        return {"total": 0, "verses": []}
+
+    verses: List[Dict[str, str]] = []
+
+    for root, _dirs, files in os.walk(books_dir):
+        # Skip 'complete' directory and 'index' directory
+        rel = os.path.relpath(root, data_dir).replace("\\", "/")
+        if "/complete" in rel or rel.startswith("books/complete"):
+            continue
+
+        for fname in sorted(files):
+            if not fname.endswith(".json"):
+                continue
+
+            filepath = os.path.join(root, fname)
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue
+
+            content = data.get("data", data)
+            file_verses = content.get("verses", [])
+            if not file_verses:
+                continue
+
+            for v in file_verses:
+                path = v.get("path", "")
+                if not path:
+                    continue
+                book = path.replace("/books/", "").split(":")[0] if path.startswith("/books/") else ""
+
+                # Apply filters
+                if book_filter and book != book_filter:
+                    continue
+                if volume_filter and book_filter:
+                    parts = path.replace("/books/", "").split(":")
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        if int(parts[1]) != volume_filter:
+                            continue
+
+                verses.append({"path": path, "book": book})
+
+    # Apply range filter
+    if range_start is not None or range_end is not None:
+        start = (range_start or 1) - 1  # convert to 0-based
+        end = range_end or len(verses)
+        verses = verses[start:end]
+
+    return {"total": len(verses), "verses": verses}
 
 
 # ---------------------------------------------------------------------------
@@ -1265,6 +1451,32 @@ def main():
         help="Number of verses to estimate for"
     )
 
+    # manifest
+    manifest_parser = subparsers.add_parser(
+        "manifest",
+        help="Generate corpus manifest (list of all verse paths)"
+    )
+    manifest_parser.add_argument(
+        "--data-dir", default=DEFAULT_DESTINATION_DIR,
+        help="ThaqalaynData directory"
+    )
+    manifest_parser.add_argument(
+        "--book", default=None,
+        help="Filter by book (e.g., al-kafi, quran)"
+    )
+    manifest_parser.add_argument(
+        "--volume", type=int, default=None,
+        help="Filter by volume (requires --book)"
+    )
+    manifest_parser.add_argument(
+        "--range", default=None, dest="range_str",
+        help="Slice range (e.g., 1-100)"
+    )
+    manifest_parser.add_argument(
+        "--output", default=os.path.join(AI_PIPELINE_DATA_DIR, "corpus_manifest.json"),
+        help="Output manifest file path"
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -1288,6 +1500,27 @@ def main():
     elif args.command == "estimate":
         cost = estimate_cost(args.verses)
         print(json.dumps(cost, indent=2))
+
+    elif args.command == "manifest":
+        range_start = None
+        range_end = None
+        if args.range_str:
+            parts = args.range_str.split("-")
+            range_start = int(parts[0])
+            range_end = int(parts[1]) if len(parts) > 1 else range_start
+
+        manifest = generate_corpus_manifest(
+            data_dir=args.data_dir,
+            book_filter=args.book,
+            volume_filter=args.volume,
+            range_start=range_start,
+            range_end=range_end,
+        )
+
+        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+        with open(args.output, "w", encoding=JSON_ENCODING) as f:
+            json.dump(manifest, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT)
+        print(f"Manifest: {manifest['total']} verses -> {args.output}")
 
 
 if __name__ == "__main__":

@@ -157,6 +157,8 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
     5. Chunk translation coherence — chunk translations should sum to ~verse length
     6. Missing isnad chunk — has_chain=True should have isnad chunk
     7. Back-reference without chain — Arabic starts with back-ref but has_chain=False
+    9. Word analysis text match — word_analysis words must match original Arabic text
+    10. Narrator word_ranges — verify word_ranges point to correct narrator names
     """
     # Auto-reconstruct stripped format before reviewing
     if "diacritized_text" not in result and "word_analysis" in result:
@@ -361,6 +363,34 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                 ))
             break  # Only check the first matching pattern
 
+    # --- Check 9: word_analysis matches original Arabic text ---
+    if "word_analysis" in result and isinstance(result["word_analysis"], list):
+        reconstructed_words = [w.get("word", "") for w in result["word_analysis"] if isinstance(w, dict)]
+        reconstructed = " ".join(reconstructed_words)
+        reconstructed_clean = _strip_arabic_diacritics(reconstructed).split()
+        original_clean = _strip_arabic_diacritics(arabic_text).split()
+
+        if len(reconstructed_clean) != len(original_clean):
+            warnings.append(ReviewWarning(
+                field="word_analysis",
+                category="word_count_mismatch",
+                severity="high",
+                message=f"word_analysis has {len(reconstructed_clean)} words but original has {len(original_clean)}",
+                suggestion="Regenerate word_analysis to match original text word count.",
+            ))
+        elif reconstructed_clean != original_clean:
+            # Same word count but different content — find first divergence
+            for i, (rw, ow) in enumerate(zip(reconstructed_clean, original_clean)):
+                if rw != ow:
+                    warnings.append(ReviewWarning(
+                        field=f"word_analysis[{i}]",
+                        category="word_text_mismatch",
+                        severity="high",
+                        message=f"word_analysis[{i}] is '{rw}' but original has '{ow}'",
+                        suggestion="Fix the word to match the original Arabic text.",
+                    ))
+                    break
+
     # --- Check 8: key_terms count parity across languages ---
     if isinstance(translations, dict):
         kt_counts = {}
@@ -387,6 +417,58 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                     suggestion=(
                         "Ensure all languages cover the same Arabic terms in key_terms."
                     ),
+                ))
+
+    # --- Check 10: narrator word_ranges match ---
+    word_analysis = result.get("word_analysis", [])
+    if isinstance(isnad_matn, dict) and isinstance(word_analysis, list) and len(word_analysis) > 0:
+        narrators = isnad_matn.get("narrators", [])
+        has_chain = isnad_matn.get("has_chain", False)
+        for ni, narrator in enumerate(narrators):
+            if not isinstance(narrator, dict):
+                continue
+            wr = narrator.get("word_ranges")
+            name_ar = narrator.get("name_ar", "")
+            if wr is not None and isinstance(wr, list):
+                # Verify words at ranges contain the narrator's name
+                name_clean = _strip_arabic_diacritics(name_ar).strip()
+                if name_clean:
+                    for rng in wr:
+                        if not isinstance(rng, dict):
+                            continue
+                        ws = rng.get("word_start", 0)
+                        we = rng.get("word_end", 0)
+                        if ws < 0 or we > len(word_analysis) or we <= ws:
+                            continue
+                        range_words = [
+                            _strip_arabic_diacritics(w.get("word", ""))
+                            for w in word_analysis[ws:we]
+                            if isinstance(w, dict)
+                        ]
+                        range_text = " ".join(range_words)
+                        # Check if name appears in the range text
+                        if name_clean not in range_text:
+                            warnings.append(ReviewWarning(
+                                field=f"isnad_matn.narrators[{ni}].word_ranges",
+                                category="narrator_word_range_mismatch",
+                                severity="medium",
+                                message=(
+                                    f"Narrator '{name_ar}' word_ranges [{ws}:{we}] "
+                                    f"contains '{range_text}' which does not match name"
+                                ),
+                                suggestion="Adjust word_ranges to cover the narrator's name in word_analysis.",
+                            ))
+            elif wr is None and has_chain:
+                # Missing word_ranges for a chained hadith — low severity suggestion
+                warnings.append(ReviewWarning(
+                    field=f"isnad_matn.narrators[{ni}]",
+                    category="missing_narrator_word_ranges",
+                    severity="low",
+                    message=(
+                        f"Narrator '{narrator.get('name_en', '?')}' has no word_ranges "
+                        f"in a chained hadith"
+                    ),
+                    suggestion="Add word_ranges to enable narrator name highlighting in the UI.",
                 ))
 
     return warnings
@@ -457,7 +539,7 @@ You MUST generate:
    - arabic_text (the Arabic segment for this chunk)
    - word_start and word_end (estimated — will be finalized in detail passes)
    - translations: set to empty object {} (will be filled in detail passes)
-8. topics (1-3 Level 2 topic keys from the TOPIC TAXONOMY in the system prompt)
+8. topics (1-5 Level 2 topic keys from the TOPIC TAXONOMY in the system prompt)
 9. key_phrases (0-5 multi-word Arabic expressions with English translations and categories)
 10. similar_content_hints (0-3 thematic hints for finding similar hadiths/verses)
 

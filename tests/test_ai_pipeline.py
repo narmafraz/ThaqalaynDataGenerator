@@ -7,6 +7,8 @@ import tempfile
 from unittest.mock import patch
 
 from app.ai_pipeline import (
+    MAX_GENERATION_ATTEMPTS,
+    QURAN_SURAH_AYAH_COUNTS,
     VALID_CHUNK_TYPES,
     VALID_DIACRITICS_STATUS,
     VALID_CONTENT_TYPES,
@@ -34,6 +36,7 @@ from app.ai_pipeline import (
     strip_redundant_fields,
     validate_directory,
     validate_result,
+    validate_wrapper,
     write_request_jsonl,
 )
 
@@ -402,6 +405,23 @@ class TestValidateResultInvalidEnums:
         errors = validate_result(result)
         assert any("surah number" in e for e in errors)
 
+    def test_invalid_ayah_number(self):
+        """Al-Fatiha has 7 ayat — ayah 8 should fail."""
+        result = _make_valid_result(
+            related_quran=[{"ref": "1:8", "relationship": "thematic"}]
+        )
+        errors = validate_result(result)
+        if QURAN_SURAH_AYAH_COUNTS:
+            assert any("invalid ayah number" in e for e in errors)
+
+    def test_valid_ayah_boundary(self):
+        """Al-Baqarah has 286 ayat — ayah 286 should pass."""
+        result = _make_valid_result(
+            related_quran=[{"ref": "2:286", "relationship": "thematic"}]
+        )
+        errors = validate_result(result)
+        assert not any("invalid ayah number" in e for e in errors)
+
     def test_invalid_quran_ref_format(self):
         result = _make_valid_result(
             related_quran=[{"ref": "abc", "relationship": "thematic"}]
@@ -433,6 +453,33 @@ class TestValidateResultInvalidEnums:
         result["isnad_matn"]["narrators"][0]["position"] = 5
         errors = validate_result(result)
         assert any("position mismatch" in e for e in errors)
+
+    def test_valid_narrator_word_ranges(self):
+        """Valid word_ranges passes validation."""
+        result = _make_valid_result_with_chain()
+        result["isnad_matn"]["narrators"][0]["word_ranges"] = [
+            {"word_start": 0, "word_end": 1}
+        ]
+        errors = validate_result(result)
+        assert not any("word_ranges" in e for e in errors)
+
+    def test_narrator_word_ranges_out_of_bounds(self):
+        """word_end exceeding word_analysis length should fail."""
+        result = _make_valid_result_with_chain()
+        result["isnad_matn"]["narrators"][0]["word_ranges"] = [
+            {"word_start": 0, "word_end": 999}
+        ]
+        errors = validate_result(result)
+        assert any("word_ranges" in e and "exceeds" in e for e in errors)
+
+    def test_narrator_word_ranges_invalid_range(self):
+        """word_end <= word_start should fail."""
+        result = _make_valid_result_with_chain()
+        result["isnad_matn"]["narrators"][0]["word_ranges"] = [
+            {"word_start": 3, "word_end": 2}
+        ]
+        errors = validate_result(result)
+        assert any("word_ranges" in e and "must be >" in e for e in errors)
 
     def test_invalid_language_key(self):
         result = _make_valid_result()
@@ -1011,14 +1058,20 @@ class TestValidateTopics:
         assert any("invalid topic" in e for e in errors)
 
     def test_topics_too_many(self):
-        result = _make_valid_result(topics=["tawhid", "patience", "honesty", "humility"])
+        result = _make_valid_result(topics=["tawhid", "patience", "honesty", "humility", "seeking_knowledge", "prayer_importance"])
         errors = validate_result(result)
-        assert any("1-3 items" in e for e in errors)
+        assert any("1-5 items" in e for e in errors)
+
+    def test_topics_five_is_valid(self):
+        """5 topics should be valid (expanded from 3)."""
+        result = _make_valid_result(topics=["tawhid", "patience", "honesty", "humility", "seeking_knowledge"])
+        errors = validate_result(result)
+        assert not any("1-5 items" in e for e in errors)
 
     def test_topics_empty(self):
         result = _make_valid_result(topics=[])
         errors = validate_result(result)
-        assert any("1-3 items" in e for e in errors)
+        assert any("1-5 items" in e for e in errors)
 
     def test_topics_not_array(self):
         result = _make_valid_result(topics="tawhid")
@@ -1140,6 +1193,60 @@ class TestValidateSimilarContentHints:
         result.pop("similar_content_hints", None)
         errors = validate_result(result)
         assert not any("similar_content_hints" in e for e in errors)
+
+
+# ===================================================================
+# Wrapper validation tests
+# ===================================================================
+
+class TestValidateWrapper:
+    def _make_valid_wrapper(self, **overrides):
+        wrapper = {
+            "verse_path": "/books/al-kafi:1:1:1:1",
+            "ai_attribution": {
+                "model": "claude-opus-4-6-20260205",
+                "generated_date": "2026-02-27",
+                "pipeline_version": "2.0.0",
+                "generation_method": "claude_code_direct",
+            },
+            "generation_attempts": 1,
+            "result": _make_valid_result(),
+        }
+        wrapper.update(overrides)
+        return wrapper
+
+    def test_valid_wrapper_passes(self):
+        errors = validate_wrapper(self._make_valid_wrapper())
+        assert errors == []
+
+    def test_missing_verse_path(self):
+        wrapper = self._make_valid_wrapper()
+        del wrapper["verse_path"]
+        errors = validate_wrapper(wrapper)
+        assert any("verse_path" in e for e in errors)
+
+    def test_missing_ai_attribution_field(self):
+        wrapper = self._make_valid_wrapper()
+        del wrapper["ai_attribution"]["model"]
+        errors = validate_wrapper(wrapper)
+        assert any("model" in e for e in errors)
+
+    def test_generation_attempts_exceeds_max(self):
+        wrapper = self._make_valid_wrapper(generation_attempts=MAX_GENERATION_ATTEMPTS + 1)
+        errors = validate_wrapper(wrapper)
+        assert any("exceeds max" in e for e in errors)
+
+    def test_generation_attempts_at_max_passes(self):
+        wrapper = self._make_valid_wrapper(generation_attempts=MAX_GENERATION_ATTEMPTS)
+        errors = validate_wrapper(wrapper)
+        assert not any("generation_attempts" in e for e in errors)
+
+    def test_wrapper_without_generation_attempts_passes(self):
+        """generation_attempts is optional for backward compatibility."""
+        wrapper = self._make_valid_wrapper()
+        del wrapper["generation_attempts"]
+        errors = validate_wrapper(wrapper)
+        assert not any("generation_attempts" in e for e in errors)
 
 
 # ===================================================================
