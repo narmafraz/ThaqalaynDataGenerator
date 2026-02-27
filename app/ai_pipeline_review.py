@@ -27,6 +27,7 @@ from app.ai_pipeline import (
     PipelineRequest,
     build_system_prompt,
     build_user_message,
+    reconstruct_fields,
     validate_result,
 )
 
@@ -143,6 +144,9 @@ def _strip_arabic_diacritics(text: str) -> str:
 def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]:
     """Run quality checks on a pipeline result beyond schema validation.
 
+    Accepts both full and stripped formats. If stripped (diacritized_text
+    missing but word_analysis present), fields are reconstructed first.
+
     Returns a list of ReviewWarning objects. Empty list means all checks passed.
 
     Checks:
@@ -154,6 +158,10 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
     6. Missing isnad chunk — has_chain=True should have isnad chunk
     7. Back-reference without chain — Arabic starts with back-ref but has_chain=False
     """
+    # Auto-reconstruct stripped format before reviewing
+    if "diacritized_text" not in result and "word_analysis" in result:
+        result = reconstruct_fields(result)
+
     warnings: List[ReviewWarning] = []
 
     arabic_text = request.arabic_text

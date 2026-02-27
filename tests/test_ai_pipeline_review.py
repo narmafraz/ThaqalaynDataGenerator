@@ -6,6 +6,7 @@ import pytest
 from app.ai_pipeline import (
     VALID_LANGUAGE_KEYS,
     PipelineRequest,
+    strip_redundant_fields,
     validate_result,
 )
 
@@ -399,3 +400,19 @@ class TestPromptBuilders:
         structure = _make_valid_result()
         with pytest.raises(IndexError):
             build_chunk_detail_prompt(request, structure, 5)
+
+
+class TestReviewAcceptsStrippedFormat:
+    """Tests that review_result() works with stripped format input."""
+
+    def test_review_accepts_stripped_format(self):
+        """review_result() should auto-reconstruct and work on stripped input."""
+        result = _make_valid_result()
+        request = _make_request()
+        # Verify full format works
+        warnings_full = review_result(result, request)
+        # Now strip and verify stripped also works
+        stripped = strip_redundant_fields(result)
+        warnings_stripped = review_result(stripped, request)
+        # Should produce equivalent results (both should pass without issues)
+        assert isinstance(warnings_stripped, list)

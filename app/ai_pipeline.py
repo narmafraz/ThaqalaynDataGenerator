@@ -621,11 +621,105 @@ def parse_response(response_text: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Schema optimization — strip/reconstruct redundant fields
+# ---------------------------------------------------------------------------
+
+def strip_redundant_fields(result: dict) -> dict:
+    """Remove fields that can be reconstructed from other data.
+
+    Strips 3 categories of duplicate fields to reduce stored file size:
+    - diacritized_text (= ' '.join(word_analysis[].word))
+    - chunks[].arabic_text (= ' '.join(word_analysis[start:end]))
+    - translations[lang].text (= concatenation of chunks[].translations[lang])
+
+    Note: isnad_matn.isnad_ar and matn_ar are NOT stripped because they
+    encode independent information that doesn't always map to chunk types
+    (e.g., chunks may all be "body" type even when has_chain=True).
+
+    Args:
+        result: A validated pipeline result dict (full format).
+
+    Returns:
+        A new dict with redundant fields removed.
+    """
+    result = json.loads(json.dumps(result))  # deep copy
+    result.pop("diacritized_text", None)
+    for chunk in result.get("chunks", []):
+        chunk.pop("arabic_text", None)
+    for lang_obj in result.get("translations", {}).values():
+        if isinstance(lang_obj, dict):
+            lang_obj.pop("text", None)
+    return result
+
+
+def reconstruct_fields(result: dict) -> dict:
+    """Reconstruct stripped fields from canonical data sources.
+
+    Restores fields removed by strip_redundant_fields(). Only adds
+    fields that are missing — if a field already exists, it is left as-is.
+
+    Reconstructs:
+    - diacritized_text from word_analysis[].word
+    - chunks[].arabic_text from word_analysis[word_start:word_end]
+    - translations[lang].text from chunks[].translations[lang]
+    - isnad_matn.isnad_ar/matn_ar from chunk words (fallback only)
+
+    Args:
+        result: A pipeline result dict (stripped or full format).
+
+    Returns:
+        A new dict with all fields present.
+    """
+    result = json.loads(json.dumps(result))  # deep copy
+    words = result.get("word_analysis", [])
+    chunks = result.get("chunks", [])
+
+    # Reconstruct diacritized_text from word_analysis
+    if "diacritized_text" not in result and words:
+        result["diacritized_text"] = " ".join(w["word"] for w in words)
+
+    # Reconstruct chunks[].arabic_text from word_analysis ranges
+    for chunk in chunks:
+        if "arabic_text" not in chunk:
+            ws = chunk.get("word_start", 0)
+            we = chunk.get("word_end", 0)
+            chunk["arabic_text"] = " ".join(w["word"] for w in words[ws:we])
+
+    # Reconstruct translations[lang].text from chunk translations
+    for lang, obj in result.get("translations", {}).items():
+        if isinstance(obj, dict) and "text" not in obj:
+            parts = [c.get("translations", {}).get(lang, "") for c in chunks]
+            joiner = "" if lang == "zh" else " "
+            obj["text"] = joiner.join(parts)
+
+    # Reconstruct isnad_matn.isnad_ar and matn_ar from chunks
+    im = result.get("isnad_matn", {})
+    if isinstance(im, dict):
+        if "isnad_ar" not in im:
+            isnad_chunks = [c for c in chunks if c.get("chunk_type") == "isnad"]
+            im["isnad_ar"] = " ".join(
+                " ".join(w["word"] for w in words[c.get("word_start", 0):c.get("word_end", 0)])
+                for c in isnad_chunks
+            )
+        if "matn_ar" not in im:
+            matn_chunks = [c for c in chunks if c.get("chunk_type") != "isnad"]
+            im["matn_ar"] = " ".join(
+                " ".join(w["word"] for w in words[c.get("word_start", 0):c.get("word_end", 0)])
+                for c in matn_chunks
+            )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
 
 def validate_result(result: dict) -> List[str]:
     """Validate a pipeline output against the schema and enum constraints.
+
+    Accepts both full and stripped formats. If stripped (diacritized_text
+    missing but word_analysis present), fields are reconstructed first.
 
     Args:
         result: Parsed JSON dict from the AI pipeline.
@@ -633,6 +727,10 @@ def validate_result(result: dict) -> List[str]:
     Returns:
         List of error strings. Empty list means validation passed.
     """
+    # Auto-reconstruct stripped format before validating
+    if "diacritized_text" not in result and "word_analysis" in result:
+        result = reconstruct_fields(result)
+
     errors = []
 
     # --- Required top-level fields ---

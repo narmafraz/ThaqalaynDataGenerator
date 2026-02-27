@@ -30,6 +30,8 @@ from app.ai_pipeline import (
     load_sample_verses,
     load_topic_taxonomy,
     parse_response,
+    reconstruct_fields,
+    strip_redundant_fields,
     validate_directory,
     validate_result,
     write_request_jsonl,
@@ -445,10 +447,20 @@ class TestValidateResultInvalidEnums:
 
 class TestValidateResultMissingFields:
     def test_missing_required_field(self):
+        # Remove both diacritized_text AND word_analysis so auto-reconstruct
+        # cannot restore it — tests a genuinely missing required field.
+        result = _make_valid_result()
+        del result["diacritized_text"]
+        del result["word_analysis"]
+        errors = validate_result(result)
+        assert any("missing required field" in e and "diacritized_text" in e for e in errors)
+
+    def test_missing_diacritized_text_auto_reconstructed(self):
+        """Stripped format (diacritized_text removed but word_analysis present) passes."""
         result = _make_valid_result()
         del result["diacritized_text"]
         errors = validate_result(result)
-        assert any("missing required field" in e and "diacritized_text" in e for e in errors)
+        assert not any("diacritized_text" in e for e in errors)
 
     def test_missing_all_languages(self):
         result = _make_valid_result()
@@ -1114,3 +1126,160 @@ class TestValidateSimilarContentHints:
         result.pop("similar_content_hints", None)
         errors = validate_result(result)
         assert not any("similar_content_hints" in e for e in errors)
+
+
+# ===================================================================
+# Strip/reconstruct redundant fields tests
+# ===================================================================
+
+class TestStripRedundantFields:
+    """Tests for strip_redundant_fields() and reconstruct_fields()."""
+
+    def test_strip_removes_expected_keys(self):
+        result = _make_valid_result()
+        stripped = strip_redundant_fields(result)
+        assert "diacritized_text" not in stripped
+        for chunk in stripped["chunks"]:
+            assert "arabic_text" not in chunk
+        for lang, obj in stripped["translations"].items():
+            assert "text" not in obj
+        # isnad_matn.isnad_ar/matn_ar are kept (not reliably reconstructable)
+        assert "isnad_ar" in stripped["isnad_matn"]
+        assert "matn_ar" in stripped["isnad_matn"]
+
+    def test_strip_preserves_essential_data(self):
+        result = _make_valid_result()
+        stripped = strip_redundant_fields(result)
+        # word_analysis, chunks (minus arabic_text), translations (minus text) preserved
+        assert len(stripped["word_analysis"]) == len(result["word_analysis"])
+        assert len(stripped["chunks"]) == len(result["chunks"])
+        assert stripped["chunks"][0]["word_start"] == 0
+        assert stripped["chunks"][0]["word_end"] == 2
+        assert stripped["chunks"][0]["chunk_type"] == "body"
+        assert set(stripped["translations"].keys()) == set(result["translations"].keys())
+        for lang in VALID_LANGUAGE_KEYS:
+            assert "summary" in stripped["translations"][lang]
+            assert "key_terms" in stripped["translations"][lang]
+            assert "seo_question" in stripped["translations"][lang]
+        assert stripped["diacritics_status"] == "validated"
+        assert stripped["tags"] == result["tags"]
+        assert stripped["content_type"] == result["content_type"]
+
+    def test_strip_does_not_mutate_original(self):
+        result = _make_valid_result()
+        original_text = result["diacritized_text"]
+        strip_redundant_fields(result)
+        assert result["diacritized_text"] == original_text
+
+    def test_reconstruct_restores_diacritized_text(self):
+        result = _make_valid_result()
+        stripped = strip_redundant_fields(result)
+        reconstructed = reconstruct_fields(stripped)
+        expected = " ".join(w["word"] for w in result["word_analysis"])
+        assert reconstructed["diacritized_text"] == expected
+
+    def test_reconstruct_restores_chunk_arabic(self):
+        result = _make_valid_result()
+        stripped = strip_redundant_fields(result)
+        reconstructed = reconstruct_fields(stripped)
+        for chunk in reconstructed["chunks"]:
+            assert "arabic_text" in chunk
+            assert isinstance(chunk["arabic_text"], str)
+            assert len(chunk["arabic_text"]) > 0
+
+    def test_reconstruct_restores_translation_text(self):
+        result = _make_valid_result()
+        stripped = strip_redundant_fields(result)
+        reconstructed = reconstruct_fields(stripped)
+        for lang in VALID_LANGUAGE_KEYS:
+            assert "text" in reconstructed["translations"][lang]
+            assert isinstance(reconstructed["translations"][lang]["text"], str)
+
+    def test_reconstruct_restores_isnad_matn_fallback(self):
+        """If isnad_ar/matn_ar are manually removed, reconstruct restores them."""
+        result = _make_valid_result_with_chain()
+        stripped = strip_redundant_fields(result)
+        # Manually remove isnad_ar/matn_ar to test fallback reconstruction
+        del stripped["isnad_matn"]["isnad_ar"]
+        del stripped["isnad_matn"]["matn_ar"]
+        reconstructed = reconstruct_fields(stripped)
+        assert "isnad_ar" in reconstructed["isnad_matn"]
+        assert "matn_ar" in reconstructed["isnad_matn"]
+        # isnad_ar should be reconstructed from isnad-typed chunks
+        assert len(reconstructed["isnad_matn"]["isnad_ar"]) > 0
+        # matn_ar should be reconstructed from non-isnad chunks
+        assert len(reconstructed["isnad_matn"]["matn_ar"]) > 0
+
+    def test_strip_preserves_isnad_matn_fields(self):
+        """strip_redundant_fields() keeps isnad_ar/matn_ar intact."""
+        result = _make_valid_result_with_chain()
+        stripped = strip_redundant_fields(result)
+        assert stripped["isnad_matn"]["isnad_ar"] == result["isnad_matn"]["isnad_ar"]
+        assert stripped["isnad_matn"]["matn_ar"] == result["isnad_matn"]["matn_ar"]
+
+    def test_reconstruct_chinese_no_spaces(self):
+        """Chinese translations should be joined without spaces."""
+        result = _make_valid_result()
+        # Give chunks Chinese text without spaces
+        result["chunks"] = [
+            {
+                "chunk_type": "body",
+                "arabic_text": result["word_analysis"][0]["word"],
+                "word_start": 0,
+                "word_end": 1,
+                "translations": {lang: (f"前半" if lang == "zh" else f"Part1 ({lang})") for lang in VALID_LANGUAGE_KEYS},
+            },
+            {
+                "chunk_type": "body",
+                "arabic_text": result["word_analysis"][1]["word"],
+                "word_start": 1,
+                "word_end": 2,
+                "translations": {lang: (f"后半" if lang == "zh" else f"Part2 ({lang})") for lang in VALID_LANGUAGE_KEYS},
+            },
+        ]
+        stripped = strip_redundant_fields(result)
+        reconstructed = reconstruct_fields(stripped)
+        # Chinese: no space
+        assert reconstructed["translations"]["zh"]["text"] == "前半后半"
+        # English: space-joined
+        assert reconstructed["translations"]["en"]["text"] == "Part1 (en) Part2 (en)"
+
+    def test_strip_reconstruct_roundtrip(self):
+        """Strip then reconstruct should produce a result that validates."""
+        result = _make_valid_result()
+        stripped = strip_redundant_fields(result)
+        reconstructed = reconstruct_fields(stripped)
+        errors = validate_result(reconstructed)
+        assert errors == [], f"Round-trip validation failed: {errors}"
+
+    def test_strip_reconstruct_roundtrip_with_chain(self):
+        """Round-trip works for results with narrator chains."""
+        result = _make_valid_result_with_chain()
+        stripped = strip_redundant_fields(result)
+        reconstructed = reconstruct_fields(stripped)
+        errors = validate_result(reconstructed)
+        assert errors == [], f"Round-trip validation failed: {errors}"
+
+    def test_validate_accepts_stripped_format(self):
+        """validate_result() should auto-reconstruct and pass on stripped input."""
+        result = _make_valid_result()
+        stripped = strip_redundant_fields(result)
+        # stripped is missing diacritized_text, etc. — validate should still pass
+        errors = validate_result(stripped)
+        assert errors == [], f"Stripped format validation failed: {errors}"
+
+    def test_validate_accepts_stripped_format_with_chain(self):
+        result = _make_valid_result_with_chain()
+        stripped = strip_redundant_fields(result)
+        errors = validate_result(stripped)
+        assert errors == [], f"Stripped chain format validation failed: {errors}"
+
+    def test_reconstruct_idempotent_on_full_format(self):
+        """reconstruct_fields on full format should not change anything."""
+        result = _make_valid_result()
+        reconstructed = reconstruct_fields(result)
+        assert reconstructed["diacritized_text"] == result["diacritized_text"]
+        for i, chunk in enumerate(reconstructed["chunks"]):
+            assert chunk["arabic_text"] == result["chunks"][i]["arabic_text"]
+        for lang in VALID_LANGUAGE_KEYS:
+            assert reconstructed["translations"][lang]["text"] == result["translations"][lang]["text"]
