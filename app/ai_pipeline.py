@@ -56,10 +56,11 @@ VALID_TAGS = {
     "dua", "afterlife", "history", "economy", "governance",
 }
 
-VALID_HADITH_TYPES = {
-    "legal_ruling", "ethical_teaching", "dua", "narrative",
+VALID_CONTENT_TYPES = {
+    "legal_ruling", "ethical_teaching", "narrative",
     "prophetic_tradition", "quranic_commentary", "supplication",
-    "creedal", "eschatological", "biographical",
+    "creedal", "eschatological", "biographical", "theological",
+    "exhortation", "cosmological",
 }
 
 VALID_LANGUAGE_KEYS = {"en", "ur", "tr", "fa", "id", "bn", "es", "fr", "de", "ru", "zh"}
@@ -69,6 +70,8 @@ VALID_QURAN_RELATIONSHIPS = {"explicit", "thematic"}
 VALID_NARRATOR_ROLES = {"narrator", "companion", "imam", "author"}
 
 VALID_IDENTITY_CONFIDENCE = {"definite", "likely", "ambiguous"}
+
+VALID_CHUNK_TYPES = {"isnad", "opening", "body", "quran_quote", "closing"}
 
 # Pipeline defaults
 DEFAULT_MODEL = "claude-opus-4-6-20260205"
@@ -249,12 +252,34 @@ def build_user_message(request: PipelineRequest) -> str:
    IMPORTANT: The "word" field must contain the fully diacritized form of the word (with complete tashkeel), matching the corresponding word in "diacritized_text". This is critical because the same consonantal skeleton can represent different words with different meanings (e.g. عَلِمَ "he knew" vs عَلَّمَ "he taught"), and diacritics are needed to distinguish them.
    The "translation" object must have all 11 language keys with context-appropriate translations for the word as used in this specific verse/hadith.
 5. "tags": (array of 2-5 enums) theology|ethics|jurisprudence|worship|quran_commentary|prophetic_tradition|family|social_relations|knowledge|dua|afterlife|history|economy|governance
-6. "hadith_type": (enum) legal_ruling|ethical_teaching|dua|narrative|prophetic_tradition|quranic_commentary|supplication|creedal|eschatological|biographical
+6. "content_type": (enum) legal_ruling|ethical_teaching|narrative|prophetic_tradition|quranic_commentary|supplication|creedal|eschatological|biographical|theological|exhortation|cosmological
+   - "theological": Verses/hadith about God's attributes, names, or nature (e.g. Quran 112:1, Ayat al-Kursi)
+   - "creedal": Core doctrinal statements of faith (shahada, pillars of belief, imamate)
+   - "ethical_teaching": Moral guidance, virtues, vices
+   - "legal_ruling": Jurisprudential rulings (fiqh, halal/haram)
+   - "narrative": Historical accounts, stories of prophets, events
+   - "prophetic_tradition": Sayings/actions attributed to the Prophet
+   - "quranic_commentary": Explanations or commentary on Quran verses
+   - "supplication": Du'a, prayers, invocations
+   - "eschatological": Day of Judgment, afterlife, signs of the end
+   - "biographical": About specific people, their qualities, or lineage
+   - "exhortation": Advice, warnings, encouragement to action (e.g. letters, sermons)
+   - "cosmological": Creation narratives, nature of the universe, jinn, angels
 7. "related_quran": (array) [{"ref": "surah:ayah", "relationship": "explicit"|"thematic"}] or []
 8. "isnad_matn": {"isnad_ar": "...", "matn_ar": "...", "has_chain": boolean, "narrators": [...]}
    Each narrator: {"name_ar": "...", "name_en": "...", "role": "narrator"|"companion"|"imam"|"author", "position": int, "identity_confidence": "definite"|"likely"|"ambiguous", "ambiguity_note": string|null, "known_identity": string|null}
 9. "translations": Object with keys en, ur, tr, fa, id, bn, es, fr, de, ru, zh. Each:
-   {"text": "...", "summary": "...", "key_terms": {"arabic_term": "explanation"}, "seo_question": "..."}""")
+   {"text": "...", "summary": "...", "key_terms": {"arabic_term": "explanation"}, "seo_question": "..."}
+10. "chunks": (array) Paragraph-level segmentation of the text with aligned translations.
+   Each chunk: {"chunk_type": (enum) "isnad"|"opening"|"body"|"quran_quote"|"closing", "arabic_text": "...", "word_start": int, "word_end": int, "translations": {"en": "...", "ur": "...", "tr": "...", "fa": "...", "id": "...", "bn": "...", "es": "...", "fr": "...", "de": "...", "ru": "...", "zh": "..."}}
+   CHUNKING RULES:
+   - Every text MUST have at least 1 chunk. Even a single short sentence is 1 "body" chunk.
+   - Segment at natural boundaries: topic shifts, speaker changes, Quran quotes within hadith, isnad→matn transition, opening formulae (بسم الله, أما بعد), closing supplications.
+   - word_start/word_end use Python half-open indexing: word_analysis[start:end] gives the chunk's words.
+   - Sequential, non-overlapping, complete: first chunk starts at 0, each chunk starts where the prior ended, last chunk ends at len(word_analysis).
+   - Chunk translations are plain text strings (NOT objects with summary/key_terms/seo_question — those stay at verse level in field #9).
+   - All 11 language keys are required in each chunk's translations object.
+   - CJK CONVENTION: For Chinese (zh), Japanese, and Korean text, chunk translations must NOT assume space-joining. When concatenating chunk translations to reconstruct full text, Chinese text should be joined with empty string (""), not space (" "). Write Chinese chunk translations so they form coherent text when concatenated directly without spaces.""")
 
     return "\n".join(parts)
 
@@ -433,8 +458,8 @@ def validate_result(result: dict) -> List[str]:
     # --- Required top-level fields ---
     required_fields = [
         "diacritized_text", "diacritics_status", "diacritics_changes",
-        "word_analysis", "tags", "hadith_type", "related_quran",
-        "isnad_matn", "translations",
+        "word_analysis", "tags", "content_type", "related_quran",
+        "isnad_matn", "translations", "chunks",
     ]
     for field_name in required_fields:
         if field_name not in result:
@@ -494,10 +519,10 @@ def validate_result(result: dict) -> List[str]:
                 if tag not in VALID_TAGS:
                     errors.append(f"invalid tag: {tag}")
 
-    # --- hadith_type ---
-    if "hadith_type" in result:
-        if result["hadith_type"] not in VALID_HADITH_TYPES:
-            errors.append(f"invalid hadith_type: {result['hadith_type']}")
+    # --- content_type ---
+    if "content_type" in result:
+        if result["content_type"] not in VALID_CONTENT_TYPES:
+            errors.append(f"invalid content_type: {result['content_type']}")
 
     # --- related_quran ---
     if "related_quran" in result:
@@ -574,6 +599,61 @@ def validate_result(result: dict) -> List[str]:
                     if tf not in lang_data:
                         errors.append(f"translations.{lang_key} missing field: {tf}")
 
+    # --- chunks ---
+    if "chunks" in result:
+        if not isinstance(result["chunks"], list):
+            errors.append(f"chunks must be array, got {type(result['chunks']).__name__}")
+        elif len(result["chunks"]) == 0:
+            errors.append("chunks must have at least 1 entry")
+        else:
+            word_count = len(result.get("word_analysis", []))
+            chunk_required_fields = ("chunk_type", "arabic_text", "word_start", "word_end", "translations")
+            for i, chunk in enumerate(result["chunks"]):
+                if not isinstance(chunk, dict):
+                    errors.append(f"chunks[{i}] must be object")
+                    continue
+                for cf in chunk_required_fields:
+                    if cf not in chunk:
+                        errors.append(f"chunks[{i}] missing field: {cf}")
+                if chunk.get("chunk_type") not in VALID_CHUNK_TYPES:
+                    errors.append(f"chunks[{i}] invalid chunk_type: {chunk.get('chunk_type')}")
+                ws = chunk.get("word_start")
+                we = chunk.get("word_end")
+                if isinstance(ws, int) and isinstance(we, int):
+                    if we <= ws:
+                        errors.append(f"chunks[{i}] word_end ({we}) must be greater than word_start ({ws})")
+                    if we > word_count:
+                        errors.append(f"chunks[{i}] word_end ({we}) exceeds word_analysis length ({word_count})")
+                # Validate chunk translations
+                if "translations" in chunk:
+                    if not isinstance(chunk["translations"], dict):
+                        errors.append(f"chunks[{i}] translations must be object")
+                    else:
+                        missing_chunk_langs = VALID_LANGUAGE_KEYS - set(chunk["translations"].keys())
+                        if missing_chunk_langs:
+                            errors.append(f"chunks[{i}] translations missing languages: {sorted(missing_chunk_langs)}")
+                        for lang_key, lang_val in chunk["translations"].items():
+                            if lang_key in VALID_LANGUAGE_KEYS and not isinstance(lang_val, str):
+                                errors.append(f"chunks[{i}] translations.{lang_key} must be string, got {type(lang_val).__name__}")
+            # Sequential coverage checks
+            first_chunk = result["chunks"][0]
+            if isinstance(first_chunk.get("word_start"), int) and first_chunk["word_start"] != 0:
+                errors.append(f"chunks[0] word_start must be 0, got {first_chunk['word_start']}")
+            for i in range(1, len(result["chunks"])):
+                prev_end = result["chunks"][i - 1].get("word_end")
+                curr_start = result["chunks"][i].get("word_start")
+                if isinstance(prev_end, int) and isinstance(curr_start, int) and curr_start != prev_end:
+                    errors.append(
+                        f"chunks[{i}] word_start ({curr_start}) must equal "
+                        f"chunks[{i-1}] word_end ({prev_end})"
+                    )
+            last_chunk = result["chunks"][-1]
+            if isinstance(last_chunk.get("word_end"), int) and last_chunk["word_end"] != word_count:
+                errors.append(
+                    f"last chunk word_end ({last_chunk['word_end']}) must equal "
+                    f"word_analysis length ({word_count})"
+                )
+
     return errors
 
 
@@ -604,6 +684,12 @@ def generate_sample_requests(data_dir: Optional[str] = None) -> List[PipelineReq
     logger.info("Generated %d pipeline requests from %d sample paths",
                 len(requests), len(sample_data.get("verses", [])))
     return requests
+
+
+# ===========================================================================
+# BATCH API FUNCTIONS (not currently used — requires Anthropic API key)
+# For current workflow, use Claude Code agents. See .claude/agents/.
+# ===========================================================================
 
 
 def write_request_jsonl(requests: List[PipelineRequest],
@@ -654,6 +740,7 @@ def write_request_jsonl(requests: List[PipelineRequest],
 # Cost estimation
 # ---------------------------------------------------------------------------
 
+# (Also Batch API only — see comment above write_request_jsonl)
 def estimate_cost(num_verses: int = 46857) -> dict:
     """Estimate the total pipeline cost for a given number of verses.
 
@@ -668,7 +755,7 @@ def estimate_cost(num_verses: int = 46857) -> dict:
     # Generation (Opus 4.6 Batch)
     # Updated for 11 languages (en added) + multilingual word translations
     gen_input_per_req = 3150
-    gen_output_per_req = 5200  # was 5640; -440 for removing root + is_proper_noun (deferred to word dict)
+    gen_output_per_req = 5325  # was 5200; +125 for chunks field (field #10)
     gen_total_input = num_verses * gen_input_per_req
     gen_total_output = num_verses * gen_output_per_req
     gen_input_cost = (gen_total_input / 1_000_000) * 2.50

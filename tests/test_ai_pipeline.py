@@ -7,8 +7,9 @@ import tempfile
 from unittest.mock import patch
 
 from app.ai_pipeline import (
+    VALID_CHUNK_TYPES,
     VALID_DIACRITICS_STATUS,
-    VALID_HADITH_TYPES,
+    VALID_CONTENT_TYPES,
     VALID_IDENTITY_CONFIDENCE,
     VALID_LANGUAGE_KEYS,
     VALID_NARRATOR_ROLES,
@@ -54,7 +55,7 @@ def _make_valid_result(**overrides):
             },
         ],
         "tags": ["theology", "worship"],
-        "hadith_type": "creedal",
+        "content_type": "creedal",
         "related_quran": [],
         "isnad_matn": {
             "isnad_ar": "",
@@ -63,6 +64,15 @@ def _make_valid_result(**overrides):
             "narrators": [],
         },
         "translations": {},
+        "chunks": [
+            {
+                "chunk_type": "body",
+                "arabic_text": "بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ",
+                "word_start": 0,
+                "word_end": 2,
+                "translations": {lang: f"Body text ({lang})" for lang in VALID_LANGUAGE_KEYS},
+            },
+        ],
     }
     # Populate all 10 language translations
     for lang in VALID_LANGUAGE_KEYS:
@@ -104,6 +114,22 @@ def _make_valid_result_with_chain(**overrides):
             },
         ],
     }
+    result["chunks"] = [
+        {
+            "chunk_type": "isnad",
+            "arabic_text": "عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ",
+            "word_start": 0,
+            "word_end": 1,
+            "translations": {lang: f"Isnad ({lang})" for lang in VALID_LANGUAGE_KEYS},
+        },
+        {
+            "chunk_type": "body",
+            "arabic_text": "طَلَبُ الْعِلْمِ فَرِيضَةٌ",
+            "word_start": 1,
+            "word_end": 2,
+            "translations": {lang: f"Body ({lang})" for lang in VALID_LANGUAGE_KEYS},
+        },
+    ]
     result.update(overrides)
     return result
 
@@ -265,6 +291,7 @@ class TestBuildUserMessage:
         assert "word_analysis" in msg
         assert "translations" in msg
         assert "isnad_matn" in msg
+        assert "chunks" in msg
 
 
 # ===================================================================
@@ -314,10 +341,10 @@ class TestValidateResultInvalidEnums:
         errors = validate_result(result)
         assert any("invalid tag" in e for e in errors)
 
-    def test_invalid_hadith_type(self):
-        result = _make_valid_result(hadith_type="unknown_type")
+    def test_invalid_content_type(self):
+        result = _make_valid_result(content_type="unknown_type")
         errors = validate_result(result)
-        assert any("hadith_type" in e for e in errors)
+        assert any("content_type" in e for e in errors)
 
     def test_invalid_quran_relationship(self):
         result = _make_valid_result(
@@ -637,7 +664,7 @@ class TestValidateDirectory:
         assert report["failed"] == 0
 
     def test_validate_invalid_files(self, tmp_path):
-        result = _make_valid_result(hadith_type="bad_type")
+        result = _make_valid_result(content_type="bad_type")
         filepath = tmp_path / "bad.json"
         filepath.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 
@@ -665,6 +692,89 @@ class TestValidateDirectory:
 
 
 # ===================================================================
+# Validation tests — chunks
+# ===================================================================
+
+class TestValidateChunks:
+    def test_valid_single_chunk(self):
+        result = _make_valid_result()
+        errors = validate_result(result)
+        assert not any("chunks" in e for e in errors)
+
+    def test_valid_multi_chunk(self):
+        result = _make_valid_result_with_chain()
+        errors = validate_result(result)
+        assert not any("chunks" in e for e in errors)
+
+    def test_missing_chunks_field(self):
+        result = _make_valid_result()
+        del result["chunks"]
+        errors = validate_result(result)
+        assert any("missing required field" in e and "chunks" in e for e in errors)
+
+    def test_empty_chunks_array(self):
+        result = _make_valid_result(chunks=[])
+        errors = validate_result(result)
+        assert any("at least 1 entry" in e for e in errors)
+
+    def test_missing_chunk_field(self):
+        result = _make_valid_result()
+        del result["chunks"][0]["chunk_type"]
+        errors = validate_result(result)
+        assert any("chunks[0] missing field: chunk_type" in e for e in errors)
+
+    def test_invalid_chunk_type(self):
+        result = _make_valid_result()
+        result["chunks"][0]["chunk_type"] = "paragraph"
+        errors = validate_result(result)
+        assert any("invalid chunk_type" in e for e in errors)
+
+    def test_word_start_not_zero(self):
+        result = _make_valid_result()
+        result["chunks"][0]["word_start"] = 1
+        result["chunks"][0]["word_end"] = 2
+        errors = validate_result(result)
+        assert any("word_start must be 0" in e for e in errors)
+
+    def test_word_end_exceeds_word_count(self):
+        result = _make_valid_result()
+        result["chunks"][0]["word_end"] = 99
+        errors = validate_result(result)
+        assert any("exceeds word_analysis length" in e for e in errors)
+
+    def test_word_end_not_greater_than_word_start(self):
+        result = _make_valid_result()
+        result["chunks"][0]["word_start"] = 0
+        result["chunks"][0]["word_end"] = 0
+        errors = validate_result(result)
+        assert any("must be greater than word_start" in e for e in errors)
+
+    def test_non_sequential_chunks(self):
+        result = _make_valid_result_with_chain()
+        result["chunks"][1]["word_start"] = 0  # gap: doesn't continue from chunk[0].word_end
+        errors = validate_result(result)
+        assert any("must equal" in e for e in errors)
+
+    def test_last_chunk_coverage(self):
+        result = _make_valid_result()
+        result["chunks"][0]["word_end"] = 1  # doesn't cover all 2 words
+        errors = validate_result(result)
+        assert any("must equal" in e and "word_analysis length" in e for e in errors)
+
+    def test_missing_chunk_language(self):
+        result = _make_valid_result()
+        del result["chunks"][0]["translations"]["zh"]
+        errors = validate_result(result)
+        assert any("chunks[0] translations missing languages" in e for e in errors)
+
+    def test_chunk_translation_not_string(self):
+        result = _make_valid_result()
+        result["chunks"][0]["translations"]["en"] = {"text": "not a plain string"}
+        errors = validate_result(result)
+        assert any("chunks[0] translations.en must be string" in e for e in errors)
+
+
+# ===================================================================
 # Enum constant completeness tests
 # ===================================================================
 
@@ -677,8 +787,8 @@ class TestEnumConstants:
     def test_valid_tags_complete(self):
         assert len(VALID_TAGS) == 14
 
-    def test_valid_hadith_types_complete(self):
-        assert len(VALID_HADITH_TYPES) == 10
+    def test_valid_content_types_complete(self):
+        assert len(VALID_CONTENT_TYPES) == 12
 
     def test_valid_language_keys_complete(self):
         assert VALID_LANGUAGE_KEYS == {"en", "ur", "tr", "fa", "id", "bn", "es", "fr", "de", "ru", "zh"}
@@ -688,3 +798,6 @@ class TestEnumConstants:
 
     def test_valid_identity_confidence_complete(self):
         assert VALID_IDENTITY_CONFIDENCE == {"definite", "likely", "ambiguous"}
+
+    def test_valid_chunk_types_complete(self):
+        assert VALID_CHUNK_TYPES == {"isnad", "opening", "body", "quran_quote", "closing"}

@@ -1,5 +1,9 @@
 """AI translation pipeline for generating multi-language hadith translations.
 
+NOTE: This module requires Anthropic API key (Batch API).
+Not currently used. For current workflow, use Claude Code agents.
+See .claude/agents/ for the multi-pass agent pipeline.
+
 This module provides infrastructure for batch-translating Islamic scripture
 using the Anthropic Claude API (Haiku model via Batch API for cost efficiency).
 
