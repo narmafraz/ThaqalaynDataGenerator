@@ -758,6 +758,15 @@ def validate_result(result: dict) -> List[str]:
         if not isinstance(result["diacritics_changes"], list):
             errors.append(f"diacritics_changes must be array, got {type(result['diacritics_changes']).__name__}")
 
+    # --- diacritics cross-check: "added"/"validated" should have empty changes ---
+    status = result.get("diacritics_status")
+    changes = result.get("diacritics_changes", [])
+    if status in ("added", "validated") and isinstance(changes, list) and len(changes) > 0:
+        errors.append(
+            f"diacritics_status is '{status}' but diacritics_changes is non-empty "
+            f"({len(changes)} entries) — use 'corrected' or 'completed' instead"
+        )
+
     # --- word_analysis ---
     if "word_analysis" in result:
         if not isinstance(result["word_analysis"], list):
@@ -879,6 +888,23 @@ def validate_result(result: dict) -> List[str]:
                 for tf in ("text", "summary", "key_terms", "seo_question"):
                     if tf not in lang_data:
                         errors.append(f"translations.{lang_key} missing field: {tf}")
+                # Validate key_terms is a dict with Arabic keys
+                kt = lang_data.get("key_terms")
+                if kt is not None:
+                    if not isinstance(kt, dict):
+                        errors.append(
+                            f"translations.{lang_key}.key_terms must be dict, "
+                            f"got {type(kt).__name__}"
+                        )
+                    else:
+                        for kt_key in kt:
+                            if not any(
+                                "\u0600" <= ch <= "\u06FF" for ch in str(kt_key)
+                            ):
+                                errors.append(
+                                    f"translations.{lang_key}.key_terms key "
+                                    f"'{kt_key}' has no Arabic characters"
+                                )
 
     # --- chunks ---
     if "chunks" in result:

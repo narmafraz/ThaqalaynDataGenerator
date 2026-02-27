@@ -1143,6 +1143,83 @@ class TestValidateSimilarContentHints:
 
 
 # ===================================================================
+# key_terms dict validation tests
+# ===================================================================
+
+class TestValidateKeyTerms:
+    def test_key_terms_must_be_dict(self):
+        """key_terms as a list (wrong schema) triggers validation error."""
+        result = _make_valid_result()
+        result["translations"]["en"]["key_terms"] = [
+            {"term": "Allah", "definition": "God"}
+        ]
+        errors = validate_result(result)
+        assert any("key_terms must be dict" in e for e in errors)
+
+    def test_key_terms_keys_must_have_arabic(self):
+        """key_terms with English transliteration keys triggers validation error."""
+        result = _make_valid_result()
+        result["translations"]["en"]["key_terms"] = {
+            "al-ilm": "Knowledge",
+            "tawhid": "Monotheism",
+        }
+        errors = validate_result(result)
+        assert any("has no Arabic characters" in e for e in errors)
+
+    def test_key_terms_valid_dict_passes(self):
+        """key_terms as dict with Arabic keys passes validation."""
+        result = _make_valid_result()
+        # Already has valid key_terms from _make_valid_result
+        errors = validate_result(result)
+        assert not any("key_terms must be dict" in e for e in errors)
+        assert not any("has no Arabic characters" in e for e in errors)
+
+
+# ===================================================================
+# diacritics cross-check tests
+# ===================================================================
+
+class TestValidateDiacriticsCrossCheck:
+    def test_diacritics_status_added_with_changes_is_error(self):
+        """status='added' with non-empty diacritics_changes triggers error."""
+        result = _make_valid_result()
+        result["diacritics_status"] = "added"
+        result["diacritics_changes"] = [
+            {"word": "بسم", "original": "بسم", "corrected": "بِسْمِ"}
+        ]
+        errors = validate_result(result)
+        assert any("diacritics_status is 'added'" in e and "non-empty" in e for e in errors)
+
+    def test_diacritics_status_validated_with_changes_is_error(self):
+        """status='validated' with non-empty diacritics_changes triggers error."""
+        result = _make_valid_result()
+        result["diacritics_status"] = "validated"
+        result["diacritics_changes"] = [
+            {"word": "الله", "original": "الله", "corrected": "اللَّهِ"}
+        ]
+        errors = validate_result(result)
+        assert any("diacritics_status is 'validated'" in e and "non-empty" in e for e in errors)
+
+    def test_diacritics_status_completed_with_changes_is_ok(self):
+        """status='completed' with non-empty changes is valid (no error)."""
+        result = _make_valid_result()
+        result["diacritics_status"] = "completed"
+        result["diacritics_changes"] = [
+            {"word": "بسم", "original": "بسم", "corrected": "بِسْمِ"}
+        ]
+        errors = validate_result(result)
+        assert not any("diacritics_status" in e and "non-empty" in e for e in errors)
+
+    def test_diacritics_status_added_with_empty_changes_is_ok(self):
+        """status='added' with empty diacritics_changes is valid."""
+        result = _make_valid_result()
+        result["diacritics_status"] = "added"
+        result["diacritics_changes"] = []
+        errors = validate_result(result)
+        assert not any("diacritics_status" in e and "non-empty" in e for e in errors)
+
+
+# ===================================================================
 # Strip/reconstruct redundant fields tests
 # ===================================================================
 

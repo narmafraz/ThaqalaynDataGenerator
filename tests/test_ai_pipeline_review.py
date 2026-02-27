@@ -243,6 +243,44 @@ class TestReviewResult:
         backref_warnings = [w for w in warnings if w.category == "back_reference_no_chain"]
         assert len(backref_warnings) == 1
 
+    def test_key_terms_count_disparity_warning(self):
+        """key_terms with >2x count disparity triggers warning."""
+        result = _make_valid_result()
+        # Give English 6 key_terms, everyone else 2
+        result["translations"]["en"]["key_terms"] = {
+            "\u0627\u0644\u0644\u0651\u064e\u0647": "Allah",
+            "\u0627\u0644\u0639\u0650\u0644\u0652\u0645": "Knowledge",
+            "\u0627\u0644\u0625\u064a\u0645\u0627\u0646": "Faith",
+            "\u0627\u0644\u062a\u0642\u0648\u0649": "Piety",
+            "\u0627\u0644\u0639\u0642\u0644": "Intellect",
+            "\u0627\u0644\u0625\u0633\u0644\u0627\u0645": "Islam",
+        }
+        for lang in VALID_LANGUAGE_KEYS:
+            if lang != "en":
+                result["translations"][lang]["key_terms"] = {
+                    "\u0627\u0644\u0644\u0651\u064e\u0647": f"Allah ({lang})",
+                    "\u0627\u0644\u0639\u0650\u0644\u0652\u0645": f"Knowledge ({lang})",
+                }
+        request = _make_request()
+        warnings = review_result(result, request)
+        disparity = [w for w in warnings if w.category == "key_terms_count_disparity"]
+        assert len(disparity) == 1
+        assert "en=6" in disparity[0].message
+
+    def test_key_terms_count_parity_no_warning(self):
+        """Balanced key_terms counts should not trigger warning."""
+        result = _make_valid_result()
+        # All languages have 2 key_terms
+        for lang in VALID_LANGUAGE_KEYS:
+            result["translations"][lang]["key_terms"] = {
+                "\u0627\u0644\u0644\u0651\u064e\u0647": f"Allah ({lang})",
+                "\u0627\u0644\u0639\u0650\u0644\u0652\u0645": f"Knowledge ({lang})",
+            }
+        request = _make_request()
+        warnings = review_result(result, request)
+        disparity = [w for w in warnings if w.category == "key_terms_count_disparity"]
+        assert len(disparity) == 0
+
 
 # ===================================================================
 # TestChunkedProcessing — 8 tests

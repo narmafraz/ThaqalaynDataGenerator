@@ -361,6 +361,34 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                 ))
             break  # Only check the first matching pattern
 
+    # --- Check 8: key_terms count parity across languages ---
+    if isinstance(translations, dict):
+        kt_counts = {}
+        for lang in VALID_LANGUAGE_KEYS:
+            lang_data = translations.get(lang)
+            if isinstance(lang_data, dict):
+                kt = lang_data.get("key_terms")
+                if isinstance(kt, dict):
+                    kt_counts[lang] = len(kt)
+        if kt_counts:
+            min_count = min(kt_counts.values())
+            max_count = max(kt_counts.values())
+            if min_count > 0 and max_count > 2 * min_count:
+                max_lang = max(kt_counts, key=kt_counts.get)
+                min_lang = min(kt_counts, key=kt_counts.get)
+                warnings.append(ReviewWarning(
+                    field="translations.*.key_terms",
+                    category="key_terms_count_disparity",
+                    severity="low",
+                    message=(
+                        f"key_terms count disparity: {max_lang}={max_count} vs "
+                        f"{min_lang}={min_count} (>2x difference)"
+                    ),
+                    suggestion=(
+                        "Ensure all languages cover the same Arabic terms in key_terms."
+                    ),
+                ))
+
     return warnings
 
 

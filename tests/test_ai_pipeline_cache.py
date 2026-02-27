@@ -26,7 +26,9 @@ from app.ai_pipeline_cache import (
     load_chunk_cache,
     load_structure_cache,
     save_chunk_cache,
+    save_chunk_from_file,
     save_structure_cache,
+    save_structure_from_file,
 )
 
 
@@ -396,3 +398,88 @@ class TestGetCachedOrPlan:
         )
         assert structure == original
         assert staleness.is_stale is False
+
+
+# ---------------------------------------------------------------------------
+# save_structure_from_file / save_chunk_from_file tests
+# ---------------------------------------------------------------------------
+
+class TestSaveFromFile:
+    def _make_full_result(self):
+        """Create a full pipeline result with word_analysis and chunk translations."""
+        return {
+            "diacritized_text": "\u0628\u0650\u0633\u0652\u0645\u0650 \u0627\u0644\u0644\u0651\u064e\u0647\u0650",
+            "diacritics_status": "validated",
+            "diacritics_changes": [],
+            "word_analysis": [
+                {"word": "\u0628\u0650\u0633\u0652\u0645\u0650", "translation": {"en": "In the name of"}, "pos": "PREP"},
+                {"word": "\u0627\u0644\u0644\u0651\u064e\u0647\u0650", "translation": {"en": "Allah"}, "pos": "N"},
+            ],
+            "tags": ["theology"],
+            "content_type": "theological",
+            "related_quran": [],
+            "isnad_matn": {"has_chain": False, "isnad_ar": "", "matn_ar": "", "narrators": []},
+            "translations": {
+                "en": {"text": "In the name of Allah", "summary": "s", "key_terms": {}, "seo_question": "?"},
+            },
+            "chunks": [
+                {
+                    "chunk_type": "body",
+                    "arabic_text": "\u0628\u0650\u0633\u0652\u0645\u0650 \u0627\u0644\u0644\u0651\u064e\u0647\u0650",
+                    "word_start": 0,
+                    "word_end": 2,
+                    "translations": {"en": "In the name of Allah"},
+                },
+            ],
+            "topics": ["tawhid_and_theology.divine_attributes"],
+            "key_phrases": [],
+            "similar_content_hints": [],
+        }
+
+    def test_save_structure_from_file(self, tmp_path):
+        """save_structure_from_file creates cache dir and structure.json."""
+        request = _make_request()
+        result = self._make_full_result()
+        cache_path = save_structure_from_file(
+            result, request, model="test-model",
+            glossary=DUMMY_GLOSSARY, base_dir=str(tmp_path),
+        )
+        assert os.path.exists(cache_path)
+        assert os.path.exists(os.path.join(cache_path, "structure.json"))
+        assert os.path.exists(os.path.join(cache_path, "meta.json"))
+
+        # Verify structure content
+        loaded = load_structure_cache(request.verse_path, str(tmp_path))
+        assert loaded is not None
+        assert loaded["word_analysis"] == []  # Structure pass has empty word_analysis
+        assert loaded["topics"] == ["tawhid_and_theology.divine_attributes"]
+        assert loaded["chunks"][0]["translations"] == {}  # Chunk translations cleared
+
+    def test_save_chunk_from_file(self, tmp_path):
+        """save_chunk_from_file extracts correct word slice and translations."""
+        request = _make_request()
+        result = self._make_full_result()
+
+        # Save structure first (needed for meta.json)
+        save_structure_from_file(
+            result, request, model="test-model",
+            glossary=DUMMY_GLOSSARY, base_dir=str(tmp_path),
+        )
+
+        chunk_path = save_chunk_from_file(
+            result, request, chunk_index=0, base_dir=str(tmp_path),
+        )
+        assert os.path.exists(chunk_path)
+
+        loaded = load_chunk_cache(request.verse_path, 0, str(tmp_path))
+        assert loaded is not None
+        assert len(loaded["word_analysis"]) == 2
+        assert loaded["word_analysis"][0]["word"] == "\u0628\u0650\u0633\u0652\u0645\u0650"
+        assert loaded["translations"] == {"en": "In the name of Allah"}
+
+    def test_save_chunk_from_file_out_of_range(self):
+        """save_chunk_from_file raises ValueError for invalid chunk index."""
+        request = _make_request()
+        result = self._make_full_result()
+        with pytest.raises(ValueError, match="out of range"):
+            save_chunk_from_file(result, request, chunk_index=5)

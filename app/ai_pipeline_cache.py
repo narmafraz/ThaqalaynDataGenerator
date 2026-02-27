@@ -380,6 +380,89 @@ def invalidate_chunks(
 # Convenience
 # ---------------------------------------------------------------------------
 
+def save_structure_from_file(
+    result: dict,
+    request: PipelineRequest,
+    model: str = "claude-opus-4-6-20260205",
+    glossary: Optional[dict] = None,
+    base_dir: Optional[str] = None,
+) -> str:
+    """Extract and cache structure pass data from a completed result.
+
+    Builds a structure-pass-shaped dict from a full pipeline result
+    and saves it to the cache. Useful for back-filling the cache from
+    files that were generated before the cache system existed.
+
+    Returns the cache directory path.
+    """
+    structure_data = {
+        "chunks": [
+            {
+                "chunk_type": c.get("chunk_type", "body"),
+                "arabic_text": c.get("arabic_text", ""),
+                "word_start": c.get("word_start", 0),
+                "word_end": c.get("word_end", 0),
+                "translations": {},
+            }
+            for c in result.get("chunks", [])
+        ],
+        "translations": {
+            lang: {k: v for k, v in obj.items() if k != "text"}
+            for lang, obj in result.get("translations", {}).items()
+            if isinstance(obj, dict)
+        },
+        "diacritized_text": result.get("diacritized_text", ""),
+        "diacritics_status": result.get("diacritics_status", ""),
+        "diacritics_changes": result.get("diacritics_changes", []),
+        "word_analysis": [],
+        "isnad_matn": result.get("isnad_matn", {}),
+        "tags": result.get("tags", []),
+        "content_type": result.get("content_type", ""),
+        "related_quran": result.get("related_quran", []),
+        "topics": result.get("topics", []),
+        "key_phrases": result.get("key_phrases", []),
+        "similar_content_hints": result.get("similar_content_hints", []),
+    }
+    return save_structure_cache(
+        request.verse_path, request, structure_data, model,
+        glossary=glossary, base_dir=base_dir,
+    )
+
+
+def save_chunk_from_file(
+    result: dict,
+    request: PipelineRequest,
+    chunk_index: int,
+    base_dir: Optional[str] = None,
+) -> str:
+    """Extract and cache a single chunk's detail data from a completed result.
+
+    Pulls the word_analysis slice and chunk translations for the given
+    chunk index from a full pipeline result and saves to the cache.
+
+    Returns the chunk cache file path.
+
+    Raises:
+        ValueError: If chunk_index is out of range.
+    """
+    chunks = result.get("chunks", [])
+    if chunk_index < 0 or chunk_index >= len(chunks):
+        raise ValueError(
+            f"chunk_index {chunk_index} out of range (0..{len(chunks) - 1})"
+        )
+    chunk = chunks[chunk_index]
+    words = result.get("word_analysis", [])
+    ws = chunk.get("word_start", 0)
+    we = chunk.get("word_end", 0)
+    chunk_data = {
+        "word_analysis": words[ws:we],
+        "translations": chunk.get("translations", {}),
+    }
+    return save_chunk_cache(
+        request.verse_path, chunk_index, chunk_data, base_dir
+    )
+
+
 def get_cached_or_plan(
     request: PipelineRequest,
     glossary: Optional[dict] = None,
