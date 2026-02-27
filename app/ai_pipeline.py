@@ -136,6 +136,18 @@ def load_sample_verses() -> dict:
         return json.load(f)
 
 
+def load_word_dictionary() -> Optional[dict]:
+    """Load the word-level translation dictionary from ai_pipeline_data/word_dictionary.json.
+
+    Returns None if the file does not exist (optional resource).
+    """
+    path = os.path.join(_data_dir(), "word_dictionary.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 # ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
@@ -147,6 +159,24 @@ def _format_glossary_table(glossary: dict) -> str:
         lines.append(
             f"{term['ar']} | {term['en']} | {term.get('ur', '')} | "
             f"{term.get('tr', '')} | {term.get('fa', '')}"
+        )
+    return "\n".join(lines)
+
+
+def _format_word_dictionary(word_dict: dict) -> str:
+    """Format the word dictionary as a compact table for the system prompt."""
+    lines = ["Diacritized | POS | EN | UR | TR | FA | Notes"]
+    for entry in word_dict.get("words", []):
+        lines.append(
+            "{} | {} | {} | {} | {} | {} | {}".format(
+                entry.get("diacritized", ""),
+                entry.get("pos", ""),
+                entry.get("en", ""),
+                entry.get("ur", ""),
+                entry.get("tr", ""),
+                entry.get("fa", ""),
+                entry.get("notes", ""),
+            )
         )
     return "\n".join(lines)
 
@@ -175,12 +205,15 @@ def _format_few_shot_examples(examples_data: dict) -> str:
 
 
 def build_system_prompt(glossary: Optional[dict] = None,
-                        few_shot_examples: Optional[dict] = None) -> str:
+                        few_shot_examples: Optional[dict] = None,
+                        word_dictionary: Optional[dict] = None) -> str:
     """Build the full system prompt per AI_CONTENT_PIPELINE.md Sections 3 + 14.
 
     Args:
         glossary: Loaded glossary dict. If None, loads from file.
         few_shot_examples: Loaded examples dict. If None, loads from file.
+        word_dictionary: Loaded word dictionary dict. If None, loads from file
+            (returns None if file doesn't exist, in which case section is omitted).
 
     Returns:
         Complete system prompt string.
@@ -189,10 +222,22 @@ def build_system_prompt(glossary: Optional[dict] = None,
         glossary = load_glossary()
     if few_shot_examples is None:
         few_shot_examples = load_few_shot_examples()
+    if word_dictionary is None:
+        word_dictionary = load_word_dictionary()
 
     glossary_table = _format_glossary_table(glossary)
     examples_text = _format_few_shot_examples(few_shot_examples)
     num_examples = len(few_shot_examples.get("examples", []))
+
+    word_dict_section = ""
+    if word_dictionary and word_dictionary.get("words"):
+        word_dict_table = _format_word_dictionary(word_dictionary)
+        word_dict_section = f"""
+
+COMMON WORD TRANSLATIONS:
+Use these canonical translations for high-frequency grammatical words in word_analysis.
+Only deviate when context clearly requires a different meaning (see Notes column).
+{word_dict_table}"""
 
     prompt = f"""You are a specialist in Shia Islamic scholarly texts. You are translating and analyzing hadith from the Four Books and other primary Shia sources.
 
@@ -209,7 +254,7 @@ IMPORTANT RULES:
 - Output valid JSON only
 
 GLOSSARY OF ISLAMIC TERMS:
-{glossary_table}
+{glossary_table}{word_dict_section}
 
 EXAMPLES:
 Below are {num_examples} examples showing the expected input and output format.

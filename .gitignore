@@ -140,3 +140,9 @@ node_modules/
 .aider*
 search/*.json
 search/*.zip
+
+# Temp AI pipeline intermediate files
+_*.json
+_*.txt
+_*.py
+!__init__.py

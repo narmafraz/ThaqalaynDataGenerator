@@ -206,6 +206,24 @@ Hadiths with >200 Arabic words use chunked processing (threshold: `CHUNKED_PROCE
 2. **Detail passes** (per chunk, parallelizable): Generates `word_analysis` entries and chunk translations for each chunk.
 3. **Assembly**: `assemble_chunked_result()` concatenates word_analysis, inserts chunk translations, fixes word ranges, and validates.
 
+### Structure Pass Caching (`ai_pipeline_cache.py`)
+
+Intermediate results are cached to avoid redoing expensive work when only translations or word analysis change:
+
+```
+ThaqalaynDataSources/ai-content/samples/cache/{verse_id}/
+  meta.json       — hashes, versions, timestamps for staleness detection
+  structure.json  — structure pass output (chunks, translations, narrator analysis)
+  chunk_N.json    — detail pass output for chunk N
+```
+
+Three staleness layers:
+- **Layer 1** (Arabic text hash): If Arabic text changes, everything is invalidated
+- **Layer 2** (structure schema version): If structural fields change, structure + chunks are invalidated
+- **Layer 3** (pipeline version / glossary hash / language keys): Only chunk details are invalidated
+
+Key functions: `save_structure_cache()`, `save_chunk_cache()`, `check_cache_staleness()`, `get_cached_or_plan()`, `invalidate_cache()`, `invalidate_chunks()`
+
 ### Quality Review Checks (`review_result()`)
 
 Seven automated checks beyond schema validation:

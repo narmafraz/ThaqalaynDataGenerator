@@ -213,6 +213,42 @@ class TestBuildSystemPrompt:
         assert "Shia" in prompt
         assert "Four Books" in prompt
 
+    def test_includes_word_dictionary(self):
+        from app.ai_pipeline import load_word_dictionary
+        word_dict = load_word_dictionary()
+        if word_dict is None:
+            pytest.skip("word_dictionary.json not found")
+        prompt = build_system_prompt(word_dictionary=word_dict)
+        assert "COMMON WORD TRANSLATIONS" in prompt
+        # Should contain some common Arabic particles
+        assert "\u0648\u064e" in prompt  # wa (and)
+        assert "\u0645\u0650\u0646\u0652" in prompt  # min (from)
+        assert "CONJ" in prompt
+        assert "PREP" in prompt
+
+    def test_omits_word_dictionary_when_none(self):
+        prompt = build_system_prompt(word_dictionary=None)
+        # When explicitly None and file doesn't exist, section should be absent
+        # But since the file now exists, it will be loaded. Test with empty dict instead.
+        prompt_empty = build_system_prompt(
+            word_dictionary={"words": []}
+        )
+        assert "COMMON WORD TRANSLATIONS" not in prompt_empty
+
+    def test_word_dictionary_canonical_translations(self):
+        from app.ai_pipeline import load_word_dictionary
+        word_dict = load_word_dictionary()
+        if word_dict is None:
+            pytest.skip("word_dictionary.json not found")
+        words = word_dict.get("words", [])
+        assert len(words) >= 20, "Word dictionary should have at least 20 entries"
+        # Each entry should have all required fields
+        for entry in words:
+            assert "ar" in entry, "Each word must have 'ar' field"
+            assert "diacritized" in entry, "Each word must have 'diacritized' field"
+            assert "pos" in entry, "Each word must have 'pos' field"
+            assert "en" in entry, "Each word must have 'en' field"
+
 
 # ===================================================================
 # User message tests
