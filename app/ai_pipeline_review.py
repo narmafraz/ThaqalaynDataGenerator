@@ -415,11 +415,15 @@ You MUST generate:
 4. related_quran
 5. isnad_matn (full narrator analysis)
 6. translations (verse-level in all 11 languages — full faithful translations, NOT summaries)
+   SUMMARY GUIDANCE: The "summary" should be 2-3 sentences explaining the verse's meaning and significance. Where relevant, note the historical context — who the audience was, what circumstances prompted this teaching, and how the original audience would have understood the key terms.
 7. chunks — define boundaries with:
    - chunk_type (isnad/opening/body/quran_quote/closing)
    - arabic_text (the Arabic segment for this chunk)
    - word_start and word_end (estimated — will be finalized in detail passes)
    - translations: set to empty object {} (will be filled in detail passes)
+8. topics (1-3 Level 2 topic keys from the TOPIC TAXONOMY in the system prompt)
+9. key_phrases (0-5 multi-word Arabic expressions with English translations and categories)
+10. similar_content_hints (0-3 thematic hints for finding similar hadiths/verses)
 
 For word_analysis, output an empty array [].
 
@@ -608,6 +612,9 @@ REVIEW CHECKLIST:
 5. **Narrator accuracy**: Are narrator names, roles, and confidence levels correct?
 6. **Diacritization**: Is the diacritized_text complete and accurate?
 7. **Tags and content_type**: Appropriate classification?
+8. **Topics**: Are the assigned topics from the controlled vocabulary and accurately describe the content?
+9. **Key phrases**: Are extracted phrases genuinely multi-word, meaningful, and not generic narrator formulae?
+10. **Similar content hints**: Are the thematic hints reasonable and not hallucinated specific references?
 
 OUTPUT FORMAT:
 Respond with a JSON object:

@@ -73,11 +73,20 @@ VALID_IDENTITY_CONFIDENCE = {"definite", "likely", "ambiguous"}
 
 VALID_CHUNK_TYPES = {"isnad", "opening", "body", "quran_quote", "closing"}
 
+VALID_PHRASE_CATEGORIES = {
+    "theological_concept", "well_known_saying", "jurisprudential_term",
+    "quranic_echo", "prophetic_formula",
+}
+
 # Pipeline defaults
 DEFAULT_MODEL = "claude-opus-4-6-20260205"
 DEFAULT_TEMPERATURE = 0.5
 DEFAULT_MAX_TOKENS = 16000
-PIPELINE_VERSION = "1.0.0"
+PIPELINE_VERSION = "2.0.0"
+
+# VALID_TOPICS is loaded dynamically from topic_taxonomy.json at module init.
+# It is a set of all Level 2 topic keys across all Level 1 categories.
+VALID_TOPICS: set = set()
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +157,60 @@ def load_word_dictionary() -> Optional[dict]:
         return json.load(f)
 
 
+def load_topic_taxonomy() -> Optional[dict]:
+    """Load the two-level topic taxonomy from ai_pipeline_data/topic_taxonomy.json.
+
+    Returns None if the file does not exist (optional resource).
+    """
+    path = os.path.join(_data_dir(), "topic_taxonomy.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_key_phrases_dictionary() -> Optional[dict]:
+    """Load the key phrases seed dictionary from ai_pipeline_data/key_phrases_dictionary.json.
+
+    Returns None if the file does not exist (optional resource).
+    """
+    path = os.path.join(_data_dir(), "key_phrases_dictionary.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _extract_valid_topics(taxonomy: Optional[dict] = None) -> set:
+    """Extract all valid Level 2 topic keys from the taxonomy.
+
+    Args:
+        taxonomy: Loaded taxonomy dict. If None, loads from file.
+
+    Returns:
+        Set of valid topic key strings.
+    """
+    if taxonomy is None:
+        taxonomy = load_topic_taxonomy()
+    if taxonomy is None:
+        return set()
+    topics = set()
+    for _category_key, category_data in taxonomy.get("taxonomy", {}).items():
+        for topic_key in category_data.get("topics", {}):
+            topics.add(topic_key)
+    return topics
+
+
+def _init_valid_topics() -> None:
+    """Initialize VALID_TOPICS from the taxonomy file at module load time."""
+    global VALID_TOPICS
+    VALID_TOPICS = _extract_valid_topics()
+
+
+# Initialize VALID_TOPICS at module load
+_init_valid_topics()
+
+
 # ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
@@ -204,9 +267,37 @@ def _format_few_shot_examples(examples_data: dict) -> str:
     return "\n".join(parts)
 
 
+def _format_topic_taxonomy(taxonomy: dict) -> str:
+    """Format the topic taxonomy as a compact reference for the system prompt."""
+    lines = ["Level 1 Tag | Level 2 Topic Key | English Label"]
+    for category_key, category_data in taxonomy.get("taxonomy", {}).items():
+        for topic_key, topic_data in category_data.get("topics", {}).items():
+            lines.append(f"{category_key} | {topic_key} | {topic_data.get('en', '')}")
+    return "\n".join(lines)
+
+
+def _format_key_phrases_sample(phrases_dict: dict, max_entries: int = 30) -> str:
+    """Format a sample of key phrases for the system prompt (not the full dictionary)."""
+    phrases = phrases_dict.get("phrases", [])
+    lines = ["Arabic Phrase | English | Category"]
+    for entry in phrases[:max_entries]:
+        lines.append(
+            "{} | {} | {}".format(
+                entry.get("phrase_ar", ""),
+                entry.get("phrase_en", ""),
+                entry.get("category", ""),
+            )
+        )
+    if len(phrases) > max_entries:
+        lines.append(f"... and {len(phrases) - max_entries} more entries")
+    return "\n".join(lines)
+
+
 def build_system_prompt(glossary: Optional[dict] = None,
                         few_shot_examples: Optional[dict] = None,
-                        word_dictionary: Optional[dict] = None) -> str:
+                        word_dictionary: Optional[dict] = None,
+                        topic_taxonomy: Optional[dict] = None,
+                        key_phrases_dict: Optional[dict] = None) -> str:
     """Build the full system prompt per AI_CONTENT_PIPELINE.md Sections 3 + 14.
 
     Args:
@@ -214,6 +305,8 @@ def build_system_prompt(glossary: Optional[dict] = None,
         few_shot_examples: Loaded examples dict. If None, loads from file.
         word_dictionary: Loaded word dictionary dict. If None, loads from file
             (returns None if file doesn't exist, in which case section is omitted).
+        topic_taxonomy: Loaded taxonomy dict. If None, loads from file.
+        key_phrases_dict: Loaded key phrases dict. If None, loads from file.
 
     Returns:
         Complete system prompt string.
@@ -224,6 +317,10 @@ def build_system_prompt(glossary: Optional[dict] = None,
         few_shot_examples = load_few_shot_examples()
     if word_dictionary is None:
         word_dictionary = load_word_dictionary()
+    if topic_taxonomy is None:
+        topic_taxonomy = load_topic_taxonomy()
+    if key_phrases_dict is None:
+        key_phrases_dict = load_key_phrases_dictionary()
 
     glossary_table = _format_glossary_table(glossary)
     examples_text = _format_few_shot_examples(few_shot_examples)
@@ -238,6 +335,24 @@ COMMON WORD TRANSLATIONS:
 Use these canonical translations for high-frequency grammatical words in word_analysis.
 Only deviate when context clearly requires a different meaning (see Notes column).
 {word_dict_table}"""
+
+    taxonomy_section = ""
+    if topic_taxonomy and topic_taxonomy.get("taxonomy"):
+        taxonomy_table = _format_topic_taxonomy(topic_taxonomy)
+        taxonomy_section = f"""
+
+TOPIC TAXONOMY (for field #11 "topics"):
+Assign 1-3 Level 2 topic keys from this controlled vocabulary. Use ONLY the topic keys listed below.
+{taxonomy_table}"""
+
+    phrases_section = ""
+    if key_phrases_dict and key_phrases_dict.get("phrases"):
+        phrases_table = _format_key_phrases_sample(key_phrases_dict)
+        phrases_section = f"""
+
+KEY PHRASES REFERENCE (for field #12 "key_phrases"):
+Below are common Islamic multi-word expressions. When these phrases appear in the text, include them in key_phrases. You may also extract NEW phrases not in this list — the list is a seed, not exhaustive.
+{phrases_table}"""
 
     prompt = f"""You are a specialist in Shia Islamic scholarly texts. You are translating and analyzing hadith from the Four Books and other primary Shia sources.
 
@@ -254,7 +369,7 @@ IMPORTANT RULES:
 - Output valid JSON only
 
 GLOSSARY OF ISLAMIC TERMS:
-{glossary_table}{word_dict_section}
+{glossary_table}{word_dict_section}{taxonomy_section}{phrases_section}
 
 EXAMPLES:
 Below are {num_examples} examples showing the expected input and output format.
@@ -315,6 +430,7 @@ def build_user_message(request: PipelineRequest) -> str:
    Each narrator: {"name_ar": "...", "name_en": "...", "role": "narrator"|"companion"|"imam"|"author", "position": int, "identity_confidence": "definite"|"likely"|"ambiguous", "ambiguity_note": string|null, "known_identity": string|null}
 9. "translations": Object with keys en, ur, tr, fa, id, bn, es, fr, de, ru, zh. Each:
    {"text": "...", "summary": "...", "key_terms": {"arabic_term": "explanation"}, "seo_question": "..."}
+   SUMMARY GUIDANCE: The "summary" should be 2-3 sentences explaining the verse's meaning and significance. Where relevant, note the historical context — who the audience was, what circumstances prompted this teaching, and how the original audience would have understood the key terms.
 10. "chunks": (array) Paragraph-level segmentation of the text with aligned translations.
    Each chunk: {"chunk_type": (enum) "isnad"|"opening"|"body"|"quran_quote"|"closing", "arabic_text": "...", "word_start": int, "word_end": int, "translations": {"en": "...", "ur": "...", "tr": "...", "fa": "...", "id": "...", "bn": "...", "es": "...", "fr": "...", "de": "...", "ru": "...", "zh": "..."}}
    CHUNKING RULES:
@@ -324,7 +440,26 @@ def build_user_message(request: PipelineRequest) -> str:
    - Sequential, non-overlapping, complete: first chunk starts at 0, each chunk starts where the prior ended, last chunk ends at len(word_analysis).
    - Chunk translations are plain text strings (NOT objects with summary/key_terms/seo_question — those stay at verse level in field #9).
    - All 11 language keys are required in each chunk's translations object.
-   - CJK CONVENTION: For Chinese (zh), Japanese, and Korean text, chunk translations must NOT assume space-joining. When concatenating chunk translations to reconstruct full text, Chinese text should be joined with empty string (""), not space (" "). Write Chinese chunk translations so they form coherent text when concatenated directly without spaces.""")
+   - CJK CONVENTION: For Chinese (zh), Japanese, and Korean text, chunk translations must NOT assume space-joining. When concatenating chunk translations to reconstruct full text, Chinese text should be joined with empty string (""), not space (" "). Write Chinese chunk translations so they form coherent text when concatenated directly without spaces.
+11. "topics": (array of 1-3 strings) Level 2 topic keys from the TOPIC TAXONOMY above.
+   Select the most specific and relevant topics that describe this verse/hadith's subject matter.
+   Use ONLY keys listed in the taxonomy. Do not invent new topic keys.
+12. "key_phrases": (array of 0-5 objects) Multi-word Arabic expressions found in this text.
+   Each: {"phrase_ar": "...", "phrase_en": "...", "category": "theological_concept"|"well_known_saying"|"jurisprudential_term"|"quranic_echo"|"prophetic_formula"}
+   EXTRACTION RULES:
+   - Must be multi-word (2+ words). Single words go in key_terms, not here.
+   - NOT generic narrator formulae ("he said", "from him") — those are isnad.
+   - Must be specific enough to be meaningful but common enough to appear in multiple hadiths.
+   - Include phrases from the KEY PHRASES REFERENCE when they appear in the text.
+   - You may extract NEW phrases not in the reference — the reference is a seed, not exhaustive.
+   - Empty array [] is valid if no significant phrases are present.
+13. "similar_content_hints": (array of 0-3 objects) Thematic hints for finding similar hadiths/verses.
+   Each: {"description": "...", "theme": "..."}
+   - "description": Brief description of a similar narration or verse (1-2 sentences).
+   - "theme": Short thematic tag (lowercase_with_underscores) grouping this hint with similar ones across the corpus.
+   - These are UNVERIFIED suggestions based on your knowledge of hadith literature. The post-processing pipeline will verify against the actual corpus.
+   - Do NOT guess specific paths or hadith numbers — just describe the content and assign a theme.
+   - Empty array [] is valid for texts with no obvious parallels.""")
 
     return "\n".join(parts)
 
@@ -699,6 +834,56 @@ def validate_result(result: dict) -> List[str]:
                     f"word_analysis length ({word_count})"
                 )
 
+    # --- topics (optional field, validated if present) ---
+    if "topics" in result:
+        if not isinstance(result["topics"], list):
+            errors.append(f"topics must be array, got {type(result['topics']).__name__}")
+        else:
+            if len(result["topics"]) < 1 or len(result["topics"]) > 3:
+                errors.append(f"topics must have 1-3 items, got {len(result['topics'])}")
+            if VALID_TOPICS:
+                for topic in result["topics"]:
+                    if topic not in VALID_TOPICS:
+                        errors.append(f"invalid topic: {topic}")
+
+    # --- key_phrases (optional field, validated if present) ---
+    if "key_phrases" in result:
+        if not isinstance(result["key_phrases"], list):
+            errors.append(f"key_phrases must be array, got {type(result['key_phrases']).__name__}")
+        else:
+            if len(result["key_phrases"]) > 5:
+                errors.append(f"key_phrases must have 0-5 items, got {len(result['key_phrases'])}")
+            for i, phrase in enumerate(result["key_phrases"]):
+                if not isinstance(phrase, dict):
+                    errors.append(f"key_phrases[{i}] must be object")
+                    continue
+                for pf in ("phrase_ar", "phrase_en", "category"):
+                    if pf not in phrase:
+                        errors.append(f"key_phrases[{i}] missing field: {pf}")
+                if phrase.get("category") not in VALID_PHRASE_CATEGORIES:
+                    errors.append(f"key_phrases[{i}] invalid category: {phrase.get('category')}")
+                # Validate phrase_ar is multi-word (2+ words)
+                phrase_ar = phrase.get("phrase_ar", "")
+                if isinstance(phrase_ar, str) and phrase_ar.strip():
+                    word_count_phrase = len(phrase_ar.strip().split())
+                    if word_count_phrase < 2:
+                        errors.append(f"key_phrases[{i}] phrase_ar must be multi-word (2+ words), got {word_count_phrase}")
+
+    # --- similar_content_hints (optional field, validated if present) ---
+    if "similar_content_hints" in result:
+        if not isinstance(result["similar_content_hints"], list):
+            errors.append(f"similar_content_hints must be array, got {type(result['similar_content_hints']).__name__}")
+        else:
+            if len(result["similar_content_hints"]) > 3:
+                errors.append(f"similar_content_hints must have 0-3 items, got {len(result['similar_content_hints'])}")
+            for i, hint in enumerate(result["similar_content_hints"]):
+                if not isinstance(hint, dict):
+                    errors.append(f"similar_content_hints[{i}] must be object")
+                    continue
+                for hf in ("description", "theme"):
+                    if hf not in hint:
+                        errors.append(f"similar_content_hints[{i}] missing field: {hf}")
+
     return errors
 
 
@@ -755,7 +940,10 @@ def write_request_jsonl(requests: List[PipelineRequest],
 
     glossary = load_glossary()
     few_shot = load_few_shot_examples()
-    system_prompt = build_system_prompt(glossary, few_shot)
+    word_dict = load_word_dictionary()
+    taxonomy = load_topic_taxonomy()
+    phrases = load_key_phrases_dictionary()
+    system_prompt = build_system_prompt(glossary, few_shot, word_dict, taxonomy, phrases)
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 

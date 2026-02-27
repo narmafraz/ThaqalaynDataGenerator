@@ -13,9 +13,11 @@ from app.ai_pipeline import (
     VALID_IDENTITY_CONFIDENCE,
     VALID_LANGUAGE_KEYS,
     VALID_NARRATOR_ROLES,
+    VALID_PHRASE_CATEGORIES,
     VALID_POS_TAGS,
     VALID_QURAN_RELATIONSHIPS,
     VALID_TAGS,
+    VALID_TOPICS,
     PipelineConfig,
     PipelineRequest,
     build_system_prompt,
@@ -24,7 +26,9 @@ from app.ai_pipeline import (
     extract_pipeline_request,
     load_few_shot_examples,
     load_glossary,
+    load_key_phrases_dictionary,
     load_sample_verses,
+    load_topic_taxonomy,
     parse_response,
     validate_directory,
     validate_result,
@@ -837,3 +841,276 @@ class TestEnumConstants:
 
     def test_valid_chunk_types_complete(self):
         assert VALID_CHUNK_TYPES == {"isnad", "opening", "body", "quran_quote", "closing"}
+
+    def test_valid_phrase_categories_complete(self):
+        assert VALID_PHRASE_CATEGORIES == {
+            "theological_concept", "well_known_saying", "jurisprudential_term",
+            "quranic_echo", "prophetic_formula",
+        }
+
+    def test_valid_topics_loaded(self):
+        assert len(VALID_TOPICS) >= 80, f"Expected at least 80 topics, got {len(VALID_TOPICS)}"
+
+
+# ===================================================================
+# Data file loading tests — taxonomy and key phrases
+# ===================================================================
+
+class TestNewDataLoading:
+    def test_load_topic_taxonomy(self):
+        data = load_topic_taxonomy()
+        assert data is not None
+        assert "taxonomy" in data
+        # Should have all 14 Level 1 categories
+        assert len(data["taxonomy"]) == 14
+        for category_key, category_data in data["taxonomy"].items():
+            assert "en" in category_data, f"Category {category_key} missing 'en'"
+            assert "ar" in category_data, f"Category {category_key} missing 'ar'"
+            assert "topics" in category_data, f"Category {category_key} missing 'topics'"
+            assert len(category_data["topics"]) >= 3, f"Category {category_key} has too few topics"
+
+    def test_topic_taxonomy_topic_labels(self):
+        data = load_topic_taxonomy()
+        assert data is not None
+        for category_key, category_data in data["taxonomy"].items():
+            for topic_key, topic_data in category_data["topics"].items():
+                assert "en" in topic_data, f"Topic {topic_key} in {category_key} missing 'en'"
+                assert "ar" in topic_data, f"Topic {topic_key} in {category_key} missing 'ar'"
+
+    def test_valid_topics_matches_taxonomy(self):
+        """VALID_TOPICS should contain exactly the Level 2 keys from the taxonomy."""
+        data = load_topic_taxonomy()
+        assert data is not None
+        expected_topics = set()
+        for category_data in data["taxonomy"].values():
+            for topic_key in category_data.get("topics", {}):
+                expected_topics.add(topic_key)
+        assert VALID_TOPICS == expected_topics
+
+    def test_load_key_phrases_dictionary(self):
+        data = load_key_phrases_dictionary()
+        assert data is not None
+        assert "phrases" in data
+        assert len(data["phrases"]) >= 100, f"Expected at least 100 phrases, got {len(data['phrases'])}"
+
+    def test_key_phrases_have_required_fields(self):
+        data = load_key_phrases_dictionary()
+        assert data is not None
+        for i, phrase in enumerate(data["phrases"]):
+            assert "phrase_ar" in phrase, f"Phrase {i} missing 'phrase_ar'"
+            assert "phrase_en" in phrase, f"Phrase {i} missing 'phrase_en'"
+            assert "category" in phrase, f"Phrase {i} missing 'category'"
+            assert phrase["category"] in VALID_PHRASE_CATEGORIES, \
+                f"Phrase {i} invalid category: {phrase['category']}"
+
+    def test_key_phrases_are_multi_word(self):
+        data = load_key_phrases_dictionary()
+        assert data is not None
+        for i, phrase in enumerate(data["phrases"]):
+            word_count = len(phrase["phrase_ar"].strip().split())
+            assert word_count >= 2, \
+                f"Phrase {i} '{phrase['phrase_ar']}' is not multi-word ({word_count} words)"
+
+
+# ===================================================================
+# System prompt tests — new sections
+# ===================================================================
+
+class TestBuildSystemPromptNewFields:
+    def test_includes_topic_taxonomy(self):
+        prompt = build_system_prompt()
+        assert "TOPIC TAXONOMY" in prompt
+        assert "tawhid" in prompt
+        assert "seeking_knowledge" in prompt
+
+    def test_includes_key_phrases_reference(self):
+        prompt = build_system_prompt()
+        assert "KEY PHRASES REFERENCE" in prompt
+        assert "theological_concept" in prompt
+
+    def test_omits_taxonomy_when_none(self):
+        prompt = build_system_prompt(topic_taxonomy={"taxonomy": {}})
+        assert "TOPIC TAXONOMY" not in prompt
+
+    def test_omits_phrases_when_none(self):
+        prompt = build_system_prompt(key_phrases_dict={"phrases": []})
+        assert "KEY PHRASES REFERENCE" not in prompt
+
+
+# ===================================================================
+# User message tests — new fields
+# ===================================================================
+
+class TestBuildUserMessageNewFields:
+    def test_includes_topics_field(self):
+        req = PipelineRequest(
+            verse_path="/books/al-kafi:1:1:1:1",
+            arabic_text="text",
+        )
+        msg = build_user_message(req)
+        assert '"topics"' in msg
+        assert "Level 2 topic keys" in msg
+
+    def test_includes_key_phrases_field(self):
+        req = PipelineRequest(
+            verse_path="/books/al-kafi:1:1:1:1",
+            arabic_text="text",
+        )
+        msg = build_user_message(req)
+        assert '"key_phrases"' in msg
+        assert "multi-word" in msg.lower()
+
+    def test_includes_similar_content_hints_field(self):
+        req = PipelineRequest(
+            verse_path="/books/al-kafi:1:1:1:1",
+            arabic_text="text",
+        )
+        msg = build_user_message(req)
+        assert '"similar_content_hints"' in msg
+
+
+# ===================================================================
+# Validation tests — topics
+# ===================================================================
+
+class TestValidateTopics:
+    def test_valid_topics_passes(self):
+        result = _make_valid_result(topics=["tawhid", "seeking_knowledge"])
+        errors = validate_result(result)
+        assert not any("topics" in e for e in errors)
+
+    def test_invalid_topic(self):
+        result = _make_valid_result(topics=["tawhid", "made_up_topic"])
+        errors = validate_result(result)
+        assert any("invalid topic" in e for e in errors)
+
+    def test_topics_too_many(self):
+        result = _make_valid_result(topics=["tawhid", "patience", "honesty", "humility"])
+        errors = validate_result(result)
+        assert any("1-3 items" in e for e in errors)
+
+    def test_topics_empty(self):
+        result = _make_valid_result(topics=[])
+        errors = validate_result(result)
+        assert any("1-3 items" in e for e in errors)
+
+    def test_topics_not_array(self):
+        result = _make_valid_result(topics="tawhid")
+        errors = validate_result(result)
+        assert any("topics must be array" in e for e in errors)
+
+    def test_result_without_topics_passes(self):
+        """topics is optional — old results without it should still pass."""
+        result = _make_valid_result()
+        # Remove topics if present
+        result.pop("topics", None)
+        errors = validate_result(result)
+        assert not any("topics" in e for e in errors)
+
+
+# ===================================================================
+# Validation tests — key_phrases
+# ===================================================================
+
+class TestValidateKeyPhrases:
+    def test_valid_key_phrases_passes(self):
+        result = _make_valid_result(key_phrases=[
+            {
+                "phrase_ar": "طَلَبُ الْعِلْمِ فَرِيضَةٌ",
+                "phrase_en": "Seeking knowledge is an obligation",
+                "category": "well_known_saying",
+            }
+        ])
+        errors = validate_result(result)
+        assert not any("key_phrases" in e for e in errors)
+
+    def test_empty_key_phrases_passes(self):
+        result = _make_valid_result(key_phrases=[])
+        errors = validate_result(result)
+        assert not any("key_phrases" in e for e in errors)
+
+    def test_key_phrases_invalid_category(self):
+        result = _make_valid_result(key_phrases=[
+            {
+                "phrase_ar": "طَلَبُ الْعِلْمِ",
+                "phrase_en": "Seeking knowledge",
+                "category": "invented_category",
+            }
+        ])
+        errors = validate_result(result)
+        assert any("invalid category" in e for e in errors)
+
+    def test_key_phrases_missing_field(self):
+        result = _make_valid_result(key_phrases=[
+            {"phrase_ar": "طَلَبُ الْعِلْمِ", "phrase_en": "Seeking knowledge"}
+        ])
+        errors = validate_result(result)
+        assert any("missing field: category" in e for e in errors)
+
+    def test_key_phrases_single_word_rejected(self):
+        result = _make_valid_result(key_phrases=[
+            {
+                "phrase_ar": "التَّوْحِيدُ",
+                "phrase_en": "Monotheism",
+                "category": "theological_concept",
+            }
+        ])
+        errors = validate_result(result)
+        assert any("multi-word" in e for e in errors)
+
+    def test_key_phrases_too_many(self):
+        result = _make_valid_result(key_phrases=[
+            {"phrase_ar": f"عبارة {i} كلمة", "phrase_en": f"Phrase {i}", "category": "well_known_saying"}
+            for i in range(6)
+        ])
+        errors = validate_result(result)
+        assert any("0-5 items" in e for e in errors)
+
+    def test_result_without_key_phrases_passes(self):
+        """key_phrases is optional — old results without it should still pass."""
+        result = _make_valid_result()
+        result.pop("key_phrases", None)
+        errors = validate_result(result)
+        assert not any("key_phrases" in e for e in errors)
+
+
+# ===================================================================
+# Validation tests — similar_content_hints
+# ===================================================================
+
+class TestValidateSimilarContentHints:
+    def test_valid_hints_passes(self):
+        result = _make_valid_result(similar_content_hints=[
+            {
+                "description": "Similar hadith about seeking knowledge in other chapters",
+                "theme": "seeking_knowledge",
+            }
+        ])
+        errors = validate_result(result)
+        assert not any("similar_content_hints" in e for e in errors)
+
+    def test_empty_hints_passes(self):
+        result = _make_valid_result(similar_content_hints=[])
+        errors = validate_result(result)
+        assert not any("similar_content_hints" in e for e in errors)
+
+    def test_hints_missing_field(self):
+        result = _make_valid_result(similar_content_hints=[
+            {"description": "Some hint"}
+        ])
+        errors = validate_result(result)
+        assert any("missing field: theme" in e for e in errors)
+
+    def test_hints_too_many(self):
+        result = _make_valid_result(similar_content_hints=[
+            {"description": f"Hint {i}", "theme": f"theme_{i}"} for i in range(4)
+        ])
+        errors = validate_result(result)
+        assert any("0-3 items" in e for e in errors)
+
+    def test_result_without_hints_passes(self):
+        """similar_content_hints is optional — old results without it should still pass."""
+        result = _make_valid_result()
+        result.pop("similar_content_hints", None)
+        errors = validate_result(result)
+        assert not any("similar_content_hints" in e for e in errors)

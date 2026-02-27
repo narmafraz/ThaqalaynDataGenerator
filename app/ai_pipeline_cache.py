@@ -39,7 +39,7 @@ from app.config import AI_CONTENT_DIR
 # ---------------------------------------------------------------------------
 
 CACHE_FORMAT_VERSION = "1.0.0"
-STRUCTURE_SCHEMA_VERSION = "1.0.0"
+STRUCTURE_SCHEMA_VERSION = "2.0.0"
 
 DEFAULT_CACHE_BASE = os.path.join(AI_CONTENT_DIR, "samples", "cache")
 
