@@ -21,6 +21,9 @@ class ProcessingReport:
 	def __init__(self):
 		self.sequence_errors: List[str] = []
 		self.narrations_without_narrators: int = 0
+		self.ai_verses_merged: int = 0
+		self.ai_verses_available: int = 0
+		self.ai_merge_errors: List[str] = []
 
 	def add_sequence_error(self, msg: str):
 		self.sequence_errors.append(msg)
@@ -32,6 +35,12 @@ class ProcessingReport:
 				logger.info("  %s", err)
 		if self.narrations_without_narrators:
 			logger.info("Narrations without narrators: %d", self.narrations_without_narrators)
+		if self.ai_verses_available:
+			logger.info("AI content: %d/%d verses merged", self.ai_verses_merged, self.ai_verses_available)
+		if self.ai_merge_errors:
+			logger.info("AI merge errors (%d):", len(self.ai_merge_errors))
+			for err in self.ai_merge_errors:
+				logger.info("  %s", err)
 
 
 # Global singleton for backward compatibility during migration.
