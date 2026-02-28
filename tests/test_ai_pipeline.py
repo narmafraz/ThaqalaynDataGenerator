@@ -24,6 +24,7 @@ from app.ai_pipeline import (
     PipelineRequest,
     build_system_prompt,
     build_user_message,
+    compute_remaining,
     estimate_cost,
     extract_pipeline_request,
     load_few_shot_examples,
@@ -31,6 +32,7 @@ from app.ai_pipeline import (
     load_key_phrases_dictionary,
     load_sample_verses,
     load_topic_taxonomy,
+    merge_stats,
     parse_response,
     reconstruct_fields,
     strip_redundant_fields,
@@ -38,6 +40,7 @@ from app.ai_pipeline import (
     validate_result,
     validate_wrapper,
     write_request_jsonl,
+    write_verse_stats,
 )
 
 
@@ -1503,3 +1506,247 @@ class TestStripRedundantFields:
             assert chunk["arabic_text"] == result["chunks"][i]["arabic_text"]
         for lang in VALID_LANGUAGE_KEYS:
             assert reconstructed["translations"][lang]["text"] == result["translations"][lang]["text"]
+
+
+# ===================================================================
+# Tests for per-verse stats infrastructure
+# ===================================================================
+
+
+class TestWriteVerseStats:
+    """Tests for write_verse_stats()."""
+
+    def test_writes_file_to_stats_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats = {"verse_path": "/books/al-kafi:1:1:1:1", "validation_passed": True}
+            path = write_verse_stats("al-kafi_1_1_1_1", stats, stats_dir=tmpdir)
+            assert os.path.isfile(path)
+            assert path.endswith("al-kafi_1_1_1_1.stats.json")
+            with open(path, encoding="utf-8") as f:
+                loaded = json.load(f)
+            assert loaded["verse_id"] == "al-kafi_1_1_1_1"
+            assert loaded["validation_passed"] is True
+            assert "stats_recorded_at" in loaded
+
+    def test_creates_stats_dir_if_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nested_dir = os.path.join(tmpdir, "sub", "stats")
+            write_verse_stats("quran_1_1", {"x": 1}, stats_dir=nested_dir)
+            assert os.path.isdir(nested_dir)
+
+    def test_preserves_existing_verse_id(self):
+        """If stats_dict already has verse_id, write_verse_stats should not overwrite it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats = {"verse_id": "already_set"}
+            path = write_verse_stats("al-kafi_1_1_1_1", stats, stats_dir=tmpdir)
+            with open(path, encoding="utf-8") as f:
+                loaded = json.load(f)
+            # setdefault does NOT overwrite existing keys
+            assert loaded["verse_id"] == "already_set"
+
+    def test_overwrites_existing_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_verse_stats("v1", {"attempt": 1}, stats_dir=tmpdir)
+            write_verse_stats("v1", {"attempt": 2}, stats_dir=tmpdir)
+            path = os.path.join(tmpdir, "v1.stats.json")
+            with open(path, encoding="utf-8") as f:
+                loaded = json.load(f)
+            assert loaded["attempt"] == 2
+
+
+class TestMergeStats:
+    """Tests for merge_stats()."""
+
+    def test_merges_multiple_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats_dir = os.path.join(tmpdir, "stats")
+            output_path = os.path.join(tmpdir, "generation_stats.json")
+
+            write_verse_stats("v1", {"score": 1}, stats_dir=stats_dir)
+            write_verse_stats("v2", {"score": 2}, stats_dir=stats_dir)
+            write_verse_stats("v3", {"score": 3}, stats_dir=stats_dir)
+
+            result = merge_stats(stats_dir=stats_dir, output_path=output_path)
+            assert result["total_hadiths"] == 3
+            assert "v1" in result["stats"]
+            assert "v2" in result["stats"]
+            assert "v3" in result["stats"]
+            assert result["stats"]["v2"]["score"] == 2
+
+            # Verify file was written
+            with open(output_path, encoding="utf-8") as f:
+                on_disk = json.load(f)
+            assert on_disk["total_hadiths"] == 3
+
+    def test_empty_stats_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats_dir = os.path.join(tmpdir, "stats")
+            os.makedirs(stats_dir)
+            output_path = os.path.join(tmpdir, "generation_stats.json")
+
+            result = merge_stats(stats_dir=stats_dir, output_path=output_path)
+            assert result["total_hadiths"] == 0
+            assert result["stats"] == {}
+
+    def test_missing_stats_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats_dir = os.path.join(tmpdir, "nonexistent")
+            output_path = os.path.join(tmpdir, "generation_stats.json")
+
+            result = merge_stats(stats_dir=stats_dir, output_path=output_path)
+            assert result["total_hadiths"] == 0
+
+    def test_skips_non_stats_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats_dir = os.path.join(tmpdir, "stats")
+            os.makedirs(stats_dir)
+            output_path = os.path.join(tmpdir, "generation_stats.json")
+
+            write_verse_stats("v1", {"score": 1}, stats_dir=stats_dir)
+            # Write a non-stats file
+            with open(os.path.join(stats_dir, "readme.txt"), "w") as f:
+                f.write("not stats")
+            with open(os.path.join(stats_dir, "other.json"), "w") as f:
+                json.dump({"x": 1}, f)
+
+            result = merge_stats(stats_dir=stats_dir, output_path=output_path)
+            assert result["total_hadiths"] == 1
+
+    def test_handles_corrupt_stats_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats_dir = os.path.join(tmpdir, "stats")
+            os.makedirs(stats_dir)
+            output_path = os.path.join(tmpdir, "generation_stats.json")
+
+            write_verse_stats("v1", {"score": 1}, stats_dir=stats_dir)
+            # Write a corrupt stats file
+            with open(os.path.join(stats_dir, "bad.stats.json"), "w") as f:
+                f.write("{invalid json")
+
+            result = merge_stats(stats_dir=stats_dir, output_path=output_path)
+            assert result["total_hadiths"] == 1
+
+
+class TestComputeRemaining:
+    """Tests for compute_remaining()."""
+
+    def test_all_remaining_when_no_responses(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.json")
+            responses_dir = os.path.join(tmpdir, "responses")
+            os.makedirs(responses_dir)
+
+            manifest = {
+                "total": 3,
+                "verses": [
+                    {"path": "/books/al-kafi:1:1:1:1", "book": "al-kafi"},
+                    {"path": "/books/al-kafi:1:1:1:2", "book": "al-kafi"},
+                    {"path": "/books/quran:1:1", "book": "quran"},
+                ],
+            }
+            with open(manifest_path, "w") as f:
+                json.dump(manifest, f)
+
+            remaining = compute_remaining(manifest_path=manifest_path, responses_dir=responses_dir)
+            assert len(remaining) == 3
+
+    def test_skips_existing_responses(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.json")
+            responses_dir = os.path.join(tmpdir, "responses")
+            os.makedirs(responses_dir)
+
+            manifest = {
+                "total": 3,
+                "verses": [
+                    {"path": "/books/al-kafi:1:1:1:1", "book": "al-kafi"},
+                    {"path": "/books/al-kafi:1:1:1:2", "book": "al-kafi"},
+                    {"path": "/books/quran:1:1", "book": "quran"},
+                ],
+            }
+            with open(manifest_path, "w") as f:
+                json.dump(manifest, f)
+
+            # Create response for first verse
+            with open(os.path.join(responses_dir, "al-kafi_1_1_1_1.json"), "w") as f:
+                json.dump({"result": {}}, f)
+
+            remaining = compute_remaining(manifest_path=manifest_path, responses_dir=responses_dir)
+            assert len(remaining) == 2
+            paths = [e["path"] for e in remaining]
+            assert "/books/al-kafi:1:1:1:1" not in paths
+            assert "/books/al-kafi:1:1:1:2" in paths
+            assert "/books/quran:1:1" in paths
+
+    def test_empty_when_all_done(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.json")
+            responses_dir = os.path.join(tmpdir, "responses")
+            os.makedirs(responses_dir)
+
+            manifest = {
+                "total": 2,
+                "verses": [
+                    {"path": "/books/al-kafi:1:1:1:1", "book": "al-kafi"},
+                    {"path": "/books/quran:1:1", "book": "quran"},
+                ],
+            }
+            with open(manifest_path, "w") as f:
+                json.dump(manifest, f)
+
+            with open(os.path.join(responses_dir, "al-kafi_1_1_1_1.json"), "w") as f:
+                json.dump({}, f)
+            with open(os.path.join(responses_dir, "quran_1_1.json"), "w") as f:
+                json.dump({}, f)
+
+            remaining = compute_remaining(manifest_path=manifest_path, responses_dir=responses_dir)
+            assert len(remaining) == 0
+
+    def test_missing_manifest_returns_empty(self):
+        remaining = compute_remaining(manifest_path="/nonexistent/manifest.json")
+        assert remaining == []
+
+    def test_missing_responses_dir_returns_all(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.json")
+            manifest = {
+                "total": 2,
+                "verses": [
+                    {"path": "/books/al-kafi:1:1:1:1", "book": "al-kafi"},
+                    {"path": "/books/quran:1:1", "book": "quran"},
+                ],
+            }
+            with open(manifest_path, "w") as f:
+                json.dump(manifest, f)
+
+            remaining = compute_remaining(
+                manifest_path=manifest_path,
+                responses_dir=os.path.join(tmpdir, "nonexistent"),
+            )
+            assert len(remaining) == 2
+
+    def test_sort_by_word_count(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.json")
+            responses_dir = os.path.join(tmpdir, "responses")
+            os.makedirs(responses_dir)
+
+            manifest = {
+                "total": 3,
+                "verses": [
+                    {"path": "/books/quran:1:1", "book": "quran"},
+                    {"path": "/books/al-kafi:1:1:1:1:1", "book": "al-kafi"},
+                    {"path": "/books/al-kafi:1:1:1:1", "book": "al-kafi"},
+                ],
+            }
+            with open(manifest_path, "w") as f:
+                json.dump(manifest, f)
+
+            remaining = compute_remaining(
+                manifest_path=manifest_path,
+                responses_dir=responses_dir,
+                sort_by_word_count=True,
+            )
+            # Should be sorted by book then path length
+            assert remaining[0]["book"] == "al-kafi"
+            assert remaining[-1]["book"] == "quran"

@@ -133,13 +133,28 @@ def _arabic_fraction(text: str) -> float:
 
 
 def _strip_arabic_diacritics(text: str) -> str:
-    """Remove Arabic tashkeel marks and zero-width characters from text for comparison."""
-    diacritics = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0670")
-    # Also strip zero-width characters (ZWNJ U+200C, ZWJ U+200D, ZWSP U+200B)
-    # which appear in Quran source text encoding but are invisible
-    zero_width = set("\u200B\u200C\u200D\uFEFF")
+    """Remove Arabic tashkeel marks, zero-width characters, and normalize letter variants."""
+    diacritics = set(
+        "\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652"  # standard tashkeel
+        "\u0653\u0654\u0655\u0656\u0657\u0658\u0659\u065A\u065B\u065C\u065D\u065E\u065F"  # extended marks
+        "\u0670"  # superscript alef
+    )
+    # Also strip zero-width and directional characters that appear in source text
+    # encoding but are invisible: ZWNJ, ZWJ, ZWSP, BOM, LRM, RLM, ALM
+    zero_width = set("\u200B\u200C\u200D\u200E\u200F\u061C\uFEFF")
     exclude = diacritics | zero_width
-    return "".join(ch for ch in text if ch not in exclude)
+    # Normalize Arabic/Persian letter variants (Quran sources use Persian forms)
+    letter_map = {
+        "\u06A9": "\u0643",  # ک KEHEH (Persian kaf) → ك KAF
+        "\u0649": "\u064A",  # ى ALEF MAKSURA → ي YEH
+        "\u06CC": "\u064A",  # ی FARSI YEH → ي YEH
+    }
+    result = []
+    for ch in text:
+        if ch in exclude:
+            continue
+        result.append(letter_map.get(ch, ch))
+    return "".join(result)
 
 
 # Common Arabic name case-ending variants (nominative/genitive/accusative).
@@ -198,6 +213,7 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
 
     arabic_text = request.arabic_text
     arabic_len = len(arabic_text.strip())
+    chunks = result.get("chunks", [])
 
     # --- Check 1: Translation length ratio ---
     if arabic_len >= 20 and "translations" in result:
@@ -211,6 +227,11 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                 continue
             ratio = len(text) / arabic_len
             bounds = TRANSLATION_RATIO_BOUNDS.get(lang, (0.3, 5.0))
+            # Short Arabic texts (<50 chars) naturally have higher ratios because
+            # translations include context (isnad chain) the matn alone doesn't.
+            # Widen upper bound for short texts.
+            if arabic_len < 50:
+                bounds = (bounds[0], bounds[1] * 2)
             if ratio < bounds[0] or ratio > bounds[1]:
                 severity = "high" if ratio < bounds[0] else "medium"
                 warnings.append(ReviewWarning(
@@ -242,20 +263,22 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                 if not isinstance(word_trans, str) or not word_trans.strip():
                     continue
                 if lang in ("fa", "ur"):
-                    # Farsi/Urdu use Arabic script — check for exact echo
+                    # Farsi/Urdu use Arabic script — proper nouns and common
+                    # Islamic terms are legitimately identical in Arabic script.
+                    # Downgrade to "low" since most echo-backs are correct.
                     stripped_word = _strip_arabic_diacritics(word_ar).strip()
                     stripped_trans = _strip_arabic_diacritics(word_trans).strip()
                     if stripped_word and stripped_trans and stripped_word == stripped_trans:
                         warnings.append(ReviewWarning(
                             field=f"word_analysis[{i}].translation.{lang}",
                             category="arabic_echo",
-                            severity="high",
+                            severity="low",
                             message=(
                                 f"Word translation in {lang} is identical to Arabic word "
-                                f"'{word_ar}' (exact echo-back)"
+                                f"'{word_ar}' (likely correct for proper nouns/terms)"
                             ),
                             suggestion=(
-                                f"Translate '{word_ar}' into {lang} — do not echo the Arabic."
+                                f"Verify '{word_ar}' is a proper noun or shared term in {lang}."
                             ),
                         ))
                 else:
@@ -409,8 +432,15 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
     if "word_analysis" in result and isinstance(result["word_analysis"], list):
         reconstructed_words = [w.get("word", "") for w in result["word_analysis"] if isinstance(w, dict)]
         reconstructed = " ".join(reconstructed_words)
+        # Strip punctuation alongside diacritics for comparison — source text may
+        # include trailing periods or other non-Arabic punctuation (including
+        # Arabic comma U+060C and Arabic semicolon U+061B)
+        _punct = set(".,;:!?()[]{}\"'\u060c\u061b")
         reconstructed_clean = _strip_arabic_diacritics(reconstructed).split()
         original_clean = _strip_arabic_diacritics(arabic_text).split()
+        _punct_str = "".join(_punct)
+        reconstructed_clean = [w.strip(_punct_str) for w in reconstructed_clean if w.strip(_punct_str)]
+        original_clean = [w.strip(_punct_str) for w in original_clean if w.strip(_punct_str)]
 
         if len(reconstructed_clean) != len(original_clean):
             more_words = len(reconstructed_clean) > len(original_clean)

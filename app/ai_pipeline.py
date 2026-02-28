@@ -34,7 +34,7 @@ import xml.etree.ElementTree
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.config import AI_CONTENT_DIR, AI_PIPELINE_DATA_DIR, DEFAULT_DESTINATION_DIR, JSON_ENCODING, JSON_ENSURE_ASCII, JSON_INDENT, SOURCE_DATA_DIR
+from app.config import AI_CONTENT_DIR, AI_CONTENT_SUBDIR, AI_PIPELINE_DATA_DIR, AI_RESPONSES_DIR, DEFAULT_DESTINATION_DIR, JSON_ENCODING, JSON_ENSURE_ASCII, JSON_INDENT, SOURCE_DATA_DIR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -657,6 +657,139 @@ def parse_response(response_text: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# JSON repair — fix common LLM output issues
+# ---------------------------------------------------------------------------
+
+
+def repair_json_text(raw: str) -> str:
+    """Attempt to repair common JSON issues in LLM-generated output.
+
+    Handles:
+    - Unescaped double quotes inside string values (Chinese dialogue markers,
+      German quotation, etc.)
+    - Unescaped newlines/tabs inside strings
+    - Trailing commas before closing brackets
+
+    Args:
+        raw: Raw text that should be JSON but may have syntax errors.
+
+    Returns:
+        Repaired JSON string. Raises ValueError if unrepairable.
+    """
+    # First try parsing as-is
+    try:
+        json.loads(raw)
+        return raw
+    except json.JSONDecodeError:
+        pass
+
+    # Strip markdown fences if present
+    text = raw.strip()
+    if text.startswith("```"):
+        first_nl = text.index("\n") if "\n" in text else 3
+        text = text[first_nl + 1:]
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3].rstrip()
+
+    # Strategy: scan through the text character by character,
+    # tracking whether we're inside a JSON string. When we encounter
+    # a quote inside a string that doesn't look like a JSON delimiter,
+    # escape it.
+    result = []
+    i = 0
+    in_string = False
+    string_start = -1
+
+    while i < len(text):
+        c = text[i]
+
+        if not in_string:
+            result.append(c)
+            if c == '"':
+                in_string = True
+                string_start = i
+        else:
+            if c == '\\' and i + 1 < len(text):
+                # Escape sequence — pass through
+                result.append(c)
+                result.append(text[i + 1])
+                i += 2
+                continue
+            elif c == '"':
+                # Is this the closing JSON quote or an unescaped interior quote?
+                # Look ahead: after a closing JSON quote we expect , : ] } or whitespace
+                j = i + 1
+                while j < len(text) and text[j] in ' \t\r\n':
+                    j += 1
+                next_significant = text[j] if j < len(text) else ''
+
+                if next_significant in ',:]}\n' or j >= len(text):
+                    # Looks like a proper JSON closing quote
+                    result.append(c)
+                    in_string = False
+                else:
+                    # Interior quote — escape it
+                    result.append('\\"')
+            elif c == '\n':
+                result.append('\\n')
+            elif c == '\r':
+                result.append('\\r')
+            elif c == '\t':
+                result.append('\\t')
+            elif ord(c) < 0x20 and c not in '\n\r\t':
+                # Control character — escape it
+                result.append(f'\\u{ord(c):04x}')
+            else:
+                result.append(c)
+        i += 1
+
+    repaired = ''.join(result)
+
+    # Remove trailing commas before ] or }
+    import re
+    repaired = re.sub(r',(\s*[}\]])', r'\1', repaired)
+
+    # Validate
+    try:
+        json.loads(repaired)
+        return repaired
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON repair failed: {e}")
+
+
+def repair_response_file(filepath: str) -> bool:
+    """Attempt to repair a response JSON file in-place.
+
+    Args:
+        filepath: Path to the JSON file to repair.
+
+    Returns:
+        True if the file was repaired (or was already valid), False if unrepairable.
+    """
+    with open(filepath, "r", encoding="utf-8") as f:
+        raw = f.read()
+
+    try:
+        # Already valid?
+        data = json.loads(raw)
+        return True
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        repaired = repair_json_text(raw)
+        data = json.loads(repaired)
+        # Re-serialize with proper encoding
+        with open(filepath, "w", encoding=JSON_ENCODING) as f:
+            json.dump(data, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT)
+        logger.info("Repaired JSON: %s", filepath)
+        return True
+    except (ValueError, json.JSONDecodeError) as e:
+        logger.warning("Could not repair %s: %s", filepath, e)
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Schema optimization — strip/reconstruct redundant fields
 # ---------------------------------------------------------------------------
 
@@ -1218,6 +1351,157 @@ def generate_corpus_manifest(
 
 
 # ---------------------------------------------------------------------------
+# Per-verse stats & corpus progress
+# ---------------------------------------------------------------------------
+
+
+def write_verse_stats(
+    verse_id: str,
+    stats_dict: dict,
+    stats_dir: Optional[str] = None,
+) -> str:
+    """Write stats for a single verse to its own file (race-condition-free).
+
+    Each agent writes to ``stats_dir/{verse_id}.stats.json`` so there is no
+    contention on a shared file when running 10+ parallel agents.
+
+    Args:
+        verse_id: E.g. ``al-kafi_1_1_1_1``.
+        stats_dict: Dict of metrics for this verse (see ai-generate step 8).
+        stats_dir: Directory for per-verse stats files.
+            Defaults to ``ai-content/{subdir}/stats/``.
+
+    Returns:
+        Absolute path of the written stats file.
+    """
+    import time
+
+    if stats_dir is None:
+        stats_dir = os.path.join(AI_CONTENT_DIR, AI_CONTENT_SUBDIR, "stats")
+    os.makedirs(stats_dir, exist_ok=True)
+
+    stats_dict.setdefault("verse_id", verse_id)
+    stats_dict.setdefault("stats_recorded_at", time.strftime("%Y-%m-%dT%H:%M:%S"))
+
+    out_path = os.path.join(stats_dir, f"{verse_id}.stats.json")
+    with open(out_path, "w", encoding=JSON_ENCODING) as f:
+        json.dump(stats_dict, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT)
+
+    return out_path
+
+
+def merge_stats(
+    stats_dir: Optional[str] = None,
+    output_path: Optional[str] = None,
+) -> dict:
+    """Merge all per-verse stats files into a single ``generation_stats.json``.
+
+    This is called by the orchestrator periodically — never by individual
+    generation agents — so there is no write contention.
+
+    Args:
+        stats_dir: Directory containing ``*.stats.json`` files.
+            Defaults to ``ai-content/{subdir}/stats/``.
+        output_path: Where to write the merged file.
+            Defaults to ``ai-content/{subdir}/generation_stats.json``.
+
+    Returns:
+        Merged stats dict with ``total_hadiths``, ``stats``, etc.
+    """
+    import time
+
+    if stats_dir is None:
+        stats_dir = os.path.join(AI_CONTENT_DIR, AI_CONTENT_SUBDIR, "stats")
+    if output_path is None:
+        output_path = os.path.join(
+            AI_CONTENT_DIR, AI_CONTENT_SUBDIR, "generation_stats.json"
+        )
+
+    merged: Dict[str, Any] = {}
+
+    if os.path.isdir(stats_dir):
+        for fname in sorted(os.listdir(stats_dir)):
+            if not fname.endswith(".stats.json"):
+                continue
+            fpath = os.path.join(stats_dir, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    entry = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue
+            vid = entry.get("verse_id", fname.replace(".stats.json", ""))
+            merged[vid] = entry
+
+    result = {
+        "generated_at": time.strftime("%Y-%m-%d"),
+        "last_updated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "total_hadiths": len(merged),
+        "stats": merged,
+    }
+
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    with open(output_path, "w", encoding=JSON_ENCODING) as f:
+        json.dump(result, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT)
+
+    return result
+
+
+def compute_remaining(
+    manifest_path: Optional[str] = None,
+    responses_dir: Optional[str] = None,
+    sort_by_word_count: bool = False,
+) -> List[Dict[str, Any]]:
+    """Compute verse paths that still need generation (resume-safe).
+
+    Diffs the corpus manifest against existing response files on disk.
+
+    Args:
+        manifest_path: Path to ``corpus_manifest.json``.
+            Defaults to ``ai-pipeline-data/corpus_manifest.json``.
+        responses_dir: Directory containing response JSON files.
+            Defaults to ``AI_RESPONSES_DIR`` (``ai-content/{subdir}/responses/``).
+        sort_by_word_count: If True, sort by estimated word count (short first).
+
+    Returns:
+        List of manifest entry dicts (``{"path": ..., "book": ...}``)
+        for verses that do not yet have a response file.
+    """
+    if manifest_path is None:
+        manifest_path = os.path.join(AI_PIPELINE_DATA_DIR, "corpus_manifest.json")
+    if responses_dir is None:
+        responses_dir = AI_RESPONSES_DIR
+
+    if not os.path.isfile(manifest_path):
+        logger.warning("Manifest not found: %s", manifest_path)
+        return []
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    # Build set of existing verse IDs from response filenames
+    existing: set = set()
+    if os.path.isdir(responses_dir):
+        for fname in os.listdir(responses_dir):
+            if fname.endswith(".json"):
+                existing.add(fname[:-5])  # strip .json
+
+    remaining = []
+    for entry in manifest.get("verses", []):
+        path = entry.get("path", "")
+        verse_id = path.replace("/books/", "").replace(":", "_")
+        if verse_id not in existing:
+            remaining.append(entry)
+
+    if sort_by_word_count:
+        # Estimate word count from the path depth as a proxy
+        # (actual word count requires loading verse data, too slow for 40k)
+        # Instead sort by book then path length (shorter paths = shorter texts)
+        remaining.sort(key=lambda e: (e.get("book", ""), len(e.get("path", ""))))
+
+    return remaining
+
+
+# ---------------------------------------------------------------------------
 # Request generation
 # ---------------------------------------------------------------------------
 
@@ -1494,13 +1778,64 @@ def main():
         help="Output manifest file path"
     )
 
+    # repair
+    repair_parser = subparsers.add_parser(
+        "repair",
+        help="Repair malformed JSON in response files"
+    )
+    repair_parser.add_argument(
+        "--dir", default=AI_RESPONSES_DIR,
+        help="Directory containing response JSON files"
+    )
+
+    # merge-stats
+    subparsers.add_parser(
+        "merge-stats",
+        help="Merge per-verse stats files into generation_stats.json"
+    )
+
+    # remaining
+    rem_parser = subparsers.add_parser(
+        "remaining",
+        help="Show remaining verses that need generation"
+    )
+    rem_parser.add_argument(
+        "--sort", action="store_true",
+        help="Sort remaining by estimated complexity (short first)"
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
         parser.print_help()
         sys.exit(1)
 
-    if args.command == "generate-requests":
+    if args.command == "repair":
+        repair_dir = args.dir
+        if not os.path.isdir(repair_dir):
+            print(f"Directory not found: {repair_dir}")
+            sys.exit(1)
+        repaired = 0
+        failed = 0
+        already_valid = 0
+        for fname in sorted(os.listdir(repair_dir)):
+            if not fname.endswith(".json"):
+                continue
+            fpath = os.path.join(repair_dir, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    json.load(f)
+                already_valid += 1
+            except json.JSONDecodeError:
+                if repair_response_file(fpath):
+                    repaired += 1
+                    print(f"  REPAIRED: {fname}")
+                else:
+                    failed += 1
+                    print(f"  FAILED: {fname}")
+        print(f"Already valid: {already_valid}, Repaired: {repaired}, Failed: {failed}")
+
+    elif args.command == "generate-requests":
         requests = generate_sample_requests(data_dir=args.data_dir)
         if not requests:
             logger.error("No requests generated. Check that ThaqalaynData exists.")
@@ -1538,6 +1873,28 @@ def main():
         with open(args.output, "w", encoding=JSON_ENCODING) as f:
             json.dump(manifest, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT)
         print(f"Manifest: {manifest['total']} verses -> {args.output}")
+
+    elif args.command == "merge-stats":
+        result = merge_stats()
+        print(f"Merged {result['total_hadiths']} verse stats -> generation_stats.json")
+
+    elif args.command == "remaining":
+        remaining = compute_remaining(sort_by_word_count=getattr(args, "sort", False))
+        total_manifest = 0
+        manifest_path = os.path.join(AI_PIPELINE_DATA_DIR, "corpus_manifest.json")
+        if os.path.isfile(manifest_path):
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                total_manifest = json.load(f).get("total", 0)
+        done = total_manifest - len(remaining)
+        pct = (done / total_manifest * 100) if total_manifest else 0
+        print(f"{done}/{total_manifest} done ({pct:.1f}%), {len(remaining)} remaining")
+        # Show breakdown by book
+        book_counts: Dict[str, int] = {}
+        for entry in remaining:
+            b = entry.get("book", "unknown")
+            book_counts[b] = book_counts.get(b, 0) + 1
+        for book, count in sorted(book_counts.items(), key=lambda x: -x[1]):
+            print(f"  {book}: {count}")
 
 
 if __name__ == "__main__":
