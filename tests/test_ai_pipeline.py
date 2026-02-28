@@ -429,6 +429,28 @@ class TestValidateResultInvalidEnums:
         errors = validate_result(result)
         assert any("quran ref format" in e for e in errors)
 
+    def test_valid_quran_ref_with_word_ranges(self):
+        """Explicit refs can have optional word_start/word_end."""
+        result = _make_valid_result(
+            related_quran=[{"ref": "96:1", "relationship": "explicit", "word_start": 0, "word_end": 2}]
+        )
+        errors = validate_result(result)
+        assert not any("related_quran word" in e for e in errors)
+
+    def test_invalid_quran_ref_word_end_before_start(self):
+        result = _make_valid_result(
+            related_quran=[{"ref": "96:1", "relationship": "explicit", "word_start": 2, "word_end": 1}]
+        )
+        errors = validate_result(result)
+        assert any("word_end <= word_start" in e for e in errors)
+
+    def test_invalid_quran_ref_word_exceeds_analysis(self):
+        result = _make_valid_result(
+            related_quran=[{"ref": "96:1", "relationship": "explicit", "word_start": 0, "word_end": 999}]
+        )
+        errors = validate_result(result)
+        assert any("exceeds word_analysis length" in e for e in errors)
+
     def test_invalid_narrator_role(self):
         result = _make_valid_result_with_chain()
         result["isnad_matn"]["narrators"][0]["role"] = "teacher"

@@ -425,7 +425,12 @@ def merge_ai_content(report=None):
     # Step 5: Update translations index
     update_translations_index(dest_dir)
 
-    # Step 6: Report
+    # Step 6: Build AI indexes (topics + phrases)
+    from app.build_ai_indexes import build_topics_index, build_phrases_index
+    build_topics_index(dest_dir)
+    build_phrases_index(dest_dir)
+
+    # Step 7: Report
     logger.info(
         "AI content merge complete: %d verses merged (%d available, %d errors)",
         total_merged,

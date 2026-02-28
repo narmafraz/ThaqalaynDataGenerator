@@ -459,7 +459,8 @@ def build_user_message(request: PipelineRequest) -> str:
    - "biographical": About specific people, their qualities, or lineage
    - "exhortation": Advice, warnings, encouragement to action (e.g. letters, sermons)
    - "cosmological": Creation narratives, nature of the universe, jinn, angels
-7. "related_quran": (array) [{"ref": "surah:ayah", "relationship": "explicit"|"thematic"}] or []
+7. "related_quran": (array) [{"ref": "surah:ayah", "relationship": "explicit"|"thematic", "word_start": int (optional), "word_end": int (optional)}] or []
+   For "explicit" references where the Quran verse is mentioned or cited in the text, include optional "word_start" and "word_end" (half-open indexing into word_analysis) marking where the reference/citation appears. This enables UI highlighting of Quran references. Omit for "thematic" references.
 8. "isnad_matn": {"isnad_ar": "...", "matn_ar": "...", "has_chain": boolean, "narrators": [...]}
    Each narrator: {"name_ar": "...", "name_en": "...", "role": "narrator"|"companion"|"imam"|"author", "position": int, "identity_confidence": "definite"|"likely"|"ambiguous", "ambiguity_note": string|null, "known_identity": string|null, "word_ranges": [{"word_start": int, "word_end": int}]}
    "word_ranges" is optional but recommended — array of {word_start, word_end} marking where this narrator's name appears in word_analysis (half-open indexing, same as chunk word ranges). This enables clickable narrator highlighting in the UI.
@@ -875,6 +876,22 @@ def validate_result(result: dict) -> List[str]:
                             f"invalid ayah number: {ayah_num} exceeds max {max_ayas} "
                             f"for surah {surah_num} in ref {ref}"
                         )
+                # Validate optional word_start/word_end for explicit refs
+                if "word_start" in ref_obj or "word_end" in ref_obj:
+                    ws = ref_obj.get("word_start")
+                    we = ref_obj.get("word_end")
+                    if ws is not None and not isinstance(ws, int):
+                        errors.append(f"related_quran word_start must be int for ref {ref}")
+                    if we is not None and not isinstance(we, int):
+                        errors.append(f"related_quran word_end must be int for ref {ref}")
+                    if isinstance(ws, int) and isinstance(we, int):
+                        if ws < 0:
+                            errors.append(f"related_quran word_start < 0 for ref {ref}")
+                        if we <= ws:
+                            errors.append(f"related_quran word_end <= word_start for ref {ref}")
+                        word_count = len(result.get("word_analysis", []))
+                        if word_count and we > word_count:
+                            errors.append(f"related_quran word_end {we} exceeds word_analysis length {word_count} for ref {ref}")
 
     # --- isnad_matn ---
     if "isnad_matn" in result:

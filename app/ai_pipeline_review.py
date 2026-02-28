@@ -72,11 +72,12 @@ TRANSLATION_RATIO_BOUNDS: Dict[str, Tuple[float, float]] = {
 }
 
 # Required diacritical characters per European language.
+# At least one of these must appear in the translation text.
 EUROPEAN_DIACRITICS: Dict[str, str] = {
-    "tr": "\u00f6\u00fc\u015f\u00e7\u011f\u0131",   # oushcgi with diacritics
-    "fr": "\u00e9\u00e8\u00ea\u00e0\u00e7",           # eeeac with diacritics
-    "de": "\u00e4\u00f6\u00fc\u00df",                  # aoub with diacritics
-    "es": "\u00f1\u00e1\u00e9\u00ed\u00f3\u00fa",     # naeiou with diacritics
+    "tr": "\u00f6\u00fc\u015f\u00e7\u011f\u0131\u0130\u015e\u00c7\u011e\u00d6\u00dc",
+    "fr": "\u00e9\u00e8\u00ea\u00e0\u00e7\u00e2\u00ee\u00f4\u00f9\u00fb\u00eb\u00ef\u0153\u00c9",
+    "de": "\u00e4\u00f6\u00fc\u00df\u00c4\u00d6\u00dc",
+    "es": "\u00f1\u00e1\u00e9\u00ed\u00f3\u00fa\u00bf\u00a1\u00c1\u00c9\u00cd\u00d3\u00da\u00d1",
 }
 
 # Minimum text length before diacritics check applies.
@@ -132,9 +133,38 @@ def _arabic_fraction(text: str) -> float:
 
 
 def _strip_arabic_diacritics(text: str) -> str:
-    """Remove Arabic tashkeel marks from text for comparison."""
+    """Remove Arabic tashkeel marks and zero-width characters from text for comparison."""
     diacritics = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0670")
-    return "".join(ch for ch in text if ch not in diacritics)
+    # Also strip zero-width characters (ZWNJ U+200C, ZWJ U+200D, ZWSP U+200B)
+    # which appear in Quran source text encoding but are invisible
+    zero_width = set("\u200B\u200C\u200D\uFEFF")
+    exclude = diacritics | zero_width
+    return "".join(ch for ch in text if ch not in exclude)
+
+
+# Common Arabic name case-ending variants (nominative/genitive/accusative).
+_ARABIC_NAME_NORMALIZATIONS = {
+    "\u0627\u0628\u064a": "\u0627\u0628\u0648",       # ابي → ابو (Abu)
+    "\u0627\u0628\u0627": "\u0627\u0628\u0648",       # ابا → ابو (Abu)
+    "\u0644\u0627\u0628\u064a": "\u0627\u0628\u0648",  # لابي → ابو (li-Abi → Abu)
+}
+
+
+def _normalize_arabic_name(text: str) -> str:
+    """Normalize Arabic name case endings for comparison.
+
+    Handles grammatical case variation (e.g., أبو/أبي/أبا are the same
+    name in nominative/genitive/accusative) and common prefixes.
+    Input should already have diacritics stripped.
+    """
+    words = text.split()
+    normalized = []
+    for w in words:
+        # Skip parenthetical markers
+        if w in ("(", ")", "[", "]"):
+            continue
+        normalized.append(_ARABIC_NAME_NORMALIZATIONS.get(w, w))
+    return " ".join(normalized)
 
 
 # ---------------------------------------------------------------------------
@@ -246,12 +276,19 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                         ))
 
     # --- Check 3: European language diacritics ---
+    # Check both verse-level text and chunk translations. For stripped files,
+    # verse-level text is reconstructed from chunks. As a fallback, also check
+    # chunk translations directly in case reconstruction produced empty text.
     if "translations" in result:
         for lang, required_chars in EUROPEAN_DIACRITICS.items():
             lang_data = result["translations"].get(lang)
             if not isinstance(lang_data, dict):
                 continue
             text = lang_data.get("text", "")
+            # Fallback: concatenate chunk translations if top-level is empty/short
+            if not text and isinstance(chunks, list):
+                parts = [c.get("translations", {}).get(lang, "") for c in chunks if isinstance(c, dict)]
+                text = " ".join(parts)
             min_len = EUROPEAN_DIACRITICS_MIN_LENGTH.get(lang, 100)
             if len(text) < min_len:
                 continue
@@ -364,6 +401,11 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
             break  # Only check the first matching pattern
 
     # --- Check 9: word_analysis matches original Arabic text ---
+    # Note: word_analysis may cover the FULL hadith text (including isnad chain)
+    # while request.arabic_text may only contain the matn. The AI also tokenizes
+    # differently (attaching particles like وَ, omitting parenthetical markers).
+    # We downgrade severity when word_analysis has MORE words (expected chain
+    # inclusion) and only flag "high" when it has significantly fewer (lost content).
     if "word_analysis" in result and isinstance(result["word_analysis"], list):
         reconstructed_words = [w.get("word", "") for w in result["word_analysis"] if isinstance(w, dict)]
         reconstructed = " ".join(reconstructed_words)
@@ -371,12 +413,28 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
         original_clean = _strip_arabic_diacritics(arabic_text).split()
 
         if len(reconstructed_clean) != len(original_clean):
+            more_words = len(reconstructed_clean) > len(original_clean)
+            # AI typically includes isnad chain → more words; or uses
+            # different tokenization (attached particles) → fewer words.
+            # Only flag as high severity when word_analysis has significantly
+            # fewer words (>30% loss), suggesting content was dropped.
+            fewer_ratio = (len(original_clean) - len(reconstructed_clean)) / max(len(original_clean), 1)
+            if more_words:
+                severity = "low"
+            elif fewer_ratio > 0.3:
+                severity = "high"
+            else:
+                severity = "low"
             warnings.append(ReviewWarning(
                 field="word_analysis",
                 category="word_count_mismatch",
-                severity="high",
+                severity=severity,
                 message=f"word_analysis has {len(reconstructed_clean)} words but original has {len(original_clean)}",
-                suggestion="Regenerate word_analysis to match original text word count.",
+                suggestion=(
+                    "word_analysis likely includes isnad chain or uses different tokenization."
+                    if more_words else
+                    "Regenerate word_analysis to match original text word count."
+                ),
             ))
         elif reconstructed_clean != original_clean:
             # Same word count but different content — find first divergence
@@ -430,9 +488,13 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
             wr = narrator.get("word_ranges")
             name_ar = narrator.get("name_ar", "")
             if wr is not None and isinstance(wr, list):
-                # Verify words at ranges contain the narrator's name
-                name_clean = _strip_arabic_diacritics(name_ar).strip()
+                # Verify words at ranges contain the narrator's name.
+                # We normalize Arabic case endings (e.g., أبو/أبي/أبا are
+                # the same name in different grammatical cases) and strip
+                # diacritics before comparing.
+                name_clean = _normalize_arabic_name(_strip_arabic_diacritics(name_ar).strip())
                 if name_clean:
+                    name_parts = name_clean.split()
                     for rng in wr:
                         if not isinstance(rng, dict):
                             continue
@@ -441,23 +503,28 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                         if ws < 0 or we > len(word_analysis) or we <= ws:
                             continue
                         range_words = [
-                            _strip_arabic_diacritics(w.get("word", ""))
+                            _normalize_arabic_name(_strip_arabic_diacritics(w.get("word", "")))
                             for w in word_analysis[ws:we]
                             if isinstance(w, dict)
                         ]
                         range_text = " ".join(range_words)
-                        # Check if name appears in the range text
-                        if name_clean not in range_text:
-                            warnings.append(ReviewWarning(
-                                field=f"isnad_matn.narrators[{ni}].word_ranges",
-                                category="narrator_word_range_mismatch",
-                                severity="medium",
-                                message=(
-                                    f"Narrator '{name_ar}' word_ranges [{ws}:{we}] "
-                                    f"contains '{range_text}' which does not match name"
-                                ),
-                                suggestion="Adjust word_ranges to cover the narrator's name in word_analysis.",
-                            ))
+                        # Check if name or key parts appear in the range text.
+                        # Full name match or >50% of name words matching is OK.
+                        if name_clean in range_text:
+                            continue  # exact match after normalization
+                        matching_parts = sum(1 for p in name_parts if p in range_text)
+                        if len(name_parts) >= 2 and matching_parts >= len(name_parts) * 0.5:
+                            continue  # partial match (>50% of name words found)
+                        warnings.append(ReviewWarning(
+                            field=f"isnad_matn.narrators[{ni}].word_ranges",
+                            category="narrator_word_range_mismatch",
+                            severity="low",
+                            message=(
+                                f"Narrator '{name_ar}' word_ranges [{ws}:{we}] "
+                                f"contains '{range_text}' which does not match name"
+                            ),
+                            suggestion="Adjust word_ranges to cover the narrator's name in word_analysis.",
+                        ))
             elif wr is None and has_chain:
                 # Missing word_ranges for a chained hadith — low severity suggestion
                 warnings.append(ReviewWarning(
