@@ -1,0 +1,10 @@
+======================================================================
+Phase 1: Haiku vs Sonnet Quality Comparison
+Verses: 8, Models: 2
+Total Claude calls: 16
+======================================================================
+
+System prompt: 14972 chars (~3743 tokens est)
+
+--- sonnet ---
+  /books/al-kafi:6:3:2:1 (14w) ...

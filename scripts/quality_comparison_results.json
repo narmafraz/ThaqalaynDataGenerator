@@ -1,0 +1,182 @@
+{
+  "sonnet": [
+    {
+      "verse": "/books/al-kafi:6:3:2:1",
+      "wc": 14,
+      "status": "PASS",
+      "elapsed": 434.0,
+      "cost": 0.8130525,
+      "input_tokens": 3,
+      "cache_create": 10222,
+      "cache_read": 0,
+      "output_tokens": 29966,
+      "total_ctx": 10225,
+      "parse_ok": false,
+      "validation_errors": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "word_count_out": 0,
+      "error_details": [
+        "JSON parse failed"
+      ],
+      "warning_details": []
+    },
+    {
+      "verse": "/books/al-kafi:2:2:3:1",
+      "wc": 15,
+      "status": "PASS",
+      "elapsed": 500.99,
+      "cost": 0.8564149999999999,
+      "input_tokens": 3,
+      "cache_create": 10120,
+      "cache_read": 0,
+      "output_tokens": 31726,
+      "total_ctx": 10123,
+      "parse_ok": false,
+      "validation_errors": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "word_count_out": 0,
+      "error_details": [
+        "JSON parse failed"
+      ],
+      "warning_details": []
+    },
+    {
+      "verse": "/books/al-kafi:7:3:1:1",
+      "wc": 20,
+      "status": "PASS",
+      "elapsed": 462.03,
+      "cost": 0.7868025,
+      "input_tokens": 3,
+      "cache_create": 10242,
+      "cache_read": 0,
+      "output_tokens": 28911,
+      "total_ctx": 10245,
+      "parse_ok": false,
+      "validation_errors": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "word_count_out": 0,
+      "error_details": [
+        "JSON parse failed"
+      ],
+      "warning_details": []
+    },
+    {
+      "verse": "/books/al-kafi:1:4:16:3",
+      "wc": 34,
+      "status": "PASS",
+      "elapsed": 1104.4,
+      "cost": 2.42529875,
+      "input_tokens": 6,
+      "cache_create": 84647,
+      "cache_read": 0,
+      "output_tokens": 75849,
+      "total_ctx": 84653,
+      "parse_ok": false,
+      "validation_errors": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "word_count_out": 0,
+      "error_details": [
+        "JSON parse failed"
+      ],
+      "warning_details": []
+    }
+  ],
+  "haiku": [
+    {
+      "verse": "/books/al-kafi:6:3:2:1",
+      "wc": 14,
+      "status": "PASS",
+      "elapsed": 249.29,
+      "cost": 0.18363460000000004,
+      "input_tokens": 10,
+      "cache_create": 14820,
+      "cache_read": 14146,
+      "output_tokens": 32737,
+      "total_ctx": 28976,
+      "parse_ok": false,
+      "validation_errors": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "word_count_out": 0,
+      "error_details": [
+        "JSON parse failed"
+      ],
+      "warning_details": []
+    },
+    {
+      "verse": "/books/al-kafi:2:2:3:1",
+      "wc": 15,
+      "status": "PASS",
+      "elapsed": 255.73,
+      "cost": 0.16430560000000005,
+      "input_tokens": 10,
+      "cache_create": 3208,
+      "cache_read": 25656,
+      "output_tokens": 31544,
+      "total_ctx": 28874,
+      "parse_ok": false,
+      "validation_errors": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "word_count_out": 0,
+      "error_details": [
+        "JSON parse failed"
+      ],
+      "warning_details": []
+    },
+    {
+      "verse": "/books/al-kafi:7:3:1:1",
+      "wc": 20,
+      "status": "PASS",
+      "elapsed": 287.11,
+      "cost": 0.20024810000000004,
+      "input_tokens": 10,
+      "cache_create": 3330,
+      "cache_read": 25656,
+      "output_tokens": 38702,
+      "total_ctx": 28996,
+      "parse_ok": false,
+      "validation_errors": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "word_count_out": 0,
+      "error_details": [
+        "JSON parse failed"
+      ],
+      "warning_details": []
+    },
+    {
+      "verse": "/books/al-kafi:1:4:16:3",
+      "wc": 34,
+      "status": "PASS",
+      "elapsed": 300.79,
+      "cost": 0.24085260000000003,
+      "input_tokens": 10,
+      "cache_create": 15166,
+      "cache_read": 14151,
+      "output_tokens": 44094,
+      "total_ctx": 29327,
+      "parse_ok": false,
+      "validation_errors": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "word_count_out": 0,
+      "error_details": [
+        "JSON parse failed"
+      ],
+      "warning_details": []
+    }
+  ]
+}

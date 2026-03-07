@@ -1,0 +1,49 @@
+======================================================================
+Phase 1: Haiku vs Sonnet Quality Comparison
+Verses: 4, Models: 2
+Total Claude calls: 8
+======================================================================
+
+System prompt: 14972 chars (~3743 tokens est)
+
+--- sonnet ---
+  /books/al-kafi:6:3:2:1 (14w) ... PASS | 434.0s | $0.8131 | out=29966 | H=0 M=0 L=0
+  /books/al-kafi:2:2:3:1 (15w) ... PASS | 500.99s | $0.8564 | out=31726 | H=0 M=0 L=0
+  /books/al-kafi:7:3:1:1 (20w) ... PASS | 462.03s | $0.7868 | out=28911 | H=0 M=0 L=0
+  /books/al-kafi:1:4:16:3 (34w) ... PASS | 1104.4s | $2.4253 | out=75849 | H=0 M=0 L=0
+
+--- haiku ---
+  /books/al-kafi:6:3:2:1 (14w) ... PASS | 249.29s | $0.1836 | out=32737 | H=0 M=0 L=0
+  /books/al-kafi:2:2:3:1 (15w) ... PASS | 255.73s | $0.1643 | out=31544 | H=0 M=0 L=0
+  /books/al-kafi:7:3:1:1 (20w) ... PASS | 287.11s | $0.2002 | out=38702 | H=0 M=0 L=0
+  /books/al-kafi:1:4:16:3 (34w) ... PASS | 300.79s | $0.2409 | out=44094 | H=0 M=0 L=0
+
+======================================================================
+SUMMARY
+======================================================================
+
+Model      OK     FAIL   High   Med    Low          Cost    Out tok   Avg time
+--------------------------------------------------------------------------------
+sonnet     4/4    0      0      0      0      $   4.8816     166452    625.4s
+haiku      4/4    0      0      0      0      $   0.7890     147077    273.2s
+
+PER-VERSE COMPARISON:
+----------------------------------------------------------------------
+
+  /books/al-kafi:6:3:2:1:
+    sonnet    : PASS | out=29966 | $0.8131 | 434.0s | H=0 M=0 L=0
+    haiku     : PASS | out=32737 | $0.1836 | 249.3s | H=0 M=0 L=0
+
+  /books/al-kafi:2:2:3:1:
+    sonnet    : PASS | out=31726 | $0.8564 | 501.0s | H=0 M=0 L=0
+    haiku     : PASS | out=31544 | $0.1643 | 255.7s | H=0 M=0 L=0
+
+  /books/al-kafi:7:3:1:1:
+    sonnet    : PASS | out=28911 | $0.7868 | 462.0s | H=0 M=0 L=0
+    haiku     : PASS | out=38702 | $0.2002 | 287.1s | H=0 M=0 L=0
+
+  /books/al-kafi:1:4:16:3:
+    sonnet    : PASS | out=75849 | $2.4253 | 1104.4s | H=0 M=0 L=0
+    haiku     : PASS | out=44094 | $0.2409 | 300.8s | H=0 M=0 L=0
+
+Results saved to: C:\Users\TrainingGR03\Documents\Projects\scripture\ThaqalaynDataGenerator\scripts\quality_comparison_results.json

@@ -1,0 +1,31 @@
+============================================================
+E2E Pipeline Test: prepare → claude -p → postprocess
+Verse: /books/al-kafi:4:2:2:5
+============================================================
+
+Step 1: prepare_verse()...
+  verse_id: al-kafi_4_2_2_5
+  mode: single
+  word_count: 99
+  system_prompt: 15109 chars
+  user_message: 9599 chars
+
+Step 2: claude -p --model sonnet...
+  elapsed: 1381.1s
+  cost: $2.6001
+  output_tokens: 85057
+  stop_reason: end_turn
+  result length: 42654 chars
+  raw saved to: tmp/e2e_test\raw_response.txt
+
+Step 3: postprocess_verse()...
+  word_dictionary: 609 entries
+  narrator_templates: 1074 entries
+  status: error
+  validation_errors: 0
+  warnings: 0
+  error: JSON parse error: Expecting value: line 1 column 1 (char 0)
+
+
+============================================================
+E2E TEST FAILED: error - JSON parse error: Expecting value: line 1 column 1 (char 0)

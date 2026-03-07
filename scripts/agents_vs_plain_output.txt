@@ -1,0 +1,33 @@
+============================================================
+Agent vs Plain System Prompt Comparison
+Model: haiku
+============================================================
+
+--- Test 1: Plain --system-prompt (no project settings) ---
+  ctx=23652 (in=10, cc=0, cr=23642), out=215, cost=$0.0034492000000000004, 7.81s
+  Response: In the name of Allah, the Most Gracious, the Most Merciful.
+
+--- Test 2: Plain --system-prompt (with project settings) ---
+  ctx=30773 (in=10, cc=0, cr=30763), out=156, cost=$0.0038663, 11.33s
+  Response: In the name of Allah, the Most Gracious, the Most Merciful.
+
+--- Test 3: --append-system-prompt (no project settings) ---
+  ctx=27165 (in=10, cc=0, cr=27155), out=181, cost=$0.0036305, 6.37s
+  Response: In the name of Allah, the Most Gracious, the Most Merciful.
+
+--- Test 4: Inline --agents definition ---
+  ctx=23668 (in=10, cc=0, cr=23658), out=170, cost=$0.0032258, 5.53s
+  Response: In the name of Allah, the Most Gracious, the Most Merciful.
+
+--- Test 5: stdin piping (no project settings) ---
+  ctx=23652 (in=10, cc=0, cr=23642), out=262, cost=$0.0036842000000000003, 7.87s
+  Response: In the name of Allah, the Most Gracious, the Most Merciful
+
+============================================================
+SUMMARY (lower context = more efficient)
+============================================================
+  plain_no_settings             : ctx= 23652, cost=$0.0034492000000000004, time=7.81s
+  plain_with_settings           : ctx= 30773, cost=$0.0038663, time=11.33s
+  append_no_settings            : ctx= 27165, cost=$0.0036305, time=6.37s
+  inline_agent                  : ctx= 23668, cost=$0.0032258, time=5.53s
+  stdin_pipe                    : ctx= 23652, cost=$0.0036842000000000003, time=7.87s

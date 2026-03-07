@@ -1,0 +1,13 @@
+Haiku on medium/long hadiths (99-281 words)
+============================================================
+
+/books/al-kafi:4:2:2:5 (99w)... FAIL (16 errors, 282.99s, $0.2248)
+  ERR: invalid pos: CONJ+N for word وَآلِهِ
+  ERR: invalid pos: PREP+N for word لِبِلَالٍ
+  ERR: invalid pos: INTJ+N for word أَيُّهَا
+
+/books/al-kafi:3:3:2:1 (114w)... PARSE ERROR: Expecting ',' delimiter: line 886 column 124 (char 65776)
+
+/books/al-kafi:4:1:2:3 (142w)... PARSE ERROR: Expecting value: line 1 column 1 (char 0)
+
+/books/al-kafi:6:6:1:1 (281w)... PARSE ERROR: Extra data: line 20 column 3 (char 5240)
