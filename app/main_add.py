@@ -14,6 +14,7 @@ from app.link_books import link_all_books_to_quran
 from app.link_quran_kafi import link_quran_kafi
 from app.quran import init_quran
 from app.thaqalayn_api import init_all_thaqalayn_api_books
+from app.ghbook import init_ghbook_books
 from app.ai_content_merger import merge_ai_content
 from app.create_indices import create_indices
 
@@ -30,6 +31,7 @@ def init():
     link_quran_kafi()
     kafi_narrators(report)
     init_all_thaqalayn_api_books()
+    init_ghbook_books()
     link_all_books_to_quran()
     create_indices()
     merge_ai_content(report)

@@ -144,10 +144,17 @@ def _strip_arabic_diacritics(text: str) -> str:
     zero_width = set("\u200B\u200C\u200D\u200E\u200F\u061C\uFEFF")
     exclude = diacritics | zero_width
     # Normalize Arabic/Persian letter variants (Quran sources use Persian forms)
+    # Also normalize alef/hamza variants so diacritized AI forms match undiacritized source text.
+    # e.g. الإمامة (with hamza-below إ) vs الامامة (plain ا) in source — same word.
     letter_map = {
         "\u06A9": "\u0643",  # ک KEHEH (Persian kaf) → ك KAF
         "\u0649": "\u064A",  # ى ALEF MAKSURA → ي YEH
         "\u06CC": "\u064A",  # ی FARSI YEH → ي YEH
+        "\u0623": "\u0627",  # أ ALEF WITH HAMZA ABOVE → ا ALEF
+        "\u0625": "\u0627",  # إ ALEF WITH HAMZA BELOW → ا ALEF
+        "\u0622": "\u0627",  # آ ALEF WITH MADDA → ا ALEF
+        "\u0671": "\u0627",  # ٱ ALEF WASLA → ا ALEF
+        "\u0624": "\u0648",  # ؤ WAW WITH HAMZA ABOVE → و WAW
     }
     result = []
     for ch in text:
@@ -316,10 +323,13 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
             if len(text) < min_len:
                 continue
             if not any(ch in text.lower() for ch in required_chars):
+                # German text about Islamic topics often legitimately lacks ä/ö/ü/ß
+                # (e.g. "Muhammad sagte..." has no umlauts). Downgrade to low.
+                sev = "low" if lang == "de" else "medium"
                 warnings.append(ReviewWarning(
                     field=f"translations.{lang}",
                     category="missing_diacritics",
-                    severity="medium",
+                    severity=sev,
                     message=(
                         f"Translation in {lang} ({len(text)} chars) contains none of "
                         f"the expected diacritical characters ({required_chars})"
@@ -434,8 +444,8 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
         reconstructed = " ".join(reconstructed_words)
         # Strip punctuation alongside diacritics for comparison — source text may
         # include trailing periods or other non-Arabic punctuation (including
-        # Arabic comma U+060C and Arabic semicolon U+061B)
-        _punct = set(".,;:!?()[]{}\"'\u060c\u061b")
+        # Arabic comma U+060C, Arabic semicolon U+061B, Arabic question mark U+061F)
+        _punct = set(".,;:!?()[]{}\"'\u060c\u061b\u061f")
         reconstructed_clean = _strip_arabic_diacritics(reconstructed).split()
         original_clean = _strip_arabic_diacritics(arabic_text).split()
         _punct_str = "".join(_punct)

@@ -84,6 +84,38 @@ BOOK_REGISTRY: List[BookConfig] = [
     ),
 
     # -----------------------------------------------------------------------
+    # ghbook.ir books — parsed by ghbook_parser.py (Arabic only)
+    # -----------------------------------------------------------------------
+    BookConfig(
+        slug="tahdhib-al-ahkam",
+        index=23,
+        path="/books/tahdhib-al-ahkam",
+        titles={
+            Language.EN.value: "Tahdhib al-Ahkam",
+            Language.AR.value: "\u062a\u0647\u0630\u064a\u0628 \u0627\u0644\u0623\u062d\u0643\u0627\u0645",
+        },
+        author={
+            Language.EN.value: "Shaykh al-Tusi",
+            Language.AR.value: "\u0627\u0644\u0634\u064a\u062e \u0627\u0644\u0637\u0648\u0633\u064a",
+        },
+        source_url="https://ghbook.ir/",
+    ),
+    BookConfig(
+        slug="al-istibsar",
+        index=24,
+        path="/books/al-istibsar",
+        titles={
+            Language.EN.value: "al-Istibsar",
+            Language.AR.value: "\u0627\u0644\u0627\u0633\u062a\u0628\u0635\u0627\u0631",
+        },
+        author={
+            Language.EN.value: "Shaykh al-Tusi",
+            Language.AR.value: "\u0627\u0644\u0634\u064a\u062e \u0627\u0644\u0637\u0648\u0633\u064a",
+        },
+        source_url="https://ghbook.ir/",
+    ),
+
+    # -----------------------------------------------------------------------
     # ThaqalaynAPI books — parsed by thaqalayn_api.py transformer
     # -----------------------------------------------------------------------
 

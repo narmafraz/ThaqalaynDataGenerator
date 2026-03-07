@@ -56,23 +56,24 @@ BRAVE_PATH = "C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe
 DELAY_BETWEEN_PAGES = 1.5  # seconds - be respectful
 PAGE_LOAD_WAIT = 3.0  # seconds to wait for SPA content to render
 
-# Same volume registry as download_rafed_word.py
+# Volume registry — view_id is required, pages is derived from TOC at runtime.
+# The "pages" field is a fallback only used if no TOC file exists yet.
 VOLUMES = {
     "tahdhib-al-ahkam": {
         "title": "Tahdhib al-Ahkam",
         "title_ar": "\u062a\u0647\u0630\u064a\u0628 \u0627\u0644\u0623\u062d\u0643\u0627\u0645",
         "author": "Sheikh al-Tusi",
         "vols": [
-            {"vol": 1, "view_id": 722, "pages": 471},
-            {"vol": 2, "view_id": 731, "pages": 408},
-            {"vol": 3, "view_id": 734, "pages": 347},
-            {"vol": 4, "view_id": 735, "pages": 392},
-            {"vol": 5, "view_id": 736, "pages": 502},
-            {"vol": 6, "view_id": 737, "pages": 437},
-            {"vol": 7, "view_id": 741, "pages": 512},
-            {"vol": 8, "view_id": 745, "pages": 362},
-            {"vol": 9, "view_id": 747, "pages": 406},
-            {"vol": 10, "view_id": 752, "pages": 448},
+            {"vol": 1, "view_id": 722},
+            {"vol": 2, "view_id": 731},
+            {"vol": 3, "view_id": 734},
+            {"vol": 4, "view_id": 735},
+            {"vol": 5, "view_id": 736},
+            {"vol": 6, "view_id": 737},
+            {"vol": 7, "view_id": 741},
+            {"vol": 8, "view_id": 745},
+            {"vol": 9, "view_id": 747},
+            {"vol": 10, "view_id": 752},
         ],
     },
     "al-istibsar": {
@@ -80,13 +81,37 @@ VOLUMES = {
         "title_ar": "\u0627\u0644\u0627\u0633\u062a\u0628\u0635\u0627\u0631",
         "author": "Sheikh al-Tusi",
         "vols": [
-            {"vol": 1, "view_id": 1266, "pages": 505},
-            {"vol": 2, "view_id": 1307, "pages": 403},
-            {"vol": 3, "view_id": 1320, "pages": 420},
-            {"vol": 4, "view_id": 1321, "pages": 383},
+            {"vol": 1, "view_id": 1266},
+            {"vol": 2, "view_id": 1307},
+            {"vol": 3, "view_id": 1320},
+            {"vol": 4, "view_id": 1321},
         ],
     },
 }
+
+# Extra pages to scrape beyond the last TOC entry (content after last chapter heading)
+TOC_PAGE_BUFFER = 10
+
+
+def get_page_count_from_toc(book_key, vol_num):
+    """Get the page count for a volume from its TOC file.
+
+    Returns the max page number from TOC entries + buffer, or None if no TOC.
+    """
+    toc_path = os.path.join(OUTPUT_DIR, book_key, "toc.json")
+    if not os.path.exists(toc_path):
+        return None
+    try:
+        with open(toc_path, "r", encoding="utf-8") as f:
+            toc = json.load(f)
+        vol_key = "vol_{}".format(vol_num)
+        entries = toc.get("volumes", {}).get(vol_key, {}).get("entries", [])
+        if not entries:
+            return None
+        max_page = max(e["page"] for e in entries)
+        return max_page + TOC_PAGE_BUFFER
+    except (json.JSONDecodeError, IOError, KeyError, ValueError):
+        return None
 
 
 def get_browser():
@@ -164,13 +189,28 @@ def extract_toc(page, view_id):
     return toc_entries
 
 
+MAX_RETRIES = 3
+
+
 def extract_page_text(page, view_id, page_num):
     """Extract text content from a single book page.
 
-    Returns a dict with page text paragraphs.
+    Returns a dict with page text paragraphs. Retries on timeout.
     """
     url = "{}/view/{}/page/{}".format(BASE_URL, view_id, page_num)
-    page.goto(url, wait_until="networkidle")
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            page.goto(url, wait_until="networkidle", timeout=60000)
+            break
+        except Exception as e:
+            if attempt < MAX_RETRIES:
+                print("    RETRY {}/{} for page {} ({})".format(
+                    attempt, MAX_RETRIES, page_num, type(e).__name__))
+                time.sleep(5)
+            else:
+                print("    FAILED page {} after {} attempts: {}".format(
+                    page_num, MAX_RETRIES, e))
+                return []
     page.wait_for_timeout(int(PAGE_LOAD_WAIT * 1000))
 
     # Extract paragraphs from the main content area
@@ -237,6 +277,56 @@ def scrape_toc(book_key, book_info, browser_page):
     return all_toc
 
 
+def _is_404_page(paragraphs):
+    """Check if extracted paragraphs indicate a 404 page."""
+    if not paragraphs:
+        return False
+    text = " ".join(paragraphs).lower()
+    return "404" in text and ("not found" in text or "could not be found" in text)
+
+
+def _is_empty_or_404(filepath):
+    """Check if a saved page file has empty paragraphs or 404 content."""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        paragraphs = data.get("paragraphs", [])
+        if not paragraphs:
+            return "empty"
+        if _is_404_page(paragraphs):
+            return "404"
+    except (json.JSONDecodeError, IOError):
+        return "corrupt"
+    return None
+
+
+def cleanup_bad_files(book_key):
+    """Delete empty and 404 page files so they can be re-scraped.
+
+    Returns counts of deleted files by category.
+    """
+    book_dir = os.path.join(OUTPUT_DIR, book_key)
+    pages_dir = os.path.join(book_dir, "pages")
+    if not os.path.exists(pages_dir):
+        return {}
+
+    counts = {"empty": 0, "404": 0, "corrupt": 0}
+    for vol_name in sorted(os.listdir(pages_dir)):
+        vol_dir = os.path.join(pages_dir, vol_name)
+        if not os.path.isdir(vol_dir):
+            continue
+        for filename in sorted(os.listdir(vol_dir)):
+            if not filename.endswith(".json"):
+                continue
+            filepath = os.path.join(vol_dir, filename)
+            status = _is_empty_or_404(filepath)
+            if status:
+                os.remove(filepath)
+                counts[status] += 1
+
+    return counts
+
+
 def scrape_pages(book_key, book_info, browser_page, vol_filter=None):
     """Scrape page text for all (or selected) volumes of a book."""
     book_dir = os.path.join(OUTPUT_DIR, book_key)
@@ -252,12 +342,20 @@ def scrape_pages(book_key, book_info, browser_page, vol_filter=None):
             continue
 
         view_id = vol_info["view_id"]
-        total_pages = vol_info["pages"]
+        # Prefer TOC-derived page count, fall back to hardcoded if present
+        total_pages = get_page_count_from_toc(book_key, vol)
+        if total_pages is None:
+            total_pages = vol_info.get("pages")
+        if total_pages is None:
+            print("  SKIP Vol {} — no TOC data and no fallback page count".format(vol))
+            print("  Run with --toc-only first to extract page counts from rafed.net")
+            continue
         vol_dir = os.path.join(pages_dir, "vol-{}".format(vol))
         os.makedirs(vol_dir, exist_ok=True)
 
         print("\n  --- Vol {} ({} pages, view_id={}) ---".format(vol, total_pages, view_id))
 
+        consecutive_404 = 0
         for page_num in range(1, total_pages + 1):
             page_file = os.path.join(vol_dir, "page-{}.json".format(page_num))
 
@@ -268,6 +366,23 @@ def scrape_pages(book_key, book_info, browser_page, vol_filter=None):
                 continue
 
             paragraphs = extract_page_text(browser_page, view_id, page_num)
+
+            # Detect 404 pages — stop volume if 3 consecutive 404s
+            if _is_404_page(paragraphs):
+                consecutive_404 += 1
+                print("    Page {}/{}: 404 (not found)".format(page_num, total_pages))
+                if consecutive_404 >= 3:
+                    print("    Stopping vol {} at page {} (3 consecutive 404s)".format(
+                        vol, page_num))
+                    break
+                continue
+            consecutive_404 = 0
+
+            # Don't save empty results — leave file missing so re-run retries
+            if not paragraphs:
+                print("    Page {}/{}: EMPTY (will retry on next run)".format(
+                    page_num, total_pages))
+                continue
 
             page_data = {
                 "view_id": view_id,
@@ -298,9 +413,13 @@ def list_books():
         print("\n{} ({})".format(book_info["title"], book_info["title_ar"]))
         print("  Author: {}".format(book_info["author"]))
         for vol_info in book_info["vols"]:
+            vol = vol_info["vol"]
             url = "{}/view/{}/page/1".format(BASE_URL, vol_info["view_id"])
-            print("    Vol {}: {} pages -> {}".format(
-                vol_info["vol"], vol_info["pages"], url))
+            toc_pages = get_page_count_from_toc(book_key, vol)
+            if toc_pages is not None:
+                print("    Vol {}: {} pages (from TOC) -> {}".format(vol, toc_pages, url))
+            else:
+                print("    Vol {}: unknown pages (no TOC) -> {}".format(vol, url))
 
 
 def main():
@@ -361,6 +480,26 @@ if __name__ == "__main__":
 
     if "--help" in sys.argv or "-h" in sys.argv:
         print(__doc__)
+        sys.exit(0)
+
+    if "--cleanup" in sys.argv:
+        BOOK_FLAGS = {
+            "--tahdhib": "tahdhib-al-ahkam",
+            "--istibsar": "al-istibsar",
+        }
+        book_filter = None
+        for flag, key in BOOK_FLAGS.items():
+            if flag in sys.argv:
+                book_filter = key
+                break
+
+        books_to_clean = [book_filter] if book_filter else list(VOLUMES.keys())
+        for book_key in books_to_clean:
+            print("Cleaning up {}...".format(book_key))
+            counts = cleanup_bad_files(book_key)
+            print("  Deleted: {} empty, {} 404, {} corrupt".format(
+                counts.get("empty", 0), counts.get("404", 0),
+                counts.get("corrupt", 0)))
         sys.exit(0)
 
     main()

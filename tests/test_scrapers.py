@@ -242,7 +242,7 @@ class TestRafedTextScraper:
     """Tests for scrape_rafed_text.py configuration."""
 
     def test_volumes_have_required_fields(self):
-        """Every volume entry has vol, view_id, and pages."""
+        """Every volume entry has vol and view_id."""
         from app.scrapers.scrape_rafed_text import VOLUMES
 
         for key, book in VOLUMES.items():
@@ -251,8 +251,6 @@ class TestRafedTextScraper:
             for vol_info in book["vols"]:
                 assert "vol" in vol_info
                 assert "view_id" in vol_info
-                assert "pages" in vol_info
-                assert vol_info["pages"] > 0
 
     def test_tahdhib_config(self):
         """Tahdhib al-Ahkam has 10 volumes."""
@@ -281,6 +279,24 @@ class TestRafedTextScraper:
             assert text_ids == word_ids, \
                 "View ID mismatch for {}: text={} word={}".format(
                     book_key, text_ids, word_ids)
+
+
+    def test_page_count_from_toc(self):
+        """get_page_count_from_toc returns max page + buffer from TOC data."""
+        from app.scrapers.scrape_rafed_text import get_page_count_from_toc, TOC_PAGE_BUFFER
+
+        # al-istibsar TOC exists from scraping
+        result = get_page_count_from_toc("al-istibsar", 1)
+        if result is not None:
+            # Should be max_page + buffer; max_page for vol 1 is 486
+            assert result > 400
+            assert result == 486 + TOC_PAGE_BUFFER
+
+    def test_page_count_from_toc_missing_book(self):
+        """get_page_count_from_toc returns None for nonexistent book."""
+        from app.scrapers.scrape_rafed_text import get_page_count_from_toc
+
+        assert get_page_count_from_toc("nonexistent-book", 1) is None
 
 
 class TestHubealiScraper:

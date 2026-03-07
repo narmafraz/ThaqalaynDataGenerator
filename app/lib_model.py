@@ -107,7 +107,7 @@ def set_index(chapter: Chapter, indexes: List[int], depth: int, report: Optional
 			subchapter.path = chapter.path + ":" + str(chapter_local_index)
 			subchapter.verse_start_index = indexes[-1]
 
-			if report_numbering and subchapter.part_type == PartType.Chapter:
+			if report_numbering and subchapter.part_type == PartType.Chapter and 'en' in subchapter.titles:
 				chapter_number_str = CHAPTER_TITLE_PATTERN.search(subchapter.titles['en'])
 				if chapter_number_str:
 					chapter_number = int(chapter_number_str.group(1))

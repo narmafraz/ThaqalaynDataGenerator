@@ -310,7 +310,7 @@ def _format_topic_taxonomy(taxonomy: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_key_phrases_sample(phrases_dict: dict, max_entries: int = 30) -> str:
+def _format_key_phrases_sample(phrases_dict: dict, max_entries: int = 15) -> str:
     """Format a sample of key phrases for the system prompt (not the full dictionary)."""
     phrases = phrases_dict.get("phrases", [])
     lines = ["Arabic Phrase | English | Category"]
@@ -357,8 +357,9 @@ def build_system_prompt(glossary: Optional[dict] = None,
         key_phrases_dict = load_key_phrases_dictionary()
 
     glossary_table = _format_glossary_table(glossary)
-    examples_text = _format_few_shot_examples(few_shot_examples)
-    num_examples = len(few_shot_examples.get("examples", []))
+    examples_list = few_shot_examples.get("examples", [])
+    num_examples = len(examples_list)
+    examples_text = _format_few_shot_examples(few_shot_examples) if num_examples > 0 else ""
 
     word_dict_section = ""
     if word_dictionary and word_dictionary.get("words"):
@@ -403,7 +404,10 @@ IMPORTANT RULES:
 - Output valid JSON only
 
 GLOSSARY OF ISLAMIC TERMS:
-{glossary_table}{word_dict_section}{taxonomy_section}{phrases_section}
+{glossary_table}{word_dict_section}{taxonomy_section}{phrases_section}"""
+
+    if num_examples > 0:
+        prompt += f"""
 
 EXAMPLES:
 Below are {num_examples} examples showing the expected input and output format.
@@ -465,7 +469,8 @@ def build_user_message(request: PipelineRequest) -> str:
    Each narrator: {"name_ar": "...", "name_en": "...", "role": "narrator"|"companion"|"imam"|"author", "position": int, "identity_confidence": "definite"|"likely"|"ambiguous", "ambiguity_note": string|null, "known_identity": string|null, "word_ranges": [{"word_start": int, "word_end": int}]}
    "word_ranges" is optional but recommended — array of {word_start, word_end} marking where this narrator's name appears in word_analysis (half-open indexing, same as chunk word ranges). This enables clickable narrator highlighting in the UI.
 9. "translations": Object with keys en, ur, tr, fa, id, bn, es, fr, de, ru, zh. Each:
-   {"text": "...", "summary": "...", "key_terms": {"arabic_term": "explanation"}, "seo_question": "..."}
+   {"text": "...", "summary": "...", "key_terms": {"تَقْوَى": "God-consciousness, piety", "عِلْم": "knowledge, sacred learning"}, "seo_question": "..."}
+   CRITICAL: key_terms keys MUST be Arabic words with full diacritics taken from the text. Never use transliterations or Latin-script words as keys. The values are explanations in the respective language.
    SUMMARY GUIDANCE: The "summary" should be 2-3 sentences explaining the verse's meaning and significance. Where relevant, note the historical context — who the audience was, what circumstances prompted this teaching, and how the original audience would have understood the key terms.
 10. "chunks": (array) Paragraph-level segmentation of the text with aligned translations.
    Each chunk: {"chunk_type": (enum) "isnad"|"opening"|"body"|"quran_quote"|"closing", "arabic_text": "...", "word_start": int, "word_end": int, "translations": {"en": "...", "ur": "...", "tr": "...", "fa": "...", "id": "...", "bn": "...", "es": "...", "fr": "...", "de": "...", "ru": "...", "zh": "..."}}
@@ -996,7 +1001,24 @@ def validate_result(result: dict) -> List[str]:
                     errors.append(f"invalid quran relationship: {ref_obj.get('relationship')} for ref {ref_obj.get('ref')}")
                 ref = ref_obj.get("ref", "")
                 parts = ref.split(":")
-                if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+                # Support range format like "96:1-5" — validate start and end
+                if len(parts) == 2 and parts[0].isdigit() and "-" in parts[1]:
+                    range_parts = parts[1].split("-")
+                    if len(range_parts) == 2 and range_parts[0].isdigit() and range_parts[1].isdigit():
+                        # Treat as valid range — validate both endpoints
+                        parts = [parts[0], range_parts[0]]  # validate start ayah below
+                        end_ayah = int(range_parts[1])
+                        surah_num = int(parts[0])
+                        if QURAN_SURAH_AYAH_COUNTS:
+                            max_ayas = QURAN_SURAH_AYAH_COUNTS.get(surah_num)
+                            if max_ayas and not (1 <= end_ayah <= max_ayas):
+                                errors.append(
+                                    f"invalid ayah range end: {end_ayah} exceeds max {max_ayas} "
+                                    f"for surah {surah_num} in ref {ref}"
+                                )
+                    else:
+                        errors.append(f"invalid quran ref format: {ref}")
+                elif len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
                     errors.append(f"invalid quran ref format: {ref}")
                 elif not (1 <= int(parts[0]) <= 114):
                     errors.append(f"invalid surah number: {parts[0]} in ref {ref}")
