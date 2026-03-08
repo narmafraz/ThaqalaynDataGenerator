@@ -112,10 +112,23 @@ def save_verse_stats(
     system_prompt_hash: str = "",
     pipeline_version: str = "3.0.0",
     error: Optional[str] = None,
+    false_positive_accepted: bool = False,
 ):
     """Write per-verse stats to stats/{verse_id}.stats.json."""
     os.makedirs(stats_dir, exist_ok=True)
     stats_path = os.path.join(stats_dir, f"{verse_id}.stats.json")
+
+    # Read previous failure count for cumulative tracking
+    prev_failure_count = 0
+    if os.path.exists(stats_path):
+        try:
+            with open(stats_path, "r", encoding="utf-8") as f:
+                prev_data = json.load(f)
+            prev_failure_count = prev_data.get("failure_count", 0)
+        except (json.JSONDecodeError, OSError):
+            pass
+    failure_count = prev_failure_count + (1 if status == "error" else 0)
+
     data = {
         "verse_id": verse_id,
         "verse_path": verse_path,
@@ -150,6 +163,8 @@ def save_verse_stats(
             "has_chain": has_chain,
         },
         "system_prompt_hash": system_prompt_hash,
+        "failure_count": failure_count,
+        "false_positive_accepted": false_positive_accepted,
     }
     if error:
         data["error"] = error[:500]
@@ -170,6 +185,7 @@ class PipelineConfig:
     responses_dir: Optional[str] = None
     max_retries: int = 2
     max_fix_attempts: int = 1
+    max_failures: int = 3
     dry_run: bool = False
     max_words: Optional[int] = None
     max_verses: Optional[int] = None
@@ -231,14 +247,34 @@ def load_corpus_manifest() -> List[str]:
     return [v["path"] if isinstance(v, dict) else v for v in verses]
 
 
+def is_quarantined(verse_id: str, responses_dir: str) -> bool:
+    """Check if a verse is quarantined (too many failures)."""
+    quarantine_dir = os.path.join(os.path.dirname(responses_dir), "quarantine")
+    return os.path.exists(os.path.join(quarantine_dir, f"{verse_id}.json"))
+
+
+def get_failure_count(verse_id: str, stats_dir: str) -> int:
+    """Read cumulative failure count from stats file."""
+    stats_path = os.path.join(stats_dir, f"{verse_id}.stats.json")
+    if not os.path.exists(stats_path):
+        return 0
+    try:
+        with open(stats_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("failure_count", 0)
+    except (json.JSONDecodeError, OSError):
+        return 0
+
+
 def build_queue(
     verse_paths: List[str],
     responses_dir: str,
     book: Optional[str] = None,
     volume: Optional[int] = None,
 ) -> List[str]:
-    """Filter verse paths to those not yet completed."""
+    """Filter verse paths to those not yet completed or quarantined."""
     queue = []
+    skipped_quarantine = 0
     for vp in verse_paths:
         # Filter by book
         if book and not vp.startswith(f"/books/{book}:"):
@@ -252,7 +288,13 @@ def build_queue(
         vid = verse_path_to_id(vp)
         if is_complete(vid, responses_dir):
             continue
+        # Skip quarantined
+        if is_quarantined(vid, responses_dir):
+            skipped_quarantine += 1
+            continue
         queue.append(vp)
+    if skipped_quarantine:
+        logger.info("Skipped %d quarantined verses", skipped_quarantine)
     return queue
 
 
@@ -477,6 +519,13 @@ async def process_verse(
                 system_prompt_hash=config.system_prompt_hash,
                 error=cr["error"],
             )
+            # Quarantine if too many failures
+            failure_count = get_failure_count(verse_id, config.stats_dir)
+            if failure_count >= config.max_failures:
+                quarantine_verse(verse_id, cr["error"], responses_dir)
+                logger.warning("QUARANTINED %s after %d failures", verse_id, failure_count)
+                config.event_log.log("VERSE_QUARANTINED", verse_id=verse_id,
+                                     failure_count=failure_count)
             return VerseResult(verse_id=verse_id, status="error", error=cr["error"])
 
         raw_response_str = cr["result"]
@@ -565,10 +614,17 @@ async def process_verse(
                     stats.fixed += 1
                     fix_applied = True
                     result = fix_result
-                    logger.info("FIX %s -> PASS", verse_id)
-                    config.event_log.log("FIX_DONE", verse_id=verse_id, outcome="fixed",
-                                         cost=fix_cr.get("cost", 0),
-                                         elapsed=fix_cr.get("elapsed", 0))
+                    if fix_result.false_positive_accepted:
+                        logger.info("FIX %s -> PASS (false positives accepted)", verse_id)
+                        config.event_log.log("FIX_DONE", verse_id=verse_id,
+                                             outcome="false_positive_accepted",
+                                             cost=fix_cr.get("cost", 0),
+                                             elapsed=fix_cr.get("elapsed", 0))
+                    else:
+                        logger.info("FIX %s -> PASS", verse_id)
+                        config.event_log.log("FIX_DONE", verse_id=verse_id, outcome="fixed",
+                                             cost=fix_cr.get("cost", 0),
+                                             elapsed=fix_cr.get("elapsed", 0))
                 else:
                     fix_val_errs = len(fix_result.validation_errors)
                     fix_hm_warns = len([w for w in fix_result.warnings
@@ -629,6 +685,7 @@ async def process_verse(
             content_type=content_type,
             has_chain=has_chain,
             system_prompt_hash=config.system_prompt_hash,
+            false_positive_accepted=result.false_positive_accepted,
         )
 
         config.event_log.log(
@@ -848,6 +905,7 @@ def main():
     parser.add_argument("--volume", type=int, help="Filter to specific volume")
     parser.add_argument("--max-verses", type=int, help="Limit number of verses to process")
     parser.add_argument("--max-words", type=int, help="Skip verses with more than N Arabic words (filters out long hadiths)")
+    parser.add_argument("--max-failures", type=int, default=3, help="Quarantine verse after N cumulative failures (default: 3)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -874,6 +932,7 @@ def main():
         dry_run=args.dry_run,
         max_words=args.max_words,
         max_verses=args.max_verses,
+        max_failures=args.max_failures,
     )
 
     # Load verse paths

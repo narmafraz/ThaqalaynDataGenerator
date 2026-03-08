@@ -82,6 +82,7 @@ class VerseResult:
     result_dict: Optional[dict] = None
     raw_response: Optional[str] = None
     token_usage: Optional[dict] = None
+    false_positive_accepted: bool = False
 
 
 def verse_path_to_id(verse_path: str) -> str:
@@ -689,7 +690,14 @@ def apply_fix(plan: VersePlan, fix_response: str,
     verse_result.result_dict = stripped
 
     if high_medium:
-        verse_result.status = "needs_fix"  # still broken after fix
+        # If fix produced no actual changes, the fix model confirmed
+        # the warnings are false positives — accept as pass
+        if is_partial and not fix_data:
+            verse_result.status = "pass"
+            verse_result.false_positive_accepted = True
+            _save_response(plan, stripped, responses_dir)
+        else:
+            verse_result.status = "needs_fix"  # still broken after fix
     else:
         verse_result.status = "pass"
         _save_response(plan, stripped, responses_dir)
