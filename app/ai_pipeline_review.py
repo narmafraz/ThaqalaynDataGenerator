@@ -50,7 +50,7 @@ class ReviewWarning:
 # Constants
 # ---------------------------------------------------------------------------
 
-CHUNKED_PROCESSING_THRESHOLD = 200
+CHUNKED_PROCESSING_THRESHOLD = 80
 
 # Per-language min/max character ratio bounds (target_len / arabic_len).
 # Latin-script languages typically expand; CJK compresses; Perso-Arabic similar.

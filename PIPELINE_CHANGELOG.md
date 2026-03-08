@@ -4,6 +4,71 @@ Tracks changes to the AI content generation pipeline with rationale. Each entry 
 
 ---
 
+## v3.2.0 — 2026-03-08
+
+**Motivation**: Run `20260308T001946Z` (100 al-istibsar verses, 20 workers) showed 38% error rate — 58 pass, 36 error, $218 total, $76 wasted (35%). Analysis revealed three dominant error categories: continuation artifacts (47% of errors), missing diacritics on abbreviations (11%), and single-pass failures on 60-199 word verses.
+
+### Changes
+
+#### 1. Lower chunked processing threshold from 200 to 80 words
+
+**What**: Changed `CHUNKED_PROCESSING_THRESHOLD` from 200 to 80. Verses with >80 Arabic words now use structure+chunk processing instead of single-pass. Replaced hardcoded `200` in `verse_processor.py` with the imported constant.
+
+**Why**: Word count was the strongest failure predictor. Verses >60 words failed at ~50%, >90 words at ~80%. The 80-199 word range was a danger zone — too long for reliable single-pass output (model hits output token limits, then produces continuation artifacts) but below the chunked threshold. 22 of 36 errors were from verses in this range.
+
+**Data**: Pass rate by word count in run 20260308T001946Z:
+- <60 words: ~85% pass
+- 60-99 words: ~50% pass
+- 100-199 words: ~20% pass
+
+**Estimated impact**: Eliminates ~22 of 36 errors, saving ~$44/100 verses.
+
+**Files changed**: `ai_pipeline_review.py` (constant), `verse_processor.py` (import + 2 usages)
+
+#### 2. Whitelist single-letter Arabic abbreviations in diacritics check
+
+**What**: The `validate_result()` diacritics check now skips single-letter Arabic words (after stripping tatweel `ـ` and trailing dots). Applies to both v3 `word_analysis` and v4 `word_tags` validation paths.
+
+**Why**: Standard hadith abbreviations like `ع` (عليه السلام), `ص` (صلى الله عليه وآله), `ج` (جزء/volume), `صـ` (صفحة/page) cannot carry diacritics — they are abbreviations, not words to vocalize. These caused 29 validation failures across 15 verses in the run.
+
+**Files changed**: `ai_pipeline.py` (2 diacritics check blocks)
+
+#### 3. Route remaining diacritics errors to fix pass
+
+**What**: Added `"has no diacritics"` to `FIXABLE_PATTERNS` in `verse_processor.py`. Multi-letter undiacritized words that aren't abbreviations are now sent to the LLM fix pass instead of being terminal errors.
+
+**Why**: The fix pass has a 50%+ success rate for targeted field corrections and costs $0.30-0.50 vs $1-2 for full regeneration. Diacritics fixes are a good candidate — the LLM just needs to add tashkeel marks to specific words.
+
+**Files changed**: `verse_processor.py` (FIXABLE_PATTERNS)
+
+#### 4. Early detection of continuation artifacts
+
+**What**: Added explicit check for continuation artifact prefixes ("Continuing", "Picking up", "Resuming", "Here is the rest", "**Part", "**Piece", "**Continuing") before the existing malformed response check. Detected artifacts trigger a retry with a clear log message.
+
+**Why**: 17/36 errors (47%) were continuation artifacts where the model output "Continuing the JSON from..." or partial fragments instead of a fresh response. The existing malformed check only caught responses not starting with `{` or backtick, missing cases where continuation text appeared before valid-looking code fences.
+
+**Files changed**: `pipeline.py` (process_verse malformed response check)
+
+### Test Changes
+
+- 2 new tests: `test_single_letter_abbreviation_skips_diacritics_check`, `test_multi_letter_undiacritized_still_fails`
+- Total: 1379 tests passing
+
+### Combined Estimated Impact
+
+| Improvement | Errors eliminated | Cost saved per 100 verses |
+|-------------|-------------------|---------------------------|
+| Chunked threshold 200→80 | ~22 | ~$44 |
+| Abbreviation whitelist | ~4 (terminal→pass) | ~$8 |
+| Diacritics → fix pass | ~4 (terminal→fixable) | ~$4 |
+| Continuation detection | ~5 (faster retry) | ~$10 |
+| **Total** | **~35 of 36** | **~$66** |
+
+Expected pass rate improvement: **62% → 85%+**
+Expected cost/successful verse: **$3.76 → ~$2.00**
+
+---
+
 ## v4.0.0 — 2026-03-08
 
 **Motivation**: v3 costs ~$2.00/hadith ($116K for 58K corpus). Word analysis (46% of output) translates the same Arabic words thousands of times. Translations.text duplicates chunk content. Target: $0.27-0.36/hadith with Haiku.

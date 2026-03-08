@@ -602,6 +602,30 @@ class TestValidateResultWrongTypes:
         errors = validate_result(result)
         assert not any("no diacritics" in e and "'('" in e for e in errors)
 
+    def test_single_letter_abbreviation_skips_diacritics_check(self):
+        """Single-letter Arabic abbreviations (ع, ص, ج) should not require diacritics."""
+        result = _make_valid_result()
+        # Test common hadith abbreviations: ع (alayhi al-salam), ص (sallallahu), ج (volume)
+        for abbrev in ["\u0639", "\u0635", "\u062c", "\u0635\u0640", "\u0639."]:
+            result["word_analysis"].insert(1, {
+                "word": abbrev,
+                "translation": {lang: "(AS)" for lang in VALID_LANGUAGE_KEYS},
+                "pos": "PART",
+            })
+        result["chunks"][0]["word_end"] = len(result["word_analysis"])
+        errors = validate_result(result)
+        assert not any("no diacritics" in e for e in errors), (
+            f"Abbreviation words should be exempt from diacritics check, got: "
+            f"{[e for e in errors if 'no diacritics' in e]}"
+        )
+
+    def test_multi_letter_undiacritized_still_fails(self):
+        """Multi-letter undiacritized Arabic words should still fail validation."""
+        result = _make_valid_result()
+        result["word_analysis"][0]["word"] = "\u0628\u0633\u0645"  # بسم — 3 letters, no diacritics
+        errors = validate_result(result)
+        assert any("no diacritics" in e for e in errors)
+
 
 # ===================================================================
 # Parse response tests

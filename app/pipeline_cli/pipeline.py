@@ -520,6 +520,21 @@ async def process_verse(
 
             # Check for truncated/malformed response
             raw = cr.get("result", "").strip()
+
+            # Check for continuation artifacts — model resuming from a previous response
+            _CONTINUATION_PREFIXES = (
+                "Continuing", "continuing", "Picking up", "picking up",
+                "Resuming", "resuming", "Here is the rest", "here is the rest",
+                "**Piece", "**Part", "**Continuing",
+            )
+            if raw and any(raw.startswith(prefix) for prefix in _CONTINUATION_PREFIXES):
+                if gen_attempt == 0:
+                    logger.warning("GEN %s: continuation artifact (starts with %r), retrying...",
+                                   verse_id, raw[:50])
+                    stats.total_cost += cr.get("cost", 0)
+                    stats.total_output_tokens += cr.get("output_tokens", 0)
+                    continue
+
             # First check: raw response should exist and look like JSON or fenced JSON
             if not raw or (not raw.startswith("{") and not raw.startswith("`")):
                 if gen_attempt == 0:

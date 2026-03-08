@@ -972,11 +972,18 @@ def validate_result(result: dict) -> List[str]:
                     errors.append(f"invalid pos: {word.get('pos')} for word {word.get('word', '?')}")
                 # Validate word is fully diacritized (contains tashkeel marks)
                 # Skip check for punctuation-only words (no Arabic letters)
+                # Skip check for single-letter abbreviations (ع, ص, ج etc.) which are
+                # standard hadith honorific/reference abbreviations that cannot carry diacritics
                 if "word" in word and isinstance(word["word"], str):
                     _DIACRITIC_MARKS = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0670")  # tanwin, fatha, damma, kasra, shadda, sukun, superscript alef
                     _ARABIC_LETTER_RANGE = range(0x0621, 0x064B)  # Arabic letters (alef..ya)
-                    has_arabic_letter = any(ord(ch) in _ARABIC_LETTER_RANGE for ch in word["word"])
-                    if has_arabic_letter and not any(ch in _DIACRITIC_MARKS for ch in word["word"]):
+                    _TATWEEL = "\u0640"  # kashida/tatweel extension character
+                    # Strip tatweel and punctuation to get bare letters
+                    bare = word["word"].replace(_TATWEEL, "").rstrip(".")
+                    arabic_letters_only = [ch for ch in bare if ord(ch) in _ARABIC_LETTER_RANGE]
+                    is_abbreviation = len(arabic_letters_only) == 1
+                    has_arabic_letter = len(arabic_letters_only) > 0
+                    if has_arabic_letter and not is_abbreviation and not any(ch in _DIACRITIC_MARKS for ch in word["word"]):
                         errors.append(f"word_analysis[{i}] word '{word['word']}' has no diacritics (must be fully diacritized)")
 
     # --- word_tags (v4 format) ---
@@ -994,11 +1001,16 @@ def validate_result(result: dict) -> List[str]:
                 if pos_tag not in VALID_POS_TAGS:
                     errors.append(f"invalid pos in word_tags[{i}]: {pos_tag}")
                 # Validate diacritics on word (skip punctuation-only entries)
+                # Skip single-letter abbreviations (ع, ص, ج etc.)
                 if isinstance(word_str, str):
                     _DIACRITIC_MARKS = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0670")
                     _ARABIC_LETTER_RANGE = range(0x0621, 0x064B)
-                    has_arabic_letter = any(ord(ch) in _ARABIC_LETTER_RANGE for ch in word_str)
-                    if has_arabic_letter and not any(ch in _DIACRITIC_MARKS for ch in word_str):
+                    _TATWEEL = "\u0640"
+                    bare = word_str.replace(_TATWEEL, "").rstrip(".")
+                    arabic_letters_only = [ch for ch in bare if ord(ch) in _ARABIC_LETTER_RANGE]
+                    is_abbreviation = len(arabic_letters_only) == 1
+                    has_arabic_letter = len(arabic_letters_only) > 0
+                    if has_arabic_letter and not is_abbreviation and not any(ch in _DIACRITIC_MARKS for ch in word_str):
                         errors.append(f"word_tags[{i}] word '{word_str}' has no diacritics (must be fully diacritized)")
 
     # --- tags ---

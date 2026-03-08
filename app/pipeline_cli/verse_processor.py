@@ -29,7 +29,7 @@ from app.ai_pipeline import (
     strip_redundant_fields,
     validate_result,
 )
-from app.ai_pipeline_review import ReviewWarning, build_fix_prompt, review_result
+from app.ai_pipeline_review import CHUNKED_PROCESSING_THRESHOLD, ReviewWarning, build_fix_prompt, review_result
 from app.config import (
     AI_CONTENT_DIR,
     AI_CONTENT_SUBDIR,
@@ -209,7 +209,7 @@ def prepare_verse(
             "verse_path": verse_path,
             "verse_id": verse_id,
             "word_count": word_count,
-            "mode": "chunked" if word_count > 200 else "single",
+            "mode": "chunked" if word_count > CHUNKED_PROCESSING_THRESHOLD else "single",
             "include_few_shot": include_few_shot,
             "use_compact_format": use_compact_format,
             "pipeline_format": "v3" if use_v3 else "v4",
@@ -220,7 +220,7 @@ def prepare_verse(
     return VersePlan(
         verse_path=verse_path,
         verse_id=verse_id,
-        mode="chunked" if word_count > 200 else "single",
+        mode="chunked" if word_count > CHUNKED_PROCESSING_THRESHOLD else "single",
         request=request,
         system_prompt=system_prompt,
         user_message=user_message,
@@ -495,6 +495,7 @@ FIXABLE_PATTERNS = {
     "invalid quran relationship:",
     "invalid pos:",
     "key_terms key",  # non-Arabic key_terms keys
+    "has no diacritics",  # undiacritized multi-letter words — fixable by LLM
 }
 
 
