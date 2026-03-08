@@ -60,6 +60,23 @@ CRITICAL OUTPUT FORMAT REQUIREMENTS (mandatory for token budget):
    Do NOT continue from a previous response or say "Continuing from...".
    Your output must be a single, self-contained JSON object."""
 
+V4_COMPACT_INSTRUCTIONS = """
+CRITICAL OUTPUT FORMAT REQUIREMENTS (mandatory for token budget):
+
+1. word_tags MUST use compact arrays: ["word","POS"]
+   Example: ["قَالَ","V"]
+
+2. Do NOT include translations.*.text — only summary, key_terms, seo_question.
+   Full translation text is reconstructed from chunk translations.
+
+3. Be CONCISE in all text fields. Translations should be faithful but not padded.
+   Summaries: 1-2 sentences max. Key_terms: 2-4 terms per language.
+   SEO questions: 1 sentence.
+
+4. Output the COMPLETE JSON in a single response. Do NOT split across messages.
+   Do NOT continue from a previous response or say "Continuing from...".
+   Your output must be a single, self-contained JSON object."""
+
 
 @dataclass
 class VersePlan:
@@ -561,17 +578,31 @@ def postprocess_verse(
             verse_result.error = f"JSON parse error: {e}"
             return verse_result
 
-    # Expand compact word format if used
-    if "word_analysis" in result:
-        result["word_analysis"] = expand_compact_words(result["word_analysis"])
-
-    # Apply word dictionary overrides
-    if "word_analysis" in result:
-        result["word_analysis"], word_overrides = override_known_words(
-            result["word_analysis"], word_dict_data
-        )
-    else:
+    # Handle v4 word_tags format — expand to minimal word_analysis for validation
+    if "word_tags" in result and "word_analysis" not in result:
+        result["word_analysis"] = [
+            {"word": wt[0], "pos": wt[1]}
+            for wt in result["word_tags"]
+            if isinstance(wt, list) and len(wt) >= 2
+        ]
         word_overrides = []
+    else:
+        # Expand compact word format if used (v3)
+        if "word_analysis" in result:
+            result["word_analysis"] = expand_compact_words(result["word_analysis"])
+
+        # Apply word dictionary overrides (v3 only — v4 has no word translations)
+        if "word_analysis" in result:
+            first_entry = result["word_analysis"][0] if result["word_analysis"] else {}
+            has_translations = isinstance(first_entry, dict) and "translation" in first_entry
+            if has_translations:
+                result["word_analysis"], word_overrides = override_known_words(
+                    result["word_analysis"], word_dict_data
+                )
+            else:
+                word_overrides = []
+        else:
+            word_overrides = []
 
     # Apply narrator overrides
     result, narrator_overrides = override_narrators(result, narrator_templates)
@@ -637,6 +668,9 @@ def postprocess_verse(
 
     # Strip redundant fields for storage
     stripped = strip_redundant_fields(result)
+    # v4: ensure word_tags is preserved in stripped output
+    if "word_tags" in result and "word_tags" not in stripped:
+        stripped["word_tags"] = result["word_tags"]
     verse_result.result_dict = stripped
 
     # Save response file
@@ -655,7 +689,7 @@ def _save_response(plan: VersePlan, stripped_result: dict, responses_dir: str) -
     wrapper = {
         "verse_path": plan.verse_path,
         "ai_attribution": {
-            "model": "pipeline_v3",
+            "model": "pipeline_v4",
             "generated_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "pipeline_version": PIPELINE_VERSION,
             "generation_method": "claude_cli_p",

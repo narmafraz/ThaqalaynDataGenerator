@@ -213,8 +213,14 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
     10. Narrator word_ranges — verify word_ranges point to correct narrator names
     """
     # Auto-reconstruct stripped format before reviewing
-    if "diacritized_text" not in result and "word_analysis" in result:
+    if "diacritized_text" not in result and ("word_analysis" in result or "word_tags" in result):
         result = reconstruct_fields(result)
+
+    # Detect v4 format: word_tags present or word_analysis without translations
+    is_v4 = "word_tags" in result
+    if not is_v4 and "word_analysis" in result and isinstance(result["word_analysis"], list) and result["word_analysis"]:
+        first_word = result["word_analysis"][0]
+        is_v4 = isinstance(first_word, dict) and "translation" not in first_word
 
     warnings: List[ReviewWarning] = []
 
@@ -256,7 +262,8 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                 ))
 
     # --- Check 2: Arabic echo-back in word translations ---
-    if "word_analysis" in result and isinstance(result["word_analysis"], list):
+    # Skip for v4 — no word-level translations to check
+    if not is_v4 and "word_analysis" in result and isinstance(result["word_analysis"], list):
         for i, word_entry in enumerate(result["word_analysis"]):
             if not isinstance(word_entry, dict):
                 continue
@@ -352,9 +359,10 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
             ))
 
     # --- Check 5: Chunk translation coherence ---
+    # Skip for v4: text is reconstructed from chunks, so coherence check is a tautology
     chunks = result.get("chunks", [])
     translations = result.get("translations", {})
-    if isinstance(chunks, list) and len(chunks) > 1 and isinstance(translations, dict):
+    if not is_v4 and isinstance(chunks, list) and len(chunks) > 1 and isinstance(translations, dict):
         for lang in VALID_LANGUAGE_KEYS:
             lang_data = translations.get(lang)
             if not isinstance(lang_data, dict):
@@ -433,14 +441,20 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                 ))
             break  # Only check the first matching pattern
 
-    # --- Check 9: word_analysis matches original Arabic text ---
-    # Note: word_analysis may cover the FULL hadith text (including isnad chain)
+    # --- Check 9: word_analysis/word_tags matches original Arabic text ---
+    # Note: word_analysis/word_tags may cover the FULL hadith text (including isnad chain)
     # while request.arabic_text may only contain the matn. The AI also tokenizes
     # differently (attaching particles like وَ, omitting parenthetical markers).
-    # We downgrade severity when word_analysis has MORE words (expected chain
+    # We downgrade severity when word list has MORE words (expected chain
     # inclusion) and only flag "high" when it has significantly fewer (lost content).
-    if "word_analysis" in result and isinstance(result["word_analysis"], list):
-        reconstructed_words = [w.get("word", "") for w in result["word_analysis"] if isinstance(w, dict)]
+    word_source = result.get("word_analysis", result.get("word_tags"))
+    if word_source and isinstance(word_source, list):
+        if word_source and isinstance(word_source[0], list):
+            # word_tags format: [[word, POS], ...]
+            reconstructed_words = [w[0] for w in word_source if isinstance(w, list) and len(w) >= 2]
+        else:
+            # word_analysis format: [{"word": ..., ...}, ...]
+            reconstructed_words = [w.get("word", "") for w in word_source if isinstance(w, dict)]
         reconstructed = " ".join(reconstructed_words)
         # Strip punctuation alongside diacritics for comparison — source text may
         # include trailing periods or other non-Arabic punctuation (including
@@ -519,6 +533,10 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
 
     # --- Check 10: narrator word_ranges match ---
     word_analysis = result.get("word_analysis", [])
+    if not word_analysis:
+        # Build minimal word_analysis from word_tags for range checking
+        word_tags = result.get("word_tags", [])
+        word_analysis = [{"word": wt[0]} for wt in word_tags if isinstance(wt, list) and len(wt) >= 2]
     if isinstance(isnad_matn, dict) and isinstance(word_analysis, list) and len(word_analysis) > 0:
         narrators = isnad_matn.get("narrators", [])
         has_chain = isnad_matn.get("has_chain", False)
@@ -630,7 +648,7 @@ def build_structure_prompt(request: PipelineRequest,
 SPECIAL INSTRUCTIONS — STRUCTURE PASS (Chunked Processing):
 
 This is a STRUCTURE PASS for a long hadith. Generate ALL fields EXCEPT:
-- word_analysis (will be generated per-chunk in detail passes)
+- word_tags (will be generated per-chunk in detail passes)
 - chunk translations (will be generated per-chunk in detail passes)
 
 You MUST generate:
@@ -639,7 +657,7 @@ You MUST generate:
 3. tags, content_type
 4. related_quran
 5. isnad_matn (full narrator analysis)
-6. translations (verse-level in all 11 languages — full faithful translations, NOT summaries)
+6. translations — summary, key_terms, seo_question for each of 11 languages (do NOT include "text" — it is reconstructed from chunks)
    SUMMARY GUIDANCE: The "summary" should be 2-3 sentences explaining the verse's meaning and significance. Where relevant, note the historical context — who the audience was, what circumstances prompted this teaching, and how the original audience would have understood the key terms.
 7. chunks — define boundaries with:
    - chunk_type (isnad/opening/body/quran_quote/closing)
@@ -648,11 +666,10 @@ You MUST generate:
    - translations: set to empty object {} (will be filled in detail passes)
 8. topics (1-5 Level 2 topic keys from the TOPIC TAXONOMY in the system prompt)
 9. key_phrases (0-5 multi-word Arabic expressions with English translations and categories)
-10. similar_content_hints (0-3 thematic hints for finding similar hadiths/verses)
 
-For word_analysis, output an empty array [].
+For word_tags, output an empty array [].
 
-Focus on accurate chunk boundary segmentation and complete verse-level translations."""
+Focus on accurate chunk boundary segmentation and complete chunk translations."""
 
     return f"SYSTEM:\n{system_prompt}\n\nUSER:\n{user_msg}{structure_instructions}"
 
@@ -708,15 +725,16 @@ THIS CHUNK's Arabic text (analyze ONLY these words):
 {chunk_arabic}
 
 Generate a JSON object with exactly two fields:
-1. "word_analysis": Array of word-by-word analysis for ONLY the words in this chunk.
-   Each entry: {{"word": "diacritized", "translation": {{"en": "...", "ur": "...", ...all 11 langs}}, "pos": "TAG"}}
+1. "word_tags": Array of [diacritized_word, POS_tag] pairs for ONLY the words in this chunk.
+   Example: [["قَالَ","V"],["عَنْ","PREP"]]
+   POS tags: N|V|ADJ|ADV|PREP|CONJ|PRON|DET|PART|INTJ|REL|DEM|NEG|COND|INTERR
 2. "translations": Object with all 11 language keys, each a plain string translation of THIS CHUNK ONLY.
    {{"en": "...", "ur": "...", "tr": "...", "fa": "...", "id": "...", "bn": "...", "es": "...", "fr": "...", "de": "...", "ru": "...", "zh": "..."}}
 
 IMPORTANT:
 - Translate ONLY this chunk, not the full hadith
-- Each word in word_analysis must have the fully diacritized form
-- All 11 language keys are required in both word translations and chunk translations
+- Each word in word_tags must have the fully diacritized form
+- All 11 language keys are required in chunk translations
 - Context from surrounding chunks should inform translation but output covers only this chunk"""
 
     return f"SYSTEM:\n{system_prompt}\n\nUSER:\n{detail_instructions}"
@@ -747,31 +765,37 @@ def assemble_chunked_result(structure_result: dict,
             f"Expected {len(chunks)} chunk details, got {len(chunk_details)}"
         )
 
-    # Concatenate word_analysis from all chunks
+    # Concatenate word_tags (v4) or word_analysis (v3) from all chunks
+    all_word_tags = []
     all_words = []
     for i, detail in enumerate(chunk_details):
-        words = detail.get("word_analysis", [])
-        all_words.extend(words)
+        if "word_tags" in detail:
+            all_word_tags.extend(detail.get("word_tags", []))
+        else:
+            all_words.extend(detail.get("word_analysis", []))
 
         # Insert chunk translations
         if i < len(chunks) and "translations" in detail:
             chunks[i] = dict(chunks[i])  # shallow copy the chunk
             chunks[i]["translations"] = detail["translations"]
 
-    result["word_analysis"] = all_words
+    if all_word_tags:
+        result["word_tags"] = all_word_tags
+    else:
+        result["word_analysis"] = all_words
     result["chunks"] = chunks
 
     # Fix word_start/word_end to match actual word counts
     offset = 0
     for i, detail in enumerate(chunk_details):
-        word_count = len(detail.get("word_analysis", []))
+        word_count = len(detail.get("word_tags", detail.get("word_analysis", [])))
         if i < len(result["chunks"]):
             result["chunks"][i]["word_start"] = offset
             result["chunks"][i]["word_end"] = offset + word_count
         offset += word_count
 
     # Validate that last chunk ends at total word count
-    total_words = len(all_words)
+    total_words = len(all_word_tags or all_words)
     if result["chunks"]:
         last_end = result["chunks"][-1].get("word_end", 0)
         if last_end != total_words:

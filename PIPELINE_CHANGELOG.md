@@ -4,6 +4,64 @@ Tracks changes to the AI content generation pipeline with rationale. Each entry 
 
 ---
 
+## v4.0.0 — 2026-03-08
+
+**Motivation**: v3 costs ~$2.00/hadith ($116K for 58K corpus). Word analysis (46% of output) translates the same Arabic words thousands of times. Translations.text duplicates chunk content. Target: $0.27-0.36/hadith with Haiku.
+
+### Architectural Changes
+
+#### 1. Word dictionary instead of per-hadith word_analysis
+
+**What**: Model now outputs `word_tags` — just `[["قَالَ","V"],["عَنْ","PREP"],...]` instead of full `word_analysis` with 11-language translations per word. Unique (word, POS) pairs are collected corpus-wide and translated once via a separate dictionary pass.
+
+**Impact**: 46% of output → 3.5%. Saves ~25,000 chars per hadith.
+
+**Files changed**:
+- `ai_pipeline.py`: `build_user_message()` field #4 → word_tags, `validate_result()` dual-format support, `strip_redundant_fields()` / `reconstruct_fields()` v4 handling
+- `ai_pipeline_review.py`: All 10 review checks updated for word_tags format
+- `verse_processor.py`: Postprocessing handles word_tags, model tag → `pipeline_v4`
+- `pipeline_cli/word_dictionary.py` (NEW): `extract_unique_words()`, `load_v4_dictionary()`, `save_v4_dictionary()`, `assemble_word_analysis()`, `find_missing_words()`, `build_translation_prompt()`
+
+#### 2. Chunks-only translations (no duplicate full text)
+
+**What**: Removed `translations.*.text` from the prompt schema. Model only generates chunk translations. Full text is assembled in `reconstruct_fields()` (already implemented in v3).
+
+**Impact**: ~15% of output tokens saved.
+
+**Files changed**:
+- `ai_pipeline.py`: Field #9 updated to exclude "text", v4 validation makes text optional
+- `ai_pipeline_review.py`: Fix prompts updated
+
+#### 3. Removed similar_content_hints
+
+**What**: Removed field #13 `similar_content_hints` from prompt. Low value, not used downstream.
+
+**Impact**: ~3-5% of output tokens saved.
+
+### Combined Impact
+
+| Metric | v3 | v4 |
+|--------|----|----|
+| Output chars (avg) | ~56,000 | ~22,000 |
+| Output reduction | — | **59%** |
+| Cost/hadith (Sonnet) | $2.00 | $0.90-1.20 |
+| Cost/hadith (Haiku) | — | $0.27-0.36 |
+| 58K corpus (Haiku) | — | $16-21K |
+
+### Backward Compatibility
+
+- v3 responses (with `word_analysis`) continue to pass validation and review
+- `reconstruct_fields()` handles both formats transparently
+- Dictionary-less mode uses `???` placeholders for untranslated words
+
+### Test Changes
+
+- 3 existing tests updated for v4 prompt changes
+- 16 new tests: `TestV4WordTags` (6), `TestV4StripReconstruct` (3), `TestWordDictionary` (7)
+- Total: 1377 tests passing
+
+---
+
 ## v3.1.0 — 2026-03-08
 
 **Motivation**: Run `20260307T225947Z` (20 verses, 20 workers) showed 40% error rate ($33.04 for 10 successes). Analysis revealed most errors were trivially fixable validation issues in otherwise-complete responses.

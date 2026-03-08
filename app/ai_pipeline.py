@@ -83,7 +83,7 @@ VALID_PHRASE_CATEGORIES = {
 DEFAULT_MODEL = "claude-opus-4-6-20260205"
 DEFAULT_TEMPERATURE = 0.5
 DEFAULT_MAX_TOKENS = 16000
-PIPELINE_VERSION = "2.0.0"
+PIPELINE_VERSION = "4.0.0"
 
 # VALID_TOPICS is loaded dynamically from topic_taxonomy.json at module init.
 # It is a set of all Level 2 topic keys across all Level 1 categories.
@@ -361,15 +361,9 @@ def build_system_prompt(glossary: Optional[dict] = None,
     num_examples = len(examples_list)
     examples_text = _format_few_shot_examples(few_shot_examples) if num_examples > 0 else ""
 
+    # v4: word translations are handled corpus-wide via word dictionary,
+    # not per-hadith in the prompt. Keep parameter for backward compatibility.
     word_dict_section = ""
-    if word_dictionary and word_dictionary.get("words"):
-        word_dict_table = _format_word_dictionary(word_dictionary)
-        word_dict_section = f"""
-
-COMMON WORD TRANSLATIONS:
-Use these canonical translations for high-frequency grammatical words in word_analysis.
-Only deviate when context clearly requires a different meaning (see Notes column).
-{word_dict_table}"""
 
     taxonomy_section = ""
     if topic_taxonomy and topic_taxonomy.get("taxonomy"):
@@ -445,10 +439,11 @@ def build_user_message(request: PipelineRequest) -> str:
 1. "diacritized_text": (string) The full Arabic text with complete tashkeel.
 2. "diacritics_status": (enum) "added" | "completed" | "validated" | "corrected"
 3. "diacritics_changes": (array) Corrections made. Empty [] if status is "added" or "validated".
-4. "word_analysis": (array) One entry per Arabic word:
-   {"word": "...", "translation": {"en": "...", "ur": "...", "tr": "...", "fa": "...", "id": "...", "bn": "...", "es": "...", "fr": "...", "de": "...", "ru": "...", "zh": "..."}, "pos": (enum N|V|ADJ|ADV|PREP|CONJ|PRON|DET|PART|INTJ|REL|DEM|NEG|COND|INTERR)}
-   IMPORTANT: The "word" field must contain the fully diacritized form of the word (with complete tashkeel), matching the corresponding word in "diacritized_text". This is critical because the same consonantal skeleton can represent different words with different meanings (e.g. عَلِمَ "he knew" vs عَلَّمَ "he taught"), and diacritics are needed to distinguish them.
-   The "translation" object must have all 11 language keys with context-appropriate translations for the word as used in this specific verse/hadith.
+4. "word_tags": (array) One entry per Arabic word: [diacritized_word, POS_tag]
+   POS tags: N|V|ADJ|ADV|PREP|CONJ|PRON|DET|PART|INTJ|REL|DEM|NEG|COND|INTERR
+   Example: [["قَالَ","V"],["عَنْ","PREP"],["عَلِيِّ","N"],["بْنِ","N"]]
+   The words must match diacritized_text exactly, in order. Every Arabic word must have full tashkeel.
+   IMPORTANT: The diacritized form is critical because the same consonantal skeleton can represent different words (e.g. عَلِمَ "he knew" vs عَلَّمَ "he taught").
 5. "tags": (array of 2-5 enums) theology|ethics|jurisprudence|worship|quran_commentary|prophetic_tradition|family|social_relations|knowledge|dua|afterlife|history|economy|governance
 6. "content_type": (enum) legal_ruling|ethical_teaching|narrative|prophetic_tradition|quranic_commentary|supplication|creedal|eschatological|biographical|theological|exhortation|cosmological
    - "theological": Verses/hadith about God's attributes, names, or nature (e.g. Quran 112:1, Ayat al-Kursi)
@@ -464,13 +459,14 @@ def build_user_message(request: PipelineRequest) -> str:
    - "exhortation": Advice, warnings, encouragement to action (e.g. letters, sermons)
    - "cosmological": Creation narratives, nature of the universe, jinn, angels
 7. "related_quran": (array) [{"ref": "surah:ayah", "relationship": "explicit"|"thematic", "word_start": int (optional), "word_end": int (optional)}] or []
-   For "explicit" references where the Quran verse is mentioned or cited in the text, include optional "word_start" and "word_end" (half-open indexing into word_analysis) marking where the reference/citation appears. This enables UI highlighting of Quran references. Omit for "thematic" references.
+   For "explicit" references where the Quran verse is mentioned or cited in the text, include optional "word_start" and "word_end" (half-open indexing into word_tags) marking where the reference/citation appears. This enables UI highlighting of Quran references. Omit for "thematic" references.
 8. "isnad_matn": {"isnad_ar": "...", "matn_ar": "...", "has_chain": boolean, "narrators": [...]}
    Each narrator: {"name_ar": "...", "name_en": "...", "role": "narrator"|"companion"|"imam"|"author", "position": int, "identity_confidence": "definite"|"likely"|"ambiguous", "ambiguity_note": string|null, "known_identity": string|null, "word_ranges": [{"word_start": int, "word_end": int}]}
    CRITICAL: If identity_confidence is "likely" or "ambiguous", ambiguity_note MUST be a non-empty string explaining why (e.g. "Multiple narrators share this name; identified as X based on the chain context"). Set ambiguity_note to null ONLY when identity_confidence is "definite".
-   "word_ranges" is optional but recommended — array of {word_start, word_end} marking where this narrator's name appears in word_analysis (half-open indexing, same as chunk word ranges). This enables clickable narrator highlighting in the UI.
+   "word_ranges" is optional but recommended — array of {word_start, word_end} marking where this narrator's name appears in word_tags (half-open indexing, same as chunk word ranges). This enables clickable narrator highlighting in the UI.
 9. "translations": Object with keys en, ur, tr, fa, id, bn, es, fr, de, ru, zh. Each:
-   {"text": "...", "summary": "...", "key_terms": {"تَقْوَى": "God-consciousness, piety", "عِلْم": "knowledge, sacred learning"}, "seo_question": "..."}
+   {"summary": "...", "key_terms": {"تَقْوَى": "God-consciousness, piety", "عِلْم": "knowledge, sacred learning"}, "seo_question": "..."}
+   NOTE: Do NOT include a "text" field — full translation text is reconstructed from chunk translations (field #10).
    CRITICAL: key_terms keys MUST be Arabic words with full diacritics taken from the text. Never use transliterations or Latin-script words as keys. The values are explanations in the respective language.
    SUMMARY GUIDANCE: The "summary" should be 2-3 sentences explaining the verse's meaning and significance. Where relevant, note the historical context — who the audience was, what circumstances prompted this teaching, and how the original audience would have understood the key terms.
 10. "chunks": (array) Paragraph-level segmentation of the text with aligned translations.
@@ -478,8 +474,8 @@ def build_user_message(request: PipelineRequest) -> str:
    CHUNKING RULES:
    - Every text MUST have at least 1 chunk. Even a single short sentence is 1 "body" chunk.
    - Segment at natural boundaries: topic shifts, speaker changes, Quran quotes within hadith, isnad→matn transition, opening formulae (بسم الله, أما بعد), closing supplications.
-   - word_start/word_end use Python half-open indexing: word_analysis[start:end] gives the chunk's words.
-   - Sequential, non-overlapping, complete: first chunk starts at 0, each chunk starts where the prior ended, last chunk ends at len(word_analysis).
+   - word_start/word_end use Python half-open indexing: word_tags[start:end] gives the chunk's words.
+   - Sequential, non-overlapping, complete: first chunk starts at 0, each chunk starts where the prior ended, last chunk ends at len(word_tags).
    - Chunk translations are plain text strings (NOT objects with summary/key_terms/seo_question — those stay at verse level in field #9).
    - All 11 language keys are required in each chunk's translations object.
    - CJK CONVENTION: For Chinese (zh), Japanese, and Korean text, chunk translations must NOT assume space-joining. When concatenating chunk translations to reconstruct full text, Chinese text should be joined with empty string (""), not space (" "). Write Chinese chunk translations so they form coherent text when concatenated directly without spaces.
@@ -495,13 +491,7 @@ def build_user_message(request: PipelineRequest) -> str:
    - Include phrases from the KEY PHRASES REFERENCE when they appear in the text.
    - You may extract NEW phrases not in the reference — the reference is a seed, not exhaustive.
    - Empty array [] is valid if no significant phrases are present.
-13. "similar_content_hints": (array of 0-3 objects) Thematic hints for finding similar hadiths/verses.
-   Each: {"description": "...", "theme": "..."}
-   - "description": Brief description of a similar narration or verse (1-2 sentences).
-   - "theme": Short thematic tag (lowercase_with_underscores) grouping this hint with similar ones across the corpus.
-   - These are UNVERIFIED suggestions based on your knowledge of hadith literature. The post-processing pipeline will verify against the actual corpus.
-   - Do NOT guess specific paths or hadith numbers — just describe the content and assign a theme.
-   - Empty array [] is valid for texts with no obvious parallels.""")
+""")
 
     return "\n".join(parts)
 
@@ -824,6 +814,10 @@ def strip_redundant_fields(result: dict) -> dict:
     for lang_obj in result.get("translations", {}).values():
         if isinstance(lang_obj, dict):
             lang_obj.pop("text", None)
+    # v4: if word_tags is present, strip the synthesized word_analysis
+    # (it has no translations, so word_tags is the canonical compact form)
+    if "word_tags" in result:
+        result.pop("word_analysis", None)
     return result
 
 
@@ -848,6 +842,12 @@ def reconstruct_fields(result: dict) -> dict:
     result = json.loads(json.dumps(result))  # deep copy
     words = result.get("word_analysis", [])
     chunks = result.get("chunks", [])
+
+    # Support word_tags format (v4) — build minimal word_analysis for reconstruction
+    word_tags = result.get("word_tags")
+    if word_tags and not words:
+        words = [{"word": wt[0], "pos": wt[1]} for wt in word_tags if isinstance(wt, list) and len(wt) >= 2]
+        result["word_analysis"] = words
 
     # Reconstruct diacritized_text from word_analysis
     if "diacritized_text" not in result and words:
@@ -903,20 +903,26 @@ def validate_result(result: dict) -> List[str]:
         List of error strings. Empty list means validation passed.
     """
     # Auto-reconstruct stripped format before validating
-    if "diacritized_text" not in result and "word_analysis" in result:
+    if "diacritized_text" not in result and ("word_analysis" in result or "word_tags" in result):
         result = reconstruct_fields(result)
 
     errors = []
 
+    # Detect v4 format: word_tags present, word_analysis absent
+    is_v4 = "word_tags" in result and "word_analysis" not in result
+
     # --- Required top-level fields ---
     required_fields = [
         "diacritized_text", "diacritics_status", "diacritics_changes",
-        "word_analysis", "tags", "content_type", "related_quran",
+        "tags", "content_type", "related_quran",
         "isnad_matn", "translations", "chunks",
     ]
     for field_name in required_fields:
         if field_name not in result:
             errors.append(f"missing required field: {field_name}")
+    # Either word_analysis (v3) or word_tags (v4) must be present
+    if "word_analysis" not in result and "word_tags" not in result:
+        errors.append("missing required field: word_analysis or word_tags")
 
     # --- diacritized_text ---
     if "diacritized_text" in result:
@@ -972,6 +978,28 @@ def validate_result(result: dict) -> List[str]:
                     has_arabic_letter = any(ord(ch) in _ARABIC_LETTER_RANGE for ch in word["word"])
                     if has_arabic_letter and not any(ch in _DIACRITIC_MARKS for ch in word["word"]):
                         errors.append(f"word_analysis[{i}] word '{word['word']}' has no diacritics (must be fully diacritized)")
+
+    # --- word_tags (v4 format) ---
+    if "word_tags" in result:
+        if not isinstance(result["word_tags"], list):
+            errors.append(f"word_tags must be array, got {type(result['word_tags']).__name__}")
+        else:
+            for i, entry in enumerate(result["word_tags"]):
+                if not isinstance(entry, list) or len(entry) < 2:
+                    errors.append(f"word_tags[{i}] must be [word, POS] pair")
+                    continue
+                word_str, pos_tag = entry[0], entry[1]
+                if not isinstance(word_str, str):
+                    errors.append(f"word_tags[{i}][0] must be string")
+                if pos_tag not in VALID_POS_TAGS:
+                    errors.append(f"invalid pos in word_tags[{i}]: {pos_tag}")
+                # Validate diacritics on word (skip punctuation-only entries)
+                if isinstance(word_str, str):
+                    _DIACRITIC_MARKS = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0670")
+                    _ARABIC_LETTER_RANGE = range(0x0621, 0x064B)
+                    has_arabic_letter = any(ord(ch) in _ARABIC_LETTER_RANGE for ch in word_str)
+                    if has_arabic_letter and not any(ch in _DIACRITIC_MARKS for ch in word_str):
+                        errors.append(f"word_tags[{i}] word '{word_str}' has no diacritics (must be fully diacritized)")
 
     # --- tags ---
     if "tags" in result:
@@ -1045,7 +1073,7 @@ def validate_result(result: dict) -> List[str]:
                             errors.append(f"related_quran word_start < 0 for ref {ref}")
                         if we <= ws:
                             errors.append(f"related_quran word_end <= word_start for ref {ref}")
-                        word_count = len(result.get("word_analysis", []))
+                        word_count = len(result.get("word_analysis", result.get("word_tags", [])))
                         if word_count and we > word_count:
                             errors.append(f"related_quran word_end {we} exceeds word_analysis length {word_count} for ref {ref}")
 
@@ -1090,7 +1118,7 @@ def validate_result(result: dict) -> List[str]:
                     if not isinstance(wr, list):
                         errors.append(f"narrator[{i}] word_ranges must be array")
                     else:
-                        word_count = len(result.get("word_analysis", []))
+                        word_count = len(result.get("word_analysis", result.get("word_tags", [])))
                         for j, rng in enumerate(wr):
                             if not isinstance(rng, dict):
                                 errors.append(f"narrator[{i}] word_ranges[{j}] must be object")
@@ -1121,7 +1149,8 @@ def validate_result(result: dict) -> List[str]:
                 if not isinstance(lang_data, dict):
                     errors.append(f"translations.{lang_key} must be object")
                     continue
-                for tf in ("text", "summary", "key_terms", "seo_question"):
+                required_trans_fields = ("summary", "key_terms", "seo_question") if is_v4 else ("text", "summary", "key_terms", "seo_question")
+                for tf in required_trans_fields:
                     if tf not in lang_data:
                         errors.append(f"translations.{lang_key} missing field: {tf}")
                 # Validate key_terms is a dict with Arabic keys
@@ -1149,7 +1178,7 @@ def validate_result(result: dict) -> List[str]:
         elif len(result["chunks"]) == 0:
             errors.append("chunks must have at least 1 entry")
         else:
-            word_count = len(result.get("word_analysis", []))
+            word_count = len(result.get("word_analysis", result.get("word_tags", [])))
             chunk_required_fields = ("chunk_type", "arabic_text", "word_start", "word_end", "translations")
             for i, chunk in enumerate(result["chunks"]):
                 if not isinstance(chunk, dict):

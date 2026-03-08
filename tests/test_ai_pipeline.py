@@ -225,18 +225,12 @@ class TestBuildSystemPrompt:
         assert "Shia" in prompt
         assert "Four Books" in prompt
 
-    def test_includes_word_dictionary(self):
+    def test_word_dictionary_section_removed_in_v4(self):
+        """v4: word dictionary section no longer included in system prompt."""
         from app.ai_pipeline import load_word_dictionary
         word_dict = load_word_dictionary()
-        if word_dict is None:
-            pytest.skip("word_dictionary.json not found")
         prompt = build_system_prompt(word_dictionary=word_dict)
-        assert "COMMON WORD TRANSLATIONS" in prompt
-        # Should contain some common Arabic particles
-        assert "\u0648\u064e" in prompt  # wa (and)
-        assert "\u0645\u0650\u0646\u0652" in prompt  # min (from)
-        assert "CONJ" in prompt
-        assert "PREP" in prompt
+        assert "COMMON WORD TRANSLATIONS" not in prompt
 
     def test_omits_word_dictionary_when_none(self):
         prompt = build_system_prompt(word_dictionary=None)
@@ -336,7 +330,7 @@ class TestBuildUserMessage:
         )
         msg = build_user_message(req)
         assert "diacritized_text" in msg
-        assert "word_analysis" in msg
+        assert "word_tags" in msg
         assert "translations" in msg
         assert "isnad_matn" in msg
         assert "chunks" in msg
@@ -1058,13 +1052,14 @@ class TestBuildUserMessageNewFields:
         assert '"key_phrases"' in msg
         assert "multi-word" in msg.lower()
 
-    def test_includes_similar_content_hints_field(self):
+    def test_similar_content_hints_removed_in_v4(self):
+        """v4: similar_content_hints field removed from prompt."""
         req = PipelineRequest(
             verse_path="/books/al-kafi:1:1:1:1",
             arabic_text="text",
         )
         msg = build_user_message(req)
-        assert '"similar_content_hints"' in msg
+        assert '"similar_content_hints"' not in msg
 
 
 # ===================================================================
@@ -1750,3 +1745,203 @@ class TestComputeRemaining:
             # Should be sorted by book then path length
             assert remaining[0]["book"] == "al-kafi"
             assert remaining[-1]["book"] == "quran"
+
+
+# ===================================================================
+# V4 word_tags tests
+# ===================================================================
+
+def _make_v4_result(**overrides):
+    """Build a minimally valid v4 pipeline result with word_tags."""
+    result = {
+        "diacritized_text": "بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ",
+        "diacritics_status": "validated",
+        "diacritics_changes": [],
+        "word_tags": [
+            ["بِسْمِ", "PREP"],
+            ["اللَّهِ", "N"],
+        ],
+        "tags": ["theology", "worship"],
+        "content_type": "creedal",
+        "related_quran": [],
+        "isnad_matn": {
+            "isnad_ar": "",
+            "matn_ar": "بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ",
+            "has_chain": False,
+            "narrators": [],
+        },
+        "translations": {},
+        "chunks": [
+            {
+                "chunk_type": "body",
+                "arabic_text": "بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ",
+                "word_start": 0,
+                "word_end": 2,
+                "translations": {lang: f"Body text ({lang})" for lang in VALID_LANGUAGE_KEYS},
+            },
+        ],
+    }
+    for lang in VALID_LANGUAGE_KEYS:
+        result["translations"][lang] = {
+            "summary": f"Summary in {lang}",
+            "key_terms": {"اللَّه": f"Allah in {lang}"},
+            "seo_question": f"Question in {lang}?",
+        }
+    result.update(overrides)
+    return result
+
+
+class TestV4WordTags:
+    """Tests for v4 word_tags format validation."""
+
+    def test_valid_v4_result_passes(self):
+        result = _make_v4_result()
+        errors = validate_result(result)
+        assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_word_tags_invalid_pos(self):
+        result = _make_v4_result(word_tags=[["بِسْمِ", "INVALID_POS"]])
+        errors = validate_result(result)
+        assert any("POS" in e or "pos" in e.lower() for e in errors)
+
+    def test_word_tags_not_list_of_pairs(self):
+        result = _make_v4_result(word_tags=["بِسْمِ", "N"])
+        errors = validate_result(result)
+        assert len(errors) > 0
+
+    def test_word_tags_empty(self):
+        result = _make_v4_result(word_tags=[])
+        errors = validate_result(result)
+        assert any("word" in e.lower() for e in errors)
+
+    def test_v4_translations_text_optional(self):
+        """v4 results don't require translations.*.text."""
+        result = _make_v4_result()
+        # Verify no "text" key in translations
+        for lang_data in result["translations"].values():
+            assert "text" not in lang_data
+        errors = validate_result(result)
+        assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_v3_translations_text_still_required(self):
+        """v3 results still require translations.*.text."""
+        result = _make_valid_result()
+        # Remove text from one language
+        result["translations"]["en"].pop("text")
+        errors = validate_result(result)
+        assert any("text" in e for e in errors)
+
+
+class TestV4StripReconstruct:
+    """Tests for v4 strip/reconstruct with word_tags."""
+
+    def test_strip_removes_word_analysis_when_word_tags_present(self):
+        result = _make_v4_result()
+        result["word_analysis"] = [{"word": "بِسْمِ", "pos": "PREP"}]
+        stripped = strip_redundant_fields(result)
+        assert "word_tags" in stripped
+        assert "word_analysis" not in stripped
+
+    def test_reconstruct_builds_word_analysis_from_word_tags(self):
+        result = _make_v4_result()
+        assert "word_analysis" not in result
+        reconstructed = reconstruct_fields(result)
+        assert "word_analysis" in reconstructed
+        assert len(reconstructed["word_analysis"]) == 2
+        assert reconstructed["word_analysis"][0]["word"] == "بِسْمِ"
+        assert reconstructed["word_analysis"][0]["pos"] == "PREP"
+
+    def test_reconstruct_translations_text_from_chunks(self):
+        result = _make_v4_result()
+        reconstructed = reconstruct_fields(result)
+        for lang in VALID_LANGUAGE_KEYS:
+            assert "text" in reconstructed["translations"][lang]
+
+
+class TestWordDictionary:
+    """Tests for word_dictionary.py module."""
+
+    def test_extract_unique_words_from_v4(self):
+        from app.pipeline_cli.word_dictionary import extract_unique_words
+        with tempfile.TemporaryDirectory() as tmpdir:
+            response = {
+                "result": {
+                    "word_tags": [["قَالَ", "V"], ["عَنْ", "PREP"], ["قَالَ", "V"]]
+                }
+            }
+            with open(os.path.join(tmpdir, "test.json"), "w", encoding="utf-8") as f:
+                json.dump(response, f)
+            counts = extract_unique_words(tmpdir)
+            assert counts["قَالَ|V"] == 2
+            assert counts["عَنْ|PREP"] == 1
+
+    def test_extract_unique_words_from_v3(self):
+        from app.pipeline_cli.word_dictionary import extract_unique_words
+        with tempfile.TemporaryDirectory() as tmpdir:
+            response = {
+                "result": {
+                    "word_analysis": [
+                        {"word": "قَالَ", "pos": "V", "translation": {}},
+                        {"word": "عَنْ", "pos": "PREP", "translation": {}},
+                    ]
+                }
+            }
+            with open(os.path.join(tmpdir, "test.json"), "w", encoding="utf-8") as f:
+                json.dump(response, f)
+            counts = extract_unique_words(tmpdir)
+            assert counts["قَالَ|V"] == 1
+            assert counts["عَنْ|PREP"] == 1
+
+    def test_assemble_word_analysis(self):
+        from app.pipeline_cli.word_dictionary import assemble_word_analysis
+        word_tags = [["قَالَ", "V"], ["عَنْ", "PREP"]]
+        dictionary = {
+            "قَالَ|V": {"en": "he said", "ur": "کہا"},
+            "عَنْ|PREP": {"en": "from", "ur": "سے"},
+        }
+        result = assemble_word_analysis(word_tags, dictionary)
+        assert len(result) == 2
+        assert result[0]["word"] == "قَالَ"
+        assert result[0]["pos"] == "V"
+        assert result[0]["translation"]["en"] == "he said"
+
+    def test_assemble_word_analysis_missing_entry(self):
+        from app.pipeline_cli.word_dictionary import assemble_word_analysis
+        word_tags = [["قَالَ", "V"]]
+        dictionary = {}  # Empty dictionary
+        result = assemble_word_analysis(word_tags, dictionary)
+        assert len(result) == 1
+        assert result[0]["translation"]["en"] == "???"
+
+    def test_find_missing_words(self):
+        from app.pipeline_cli.word_dictionary import find_missing_words
+        with tempfile.TemporaryDirectory() as tmpdir:
+            response = {
+                "result": {
+                    "word_tags": [["قَالَ", "V"], ["عَنْ", "PREP"]]
+                }
+            }
+            with open(os.path.join(tmpdir, "test.json"), "w", encoding="utf-8") as f:
+                json.dump(response, f)
+            dictionary = {"قَالَ|V": {"en": "he said"}}
+            missing = find_missing_words(tmpdir, dictionary)
+            assert len(missing) == 1
+            assert missing[0][0] == "عَنْ"
+            assert missing[0][1] == "PREP"
+
+    def test_build_translation_prompt(self):
+        from app.pipeline_cli.word_dictionary import build_translation_prompt
+        words = [("قَالَ", "V"), ("عَنْ", "PREP")]
+        prompt = build_translation_prompt(words)
+        assert "قَالَ" in prompt
+        assert "عَنْ" in prompt
+        assert "JSON" in prompt
+
+    def test_save_and_load_dictionary(self):
+        from app.pipeline_cli.word_dictionary import save_v4_dictionary, load_v4_dictionary
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "dict.json")
+            words = {"قَالَ|V": {"en": "he said"}}
+            save_v4_dictionary(words, path=path)
+            loaded = load_v4_dictionary(path=path)
+            assert loaded == words
