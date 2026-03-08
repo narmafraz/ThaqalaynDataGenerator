@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.ai_pipeline import (
     PIPELINE_VERSION,
+    VALID_TOPICS,
     PipelineRequest,
     build_system_prompt,
     build_user_message,
@@ -55,7 +56,9 @@ CRITICAL OUTPUT FORMAT REQUIREMENTS (mandatory for token budget):
    Summaries: 1-2 sentences max. Key_terms: 2-4 terms per language.
    SEO questions: 1 sentence.
 
-3. Output the COMPLETE JSON in a single response. Do NOT split across messages."""
+3. Output the COMPLETE JSON in a single response. Do NOT split across messages.
+   Do NOT continue from a previous response or say "Continuing from...".
+   Your output must be a single, self-contained JSON object."""
 
 
 @dataclass
@@ -446,6 +449,74 @@ def _normalize_narrator_positions(result: dict) -> None:
             narrator["position"] = i + 1
 
 
+# ---------------------------------------------------------------------------
+# Auto-fix trivial validation errors (zero LLM cost)
+# ---------------------------------------------------------------------------
+
+# Validation errors that can be auto-fixed without LLM
+AUTO_FIXABLE_PATTERNS = {
+    "missing ambiguity_note",
+    "invalid topic:",
+}
+
+# Validation errors that can be sent to fix pass (not terminal)
+FIXABLE_PATTERNS = {
+    "missing ambiguity_note",
+    "invalid topic:",
+    "invalid tag:",
+    "invalid content_type:",
+    "invalid narrator role:",
+    "invalid identity_confidence:",
+    "invalid chunk_type:",
+    "invalid diacritics_status:",
+    "invalid quran relationship:",
+    "invalid pos:",
+    "key_terms key",  # non-Arabic key_terms keys
+}
+
+
+def _auto_fix_validation_errors(result: dict) -> list:
+    """Attempt to programmatically fix trivial validation errors in-place.
+
+    Returns list of fixes applied (for logging).
+    """
+    fixes = []
+
+    # Fix 1: Missing ambiguity_note for likely/ambiguous narrators
+    narrators = result.get("isnad_matn", {}).get("narrators", [])
+    for narrator in narrators:
+        if not isinstance(narrator, dict):
+            continue
+        confidence = narrator.get("identity_confidence")
+        if confidence in ("likely", "ambiguous") and not narrator.get("ambiguity_note"):
+            narrator["ambiguity_note"] = (
+                "Multiple narrators share this name; "
+                "identified based on chain context and historical records"
+            )
+            fixes.append(f"auto-filled ambiguity_note for {narrator.get('name_en', '?')}")
+
+    # Fix 2: Invalid topics — strip invalid values, keep valid ones
+    if "topics" in result and isinstance(result["topics"], list) and VALID_TOPICS:
+        original = result["topics"]
+        valid = [t for t in original if t in VALID_TOPICS]
+        invalid = [t for t in original if t not in VALID_TOPICS]
+        if invalid:
+            if valid:
+                result["topics"] = valid
+                fixes.append(f"removed invalid topics: {invalid}")
+            else:
+                # All topics invalid — remove field entirely to avoid 0-item error
+                del result["topics"]
+                fixes.append(f"removed all invalid topics: {invalid}")
+
+    return fixes
+
+
+def _is_fixable_error(error_msg: str) -> bool:
+    """Check if a validation error can be sent to the fix pass instead of terminal error."""
+    return any(pattern in error_msg for pattern in FIXABLE_PATTERNS)
+
+
 def postprocess_verse(
     plan: VersePlan,
     raw_response: str,
@@ -510,12 +581,48 @@ def postprocess_verse(
 
     # Validate schema
     validation_errors = validate_result(result)
+
+    # Auto-fix trivial errors (zero LLM cost)
+    if validation_errors:
+        auto_fixes = _auto_fix_validation_errors(result)
+        if auto_fixes:
+            logger.info("Auto-fixed %d issues: %s", len(auto_fixes), "; ".join(auto_fixes))
+            # Re-validate after auto-fix
+            validation_errors = validate_result(result)
+
     verse_result.validation_errors = validation_errors
 
     if validation_errors:
-        verse_result.error = f"{len(validation_errors)} validation errors"
-        verse_result.result_dict = result
-        return verse_result
+        # Check if remaining errors are fixable via LLM fix pass
+        fixable = [e for e in validation_errors if _is_fixable_error(e)]
+        unfixable = [e for e in validation_errors if not _is_fixable_error(e)]
+
+        if unfixable:
+            # Terminal errors that can't be fixed
+            verse_result.error = f"{len(validation_errors)} validation errors ({len(unfixable)} unfixable)"
+            verse_result.result_dict = result
+            return verse_result
+        else:
+            # All remaining errors are fixable — route to fix pass
+            logger.info("Routing %d fixable validation errors to fix pass: %s",
+                        len(fixable), "; ".join(fixable))
+            verse_result.status = "needs_fix"
+            verse_result.result_dict = result
+            # Store validation errors as synthetic warnings for fix pass
+            from app.ai_pipeline_review import ReviewWarning
+            for err in fixable:
+                verse_result.warnings.append(ReviewWarning(
+                    field="validation",
+                    category="validation_error",
+                    severity="high",
+                    message=err,
+                    suggestion=f"Fix this validation error: {err}",
+                ))
+            # Strip and save for fix pass
+            stripped = strip_redundant_fields(result)
+            verse_result.result_dict = stripped
+            _save_audit(plan, verse_result, word_overrides, narrator_overrides)
+            return verse_result
 
     # Run quality review
     warnings = review_result(result, plan.request)

@@ -80,6 +80,36 @@ class NullEventLog:
     def close(self): pass
 
 
+class TeeWriter:
+    """Duplicates stdout writes to a log file so print() output is captured."""
+
+    def __init__(self, original, log_file):
+        self._original = original
+        self._log_file = log_file
+
+    def write(self, data):
+        self._original.write(data)
+        try:
+            self._log_file.write(data)
+            self._log_file.flush()
+        except Exception:
+            pass
+
+    def flush(self):
+        self._original.flush()
+        try:
+            self._log_file.flush()
+        except Exception:
+            pass
+
+    def reconfigure(self, **kwargs):
+        if hasattr(self._original, "reconfigure"):
+            self._original.reconfigure(**kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._original, name)
+
+
 # ---------------------------------------------------------------------------
 # Per-verse stats persistence
 # ---------------------------------------------------------------------------
@@ -186,6 +216,7 @@ class PipelineConfig:
     max_retries: int = 2
     max_fix_attempts: int = 1
     max_failures: int = 3
+    attempt_quarantined: bool = False
     dry_run: bool = False
     max_words: Optional[int] = None
     max_verses: Optional[int] = None
@@ -271,6 +302,7 @@ def build_queue(
     responses_dir: str,
     book: Optional[str] = None,
     volume: Optional[int] = None,
+    attempt_quarantined: bool = False,
 ) -> List[str]:
     """Filter verse paths to those not yet completed or quarantined."""
     books = [b.strip() for b in book.split(",")] if book else []
@@ -289,13 +321,13 @@ def build_queue(
         vid = verse_path_to_id(vp)
         if is_complete(vid, responses_dir):
             continue
-        # Skip quarantined
-        if is_quarantined(vid, responses_dir):
+        # Skip quarantined (unless --attempt-quarantined)
+        if not attempt_quarantined and is_quarantined(vid, responses_dir):
             skipped_quarantine += 1
             continue
         queue.append(vp)
     if skipped_quarantine:
-        logger.info("Skipped %d quarantined verses", skipped_quarantine)
+        logger.info("Skipped %d quarantined verses (use --attempt-quarantined to retry)", skipped_quarantine)
     return queue
 
 
@@ -756,6 +788,20 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
     # Session ID for this run
     config.session_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
+    # Per-run log file (human-readable, one file per session)
+    # Both logging and print() output are captured to the same file.
+    run_log_path = os.path.abspath(os.path.join(config.logs_dir, f"{config.session_id}.log"))
+    run_log_file = open(run_log_path, "w", encoding="utf-8")
+    # Use a StreamHandler pointing at the same file so logger + print share one file
+    file_handler = logging.StreamHandler(run_log_file)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
+    logging.getLogger().addHandler(file_handler)
+    # Tee stdout so print() output (progress, summary) also goes to the log file
+    original_stdout = sys.stdout
+    sys.stdout = TeeWriter(original_stdout, run_log_file)
+    logger.info("Run log: %s", run_log_path)
+
     # Event log (append-only JSONL)
     if not config.dry_run:
         config.event_log = EventLog(config.logs_dir)
@@ -792,12 +838,18 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
                 verse_paths.append(vp)
 
     # Build queue (filters out already-completed verses)
-    queue = build_queue(verse_paths, responses_dir)
+    queue = build_queue(verse_paths, responses_dir,
+                        attempt_quarantined=config.attempt_quarantined)
     if config.max_verses:
         queue = queue[:config.max_verses]
     if not queue:
         print("No verses to process — all complete or filtered out.", flush=True)
         config.event_log.close()
+        logging.getLogger().removeHandler(file_handler)
+        file_handler.close()
+        sys.stdout = original_stdout
+        run_log_file.close()
+        print(f"Run log: {run_log_path}")
         return
 
     stats = SessionStats(total_queued=len(queue))
@@ -891,6 +943,14 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
                          elapsed_min=round(elapsed_min, 1))
     config.event_log.close()
 
+    # Close per-run log file and restore stdout
+    logger.info("Run log saved: %s", run_log_path)
+    logging.getLogger().removeHandler(file_handler)
+    file_handler.close()
+    sys.stdout = original_stdout
+    run_log_file.close()
+    print(f"Run log: {run_log_path}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Pipeline v3 — AI content generation orchestrator")
@@ -907,6 +967,7 @@ def main():
     parser.add_argument("--max-verses", type=int, help="Limit number of verses to process")
     parser.add_argument("--max-words", type=int, help="Skip verses with more than N Arabic words (filters out long hadiths)")
     parser.add_argument("--max-failures", type=int, default=3, help="Quarantine verse after N cumulative failures (default: 3)")
+    parser.add_argument("--attempt-quarantined", action="store_true", help="Include quarantined verses in queue (default: skip them)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -934,6 +995,7 @@ def main():
         max_words=args.max_words,
         max_verses=args.max_verses,
         max_failures=args.max_failures,
+        attempt_quarantined=args.attempt_quarantined,
     )
 
     # Load verse paths

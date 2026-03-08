@@ -467,6 +467,7 @@ def build_user_message(request: PipelineRequest) -> str:
    For "explicit" references where the Quran verse is mentioned or cited in the text, include optional "word_start" and "word_end" (half-open indexing into word_analysis) marking where the reference/citation appears. This enables UI highlighting of Quran references. Omit for "thematic" references.
 8. "isnad_matn": {"isnad_ar": "...", "matn_ar": "...", "has_chain": boolean, "narrators": [...]}
    Each narrator: {"name_ar": "...", "name_en": "...", "role": "narrator"|"companion"|"imam"|"author", "position": int, "identity_confidence": "definite"|"likely"|"ambiguous", "ambiguity_note": string|null, "known_identity": string|null, "word_ranges": [{"word_start": int, "word_end": int}]}
+   CRITICAL: If identity_confidence is "likely" or "ambiguous", ambiguity_note MUST be a non-empty string explaining why (e.g. "Multiple narrators share this name; identified as X based on the chain context"). Set ambiguity_note to null ONLY when identity_confidence is "definite".
    "word_ranges" is optional but recommended — array of {word_start, word_end} marking where this narrator's name appears in word_analysis (half-open indexing, same as chunk word ranges). This enables clickable narrator highlighting in the UI.
 9. "translations": Object with keys en, ur, tr, fa, id, bn, es, fr, de, ru, zh. Each:
    {"text": "...", "summary": "...", "key_terms": {"تَقْوَى": "God-consciousness, piety", "عِلْم": "knowledge, sacred learning"}, "seo_question": "..."}
