@@ -347,6 +347,7 @@ def main():
 
     batch_num = 0
     verses_processed = 0
+    consecutive_zero_batches = 0
 
     while verses_processed < args.total_verses:
         batch_num += 1
@@ -377,10 +378,24 @@ def main():
                   f"{batch_passed} passed, {batch_errors} errors, "
                   f"${batch_cost:.2f}", flush=True)
 
-        # Check if queue is exhausted (batch produced 0 new completions)
+        # Check if queue is exhausted
+        # Only stop if 0 new completions AND 0 errors (truly nothing left to process).
+        # If there were errors but no completions, the queue isn't exhausted — the batch
+        # just failed, and the improvement agent may fix it for the next batch.
+        batch_had_errors = session.get("errors", 0) > 0 if session else False
         if new_this_batch <= 0 and not args.dry_run:
-            print(f"\nQueue appears exhausted (0 new completions). Stopping.", flush=True)
-            break
+            if not batch_had_errors:
+                print(f"\nQueue exhausted (0 new completions, 0 errors). Stopping.", flush=True)
+                break
+            consecutive_zero_batches += 1
+            print(f"\nBatch {batch_num}: 0 completions but {session.get('errors', 0)} errors "
+                  f"(consecutive: {consecutive_zero_batches}/3). Improvement agent may help.",
+                  flush=True)
+            if consecutive_zero_batches >= 3:
+                print("3 consecutive batches with 0 completions. Stopping.", flush=True)
+                break
+        else:
+            consecutive_zero_batches = 0
 
         # Step 2: Analyse + Improve (skip on last batch or if disabled)
         if not args.no_improve and not args.dry_run and verses_processed < args.total_verses:
