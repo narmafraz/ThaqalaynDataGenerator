@@ -69,6 +69,51 @@ Expected cost/successful verse: **$3.76 → ~$2.00**
 
 ---
 
+## v4.0.1 — 2026-03-08
+
+**Motivation**: Run `20260308T121930Z` (8 verses processed, 8 errors, $9.49 wasted — 100% waste rate). ALL 8 verses failed with two intertwined errors:
+- `word_analysis_error` (500 total): `word_analysis[N] missing field: translation` on every word of every verse
+- `translations.*.text missing field: text` for all 11 languages across all 8 verses
+
+### Root Cause
+
+`is_v4` was detected **after** `reconstruct_fields()` was called. When a v4 response (has `word_tags`, no `word_analysis`, no `diacritized_text`) was passed to `validate_result()`:
+
+1. `reconstruct_fields()` synthesised a minimal `word_analysis` (word/pos only, no translation) from `word_tags`
+2. `is_v4 = "word_tags" in result and "word_analysis" not in result` → **False** (word_analysis now present!)
+3. v3 word_analysis validation ran, finding `translation` missing on every word entry
+4. v3 translations validation required `text` field (not generated in v4), failing all 11 languages
+
+This affected all verses that lacked `diacritized_text` (the common case for stripped/raw model output).
+
+### Changes
+
+#### 1. Move `is_v4` detection before `reconstruct_fields()` call
+
+**What**: In `validate_result()`, moved `is_v4 = "word_tags" in result and "word_analysis" not in result` to run **before** `reconstruct_fields()` is called, so it correctly detects v4 format even after the synthetic word_analysis is injected.
+
+**Files changed**: `ai_pipeline.py` (`validate_result`)
+
+#### 2. Skip v3 word_analysis validation for v4 responses
+
+**What**: Changed `if "word_analysis" in result:` to `if "word_analysis" in result and not is_v4:` in the word_analysis validation block. The synthetic word_analysis injected by `reconstruct_fields()` for v4 responses lacks `translation` fields by design — it only has `word` and `pos` for reconstruction purposes.
+
+**Why**: Even with the `is_v4` fix above, the synthesised `word_analysis` would still trigger incorrect translation-field errors for any caller that adds word_analysis post-reconstruction.
+
+**Files changed**: `ai_pipeline.py` (`validate_result`)
+
+### Estimated Impact
+
+100% of errors in this batch were caused by this single bug. Fix eliminates all 8/8 erroring verses and $9.49 wasted cost (~$1.19/verse average).
+
+Expected pass rate: **0% → 85%+** (once is_v4 detection is correct, v4 validation path is taken)
+
+### Test Changes
+
+- No new tests added; existing 1379 tests continue to pass
+
+---
+
 ## v4.0.0 — 2026-03-08
 
 **Motivation**: v3 costs ~$2.00/hadith ($116K for 58K corpus). Word analysis (46% of output) translates the same Arabic words thousands of times. Translations.text duplicates chunk content. Target: $0.27-0.36/hadith with Haiku.

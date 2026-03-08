@@ -902,14 +902,15 @@ def validate_result(result: dict) -> List[str]:
     Returns:
         List of error strings. Empty list means validation passed.
     """
+    # Detect v4 format BEFORE reconstruct_fields(), which may inject a synthetic
+    # word_analysis from word_tags (making the post-reconstruct check always False).
+    is_v4 = "word_tags" in result and "word_analysis" not in result
+
     # Auto-reconstruct stripped format before validating
     if "diacritized_text" not in result and ("word_analysis" in result or "word_tags" in result):
         result = reconstruct_fields(result)
 
     errors = []
-
-    # Detect v4 format: word_tags present, word_analysis absent
-    is_v4 = "word_tags" in result and "word_analysis" not in result
 
     # --- Required top-level fields ---
     required_fields = [
@@ -949,7 +950,9 @@ def validate_result(result: dict) -> List[str]:
         )
 
     # --- word_analysis ---
-    if "word_analysis" in result:
+    # For v4 responses, word_analysis is a synthetic stub injected by reconstruct_fields()
+    # (word/pos only, no translation). Skip full v3 word_analysis validation in that case.
+    if "word_analysis" in result and not is_v4:
         if not isinstance(result["word_analysis"], list):
             errors.append(f"word_analysis must be array, got {type(result['word_analysis']).__name__}")
         else:
