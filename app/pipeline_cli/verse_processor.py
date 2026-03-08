@@ -808,13 +808,21 @@ def apply_fix(plan: VersePlan, fix_response: str,
     else:
         result = fix_data
 
-    # Expand compact format
-    if "word_analysis" in result:
+    # Handle v4 word_tags format in fix result
+    if "word_tags" in result and "word_analysis" not in result:
+        result["word_analysis"] = [
+            {"word": wt[0], "pos": wt[1]}
+            for wt in result["word_tags"]
+            if isinstance(wt, list) and len(wt) >= 2
+        ]
+    elif "word_analysis" in result:
+        # Expand compact format (v3)
         result["word_analysis"] = expand_compact_words(result["word_analysis"])
-
-    # Apply overrides
-    if "word_analysis" in result:
-        result["word_analysis"], _ = override_known_words(result["word_analysis"], word_dict_data)
+        # Apply word dictionary overrides (v3 only — v4 has no per-word translations)
+        first_entry = result["word_analysis"][0] if result["word_analysis"] else {}
+        has_translations = isinstance(first_entry, dict) and "translation" in first_entry
+        if has_translations:
+            result["word_analysis"], _ = override_known_words(result["word_analysis"], word_dict_data)
     result, _ = override_narrators(result, narrator_templates)
 
     # Auto-normalize narrator positions to 1-based

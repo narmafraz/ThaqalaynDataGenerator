@@ -942,5 +942,6 @@ INSTRUCTIONS:
 - Output a JSON object containing ONLY the corrected fields, using the same structure.
 - For nested fields (e.g., "translations.tr"), output the full parent object with the correction.
 - For word_analysis corrections, output the full word_analysis array with fixes applied.
+- For word_tags corrections, output the full word_tags array (each entry is [word, POS]).
 - Ensure all fixes maintain theological accuracy and use proper scripts/diacritics.
 - Do NOT output fields that don't need fixing."""
