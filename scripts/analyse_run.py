@@ -94,9 +94,8 @@ def load_log_events(content_dir: Path, session_id: Optional[str] = None) -> List
             continue
         try:
             evt = json.loads(line)
-            if session_id and evt.get("session_id") != session_id:
-                # Only filter session-level events; verse events don't have session_id
-                pass
+            if session_id and "session_id" in evt and evt["session_id"] != session_id:
+                continue  # skip events from other sessions
             events.append(evt)
         except json.JSONDecodeError:
             pass

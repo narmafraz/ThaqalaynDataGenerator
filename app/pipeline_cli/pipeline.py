@@ -528,7 +528,7 @@ async def process_verse(
                     continue
             # Second check: if fenced, content inside fences must start with {
             elif raw.startswith("`"):
-                from pipeline_cli.verse_processor import strip_code_fences
+                from app.pipeline_cli.verse_processor import strip_code_fences
                 inner = strip_code_fences(raw).strip()
                 if not inner.startswith("{"):
                     if gen_attempt == 0:

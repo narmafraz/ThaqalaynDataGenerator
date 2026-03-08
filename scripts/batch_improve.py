@@ -72,18 +72,24 @@ RULES:
 - After making changes, run tests:
   PYTHONPATH="$PWD:$PWD/app" SOURCE_DATA_DIR="../ThaqalaynDataSources/" .venv/Scripts/python.exe -m pytest --no-cov -q
 - If tests fail, revert your changes and explain what went wrong
-- If all tests pass, commit with:
-  git add -A && git commit -m "Pipeline improvement: <short description of changes>
+- If all tests pass, commit ONLY the files you changed (never use git add -A):
+  git add app/ai_pipeline.py app/ai_pipeline_review.py app/pipeline_cli/verse_processor.py PIPELINE_CHANGELOG.md
+  git commit -m "Pipeline improvement: <short description of changes>
 
-  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+  Co-Authored-By: Claude <noreply@anthropic.com>"
 - If there are no actionable improvements (all errors are timeouts, <2 occurrences, or already
   handled by existing code), say "No improvements needed" and exit without changes
 
-Key files:
+ALLOWED files to modify:
 - PIPELINE_CHANGELOG.md — READ FIRST, then document ALL changes with rationale and data
 - app/pipeline_cli/verse_processor.py — postprocessing, auto-fix logic, validation routing
 - app/ai_pipeline.py — system prompt (build_system_prompt), validation (validate_result), enums
 - app/ai_pipeline_review.py — quality review checks (review_result)
+
+NEVER modify or touch:
+- Any file under ThaqalaynDataSources/ (response data, stats, raw responses)
+- app/pipeline_cli/pipeline.py, scripts/batch_improve.py, scripts/analyse_run.py
+- Test files, config files, or any file not listed above
 """
 
 
@@ -199,6 +205,7 @@ Working directory: {PROJECT_ROOT}
         "--no-session-persistence",
         "--setting-sources", "",
         "--max-turns", "30",
+        "--max-budget-usd", "5.00",
         "--tools", "Read,Edit,Write,Bash,Grep,Glob",
         "--dangerously-skip-permissions",
         "--system-prompt", IMPROVEMENT_SYSTEM_PROMPT,
@@ -323,6 +330,8 @@ def main():
                         help="Filter to specific volume")
     parser.add_argument("--content-subdir", default="corpus",
                         help="AI content subdirectory (default: corpus)")
+    parser.add_argument("--max-cost", type=float, default=None,
+                        help="Maximum total cost in USD across all batches (pipeline + improvement)")
     parser.add_argument("--no-improve", action="store_true",
                         help="Skip improvement step (just batched execution)")
     parser.add_argument("--dry-run", action="store_true",
@@ -417,13 +426,33 @@ def main():
             if improve_result.get("cost_usd"):
                 total_improvement_cost += improve_result["cost_usd"]
 
-            # Verify tests pass after improvement
+            # Verify tests pass after improvement — auto-rollback if not
             if improve_result.get("status") == "ok":
                 tests_ok = run_tests()
                 if not tests_ok:
-                    print("WARNING: Tests failed after improvement. "
-                          "The improvement agent should have handled this. "
-                          "Continuing to next batch.", flush=True)
+                    print("WARNING: Tests failed after improvement. Rolling back...", flush=True)
+                    rollback = subprocess.run(
+                        ["git", "checkout", "."],
+                        cwd=str(PROJECT_ROOT),
+                        capture_output=True,
+                    )
+                    if rollback.returncode == 0:
+                        print("  Rolled back all uncommitted changes.", flush=True)
+                    else:
+                        # If agent already committed, revert the commit
+                        subprocess.run(
+                            ["git", "revert", "--no-edit", "HEAD"],
+                            cwd=str(PROJECT_ROOT),
+                            capture_output=True,
+                        )
+                        print("  Reverted last commit.", flush=True)
+
+        # Check cost limit
+        total_spent = total_cost + total_improvement_cost
+        if args.max_cost and total_spent >= args.max_cost:
+            print(f"\nCost limit reached: ${total_spent:.2f} >= ${args.max_cost:.2f}. Stopping.",
+                  flush=True)
+            break
 
     # Final summary
     overall_elapsed = (time.time() - overall_start) / 60
