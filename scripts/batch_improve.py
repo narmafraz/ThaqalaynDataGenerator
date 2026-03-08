@@ -147,13 +147,15 @@ def get_latest_session(content_dir: Path) -> dict | None:
     return json.loads(sessions[0].read_text(encoding="utf-8"))
 
 
-def run_analysis(args, content_dir: Path) -> str:
+def run_analysis(args, content_dir: Path, session_id: str | None = None) -> str:
     """Run analyse_run.py and return the LLM-format report."""
     cmd = [
         PYTHON_EXE, str(SCRIPT_DIR / "analyse_run.py"),
         "--subdir", args.content_subdir or "corpus",
         "--format", "llm",
     ]
+    if session_id:
+        cmd.extend(["--session", session_id])
     env = {
         **os.environ,
         "PYTHONPATH": f"{PROJECT_ROOT}{os.pathsep}{PROJECT_ROOT / 'app'}",
@@ -399,8 +401,9 @@ def main():
 
         # Step 2: Analyse + Improve (skip on last batch or if disabled)
         if not args.no_improve and not args.dry_run and verses_processed < args.total_verses:
-            # Run analysis
-            report = run_analysis(args, content_dir)
+            # Run analysis (pass session ID to ensure we analyse the right batch)
+            session_id = session.get("session_id") if session else None
+            report = run_analysis(args, content_dir, session_id=session_id)
             if not report:
                 print("WARNING: Analysis produced no report, skipping improvement", flush=True)
                 continue
