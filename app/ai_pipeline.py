@@ -902,9 +902,12 @@ def validate_result(result: dict) -> List[str]:
     Returns:
         List of error strings. Empty list means validation passed.
     """
-    # Detect v4 format BEFORE reconstruct_fields(), which may inject a synthetic
-    # word_analysis from word_tags (making the post-reconstruct check always False).
-    is_v4 = "word_tags" in result and "word_analysis" not in result
+    # Detect v4 format by presence of word_tags key alone.
+    # Do NOT check "word_analysis" not in result — both postprocess_verse() and
+    # reconstruct_fields() may inject a synthetic word_analysis stub from word_tags
+    # before validate_result() is called, making the combined check unreliable.
+    # A response is v4 if and only if it contains word_tags (authoritative).
+    is_v4 = "word_tags" in result
 
     # Auto-reconstruct stripped format before validating
     if "diacritized_text" not in result and ("word_analysis" in result or "word_tags" in result):

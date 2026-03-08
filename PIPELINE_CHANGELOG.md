@@ -4,6 +4,52 @@ Tracks changes to the AI content generation pipeline with rationale. Each entry 
 
 ---
 
+## v4.0.2 — 2026-03-08
+
+**Motivation**: Run `20260308T123736Z` (8 verses processed, 8 errors, $9.97 wasted — 100% waste rate). ALL 8 verses failed with the same two intertwined errors as v4.0.1 was supposed to fix:
+- `word_analysis_error` (491 total): `word_analysis[N] missing field: translation` on every word of every verse
+- `translations.*.text missing field: text` for all 11 languages across all 8 verses
+
+### Root Cause (regression of v4.0.1 fix)
+
+The v4.0.1 fix moved `is_v4` detection before `reconstruct_fields()` in `validate_result()`. However, a **second injection path** was missed: `postprocess_verse()` in `verse_processor.py` (lines 588–594) explicitly adds a synthetic `word_analysis` to the result from `word_tags` **before** calling `validate_result()`:
+
+```python
+if "word_tags" in result and "word_analysis" not in result:
+    result["word_analysis"] = [{"word": wt[0], "pos": wt[1]} for wt in result["word_tags"] ...]
+```
+
+So by the time `validate_result()` ran, `word_analysis` was already present, making `is_v4 = "word_tags" in result and "word_analysis" not in result` evaluate to **False**. v3 word_analysis validation then ran, requiring `translation` on every word entry (491 failures), and v3 translations validation required `text` on all 11 languages (88 failures).
+
+### Change
+
+#### 1. Fix `is_v4` detection to be resilient against synthetic `word_analysis`
+
+**What**: Changed `is_v4` detection in `validate_result()` from:
+```python
+is_v4 = "word_tags" in result and "word_analysis" not in result
+```
+to:
+```python
+is_v4 = "word_tags" in result
+```
+
+**Why**: A response is v4 if and only if the model output included `word_tags` — the presence of a synthetic `word_analysis` stub (injected by `postprocess_verse` or `reconstruct_fields` for reconstruction purposes) is irrelevant to format detection. The `"word_analysis" not in result` condition was the root cause of the regression in both v4.0.1 and this batch.
+
+**Files changed**: `ai_pipeline.py` (`validate_result`)
+
+### Estimated Impact
+
+100% of errors in this batch were caused by this single bug. Fix eliminates all 8/8 erroring verses and $9.97 wasted cost.
+
+Expected pass rate: **0% → 85%+**
+
+### Test Changes
+
+- Existing 1379 tests continue to pass
+
+---
+
 ## v3.2.0 — 2026-03-08
 
 **Motivation**: Run `20260308T001946Z` (100 al-istibsar verses, 20 workers) showed 38% error rate — 58 pass, 36 error, $218 total, $76 wasted (35%). Analysis revealed three dominant error categories: continuation artifacts (47% of errors), missing diacritics on abbreviations (11%), and single-pass failures on 60-199 word verses.
