@@ -6,6 +6,7 @@ Usage:
     python -m app.pipeline_cli.pipeline --single /books/al-kafi:1:1:1:1
     python -m app.pipeline_cli.pipeline --workers 5 --book al-kafi --volume 1
     python -m app.pipeline_cli.pipeline --workers 5 --v3  # use v3 word format
+    python -m app.pipeline_cli.pipeline --workers 5 --backend openai --openai-model gpt-4.1-mini
     python -m app.pipeline_cli.pipeline word-dict extract  # word dictionary ops
 """
 
@@ -211,6 +212,7 @@ class PipelineConfig:
     workers: int = DEFAULT_WORKERS
     model: str = "sonnet"
     fix_model: str = "sonnet"
+    backend: str = "claude"  # "claude" (claude -p) or "openai" (OpenAI API)
     data_dir: str = DEFAULT_DATA_DIR
     tmp_dir: str = DEFAULT_TMP_DIR
     responses_dir: Optional[str] = None
@@ -246,6 +248,7 @@ class SessionStats:
     errors: int = 0
     total_cost: float = 0.0
     total_output_tokens: int = 0
+    total_input_tokens: int = 0
     total_elapsed: float = 0.0
 
 
@@ -418,6 +421,37 @@ async def call_claude(
     return {"error": "max retries exceeded", "elapsed": 0}
 
 
+async def call_llm(
+    system_prompt: str,
+    user_message: str,
+    model: str = "sonnet",
+    backend: str = "claude",
+    max_retries: int = 2,
+    **kwargs,
+) -> dict:
+    """Dispatch LLM call to the appropriate backend.
+
+    Returns the same dict format regardless of backend:
+        {result, cost, output_tokens, elapsed, stop_reason, num_turns, ...}
+    """
+    if backend == "openai":
+        from app.pipeline_cli.openai_backend import call_openai
+        return await call_openai(
+            system_prompt, user_message,
+            model=model,
+            max_retries=max_retries,
+        )
+    else:
+        # Default: claude -p
+        return await call_claude(
+            system_prompt, user_message,
+            model=model,
+            max_retries=max_retries,
+            fallback_model=kwargs.get("fallback_model", "haiku"),
+            max_budget_usd=kwargs.get("max_budget_usd", 5.0),
+        )
+
+
 def quarantine_verse(verse_id: str, error: str, responses_dir: str) -> None:
     """Move a failed verse to the quarantine directory."""
     quarantine_dir = os.path.join(os.path.dirname(responses_dir), "quarantine")
@@ -491,6 +525,10 @@ async def process_verse(
             config.event_log.log("VERSE_ERROR", verse_id=verse_id, error="verse not found")
             return VerseResult(verse_id=verse_id, status="error", error="verse not found")
 
+        # Tag plan with backend/model for attribution
+        plan.backend = config.backend
+        plan.model = config.model
+
         # Skip if word count exceeds limit
         if config.max_words and plan.word_count > config.max_words:
             stats.skipped += 1
@@ -511,9 +549,13 @@ async def process_verse(
                 if shutdown_event.is_set():
                     return VerseResult(verse_id=verse_id, status="skipped")
 
-                logger.info("GEN %s (%d words, %s)%s...", verse_id, plan.word_count, plan.mode,
+                logger.info("GEN %s (%d words, %s, %s)%s...", verse_id, plan.word_count, plan.mode,
+                            config.backend,
                             " [retry]" if gen_attempt > 0 else "")
-                cr = await call_claude(plan.system_prompt, plan.user_message, config.model)
+                cr = await call_llm(
+                    plan.system_prompt, plan.user_message,
+                    model=config.model, backend=config.backend,
+                )
 
             if "error" in cr:
                 break  # real error, don't retry
@@ -597,6 +639,7 @@ async def process_verse(
         # Track costs
         stats.total_cost += cr.get("cost", 0)
         stats.total_output_tokens += cr.get("output_tokens", 0)
+        stats.total_input_tokens += cr.get("input_tokens", 0)
         stats.total_elapsed += cr.get("elapsed", 0)
 
         # Step 3: Postprocess (0 tokens)
@@ -629,11 +672,12 @@ async def process_verse(
                 if shutdown_event.is_set():
                     return result
 
-                logger.info("FIX %s (%d warnings)...", verse_id,
-                            len([w for w in result.warnings if w.severity in ("high", "medium")]))
-                fix_cr = await call_claude(
-                    fix_system, fix_user, config.fix_model,
-                    fallback_model="haiku",
+                logger.info("FIX %s (%d warnings, %s)...", verse_id,
+                            len([w for w in result.warnings if w.severity in ("high", "medium")]),
+                            config.backend)
+                fix_cr = await call_llm(
+                    fix_system, fix_user,
+                    model=config.fix_model, backend=config.backend,
                 )
 
             if "error" not in fix_cr:
@@ -872,7 +916,8 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
     stats = SessionStats(total_queued=len(queue))
     semaphore = asyncio.Semaphore(config.workers)
 
-    print(f"Pipeline v3 starting: {len(queue)} verses, {config.workers} workers, model={config.model}", flush=True)
+    print(f"Pipeline v4 starting: {len(queue)} verses, {config.workers} workers, "
+          f"backend={config.backend}, model={config.model}", flush=True)
     if config.dry_run:
         print("DRY RUN — no Claude calls will be made.", flush=True)
 
@@ -880,6 +925,7 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
                          session_id=config.session_id,
                          workers=config.workers, model=config.model,
                          fix_model=config.fix_model,
+                         backend=config.backend,
                          queue_size=len(queue),
                          max_words=config.max_words,
                          system_prompt_hash=prompt_hash)
@@ -907,7 +953,10 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
     print(f"Pipeline Complete ({elapsed_min:.1f} min)", flush=True)
     print(f"  Total: {stats.completed} processed, {stats.skipped} skipped", flush=True)
     print(f"  Pass: {stats.passed} | Fixed: {stats.fixed} | Errors: {stats.errors}", flush=True)
-    print(f"  Cost: ${stats.total_cost:.2f} | Tokens: {stats.total_output_tokens:,}", flush=True)
+    token_detail = f"Out: {stats.total_output_tokens:,}"
+    if stats.total_input_tokens:
+        token_detail = f"In: {stats.total_input_tokens:,} | {token_detail}"
+    print(f"  Cost: ${stats.total_cost:.2f} | {token_detail}", flush=True)
     print(f"{'=' * 60}", flush=True)
 
     # Build session summary dict
@@ -924,6 +973,7 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
         "fixed": stats.fixed,
         "errors": stats.errors,
         "total_cost_usd": round(stats.total_cost, 4),
+        "total_input_tokens": stats.total_input_tokens,
         "total_output_tokens": stats.total_output_tokens,
         "total_elapsed_s": round(stats.total_elapsed, 1),
         "avg_cost_per_verse": round(stats.total_cost / stats.completed, 4) if stats.completed else 0,
@@ -933,6 +983,7 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
             "workers": config.workers,
             "model": config.model,
             "fix_model": config.fix_model,
+            "backend": config.backend,
             "max_words": config.max_words,
             "max_verses": config.max_verses,
             "dry_run": config.dry_run,
@@ -1043,6 +1094,10 @@ def main():
     parser.add_argument("--max-failures", type=int, default=3, help="Quarantine verse after N cumulative failures (default: 3)")
     parser.add_argument("--attempt-quarantined", action="store_true", help="Include quarantined verses in queue (default: skip them)")
     parser.add_argument("--v3", action="store_true", help="Use v3 format (compact word_analysis with translations) instead of v4 word_tags")
+    parser.add_argument("--backend", default="claude", choices=["claude", "openai"],
+                        help="LLM backend: 'claude' (claude -p, default) or 'openai' (OpenAI API)")
+    parser.add_argument("--openai-model", default="gpt-4.1-mini",
+                        help="OpenAI model when --backend=openai (default: gpt-4.1-mini)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -1065,10 +1120,21 @@ def main():
     # Setup signal handlers
     setup_signal_handlers()
 
+    # Determine model based on backend
+    gen_model = args.model
+    fix_model = args.fix_model
+    if args.backend == "openai":
+        # Override model names if user didn't explicitly set them
+        if args.model == "sonnet":
+            gen_model = args.openai_model
+        if args.fix_model == "sonnet":
+            fix_model = args.openai_model
+
     config = PipelineConfig(
         workers=args.workers,
-        model=args.model,
-        fix_model=args.fix_model,
+        model=gen_model,
+        fix_model=fix_model,
+        backend=args.backend,
         data_dir=args.data_dir,
         tmp_dir=args.tmp_dir,
         responses_dir=args.responses_dir,

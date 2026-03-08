@@ -23,6 +23,9 @@ dev = [
 ai = [
     "anthropic>=0.40",
 ]
+openai = [
+    "openai>=1.0",
+]
 
 [build-system]
 requires = ["hatchling"]

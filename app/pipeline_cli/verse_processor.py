@@ -80,7 +80,7 @@ CRITICAL OUTPUT FORMAT REQUIREMENTS (mandatory for token budget):
 
 @dataclass
 class VersePlan:
-    """Output of prepare_verse — everything needed for a Claude call."""
+    """Output of prepare_verse — everything needed for an LLM call."""
     verse_path: str
     verse_id: str
     mode: str  # "single" or "chunked"
@@ -89,6 +89,8 @@ class VersePlan:
     user_message: str
     work_dir: str
     word_count: int = 0
+    backend: str = "claude"  # "claude" or "openai"
+    model: str = ""  # Actual model name used for generation
 
 
 @dataclass
@@ -693,13 +695,15 @@ def postprocess_verse(
 def _save_response(plan: VersePlan, stripped_result: dict, responses_dir: str) -> None:
     """Save the final response wrapper to the responses directory."""
     os.makedirs(responses_dir, exist_ok=True)
+    generation_method = "openai_api" if plan.backend == "openai" else "claude_cli_p"
+    model_label = plan.model or "pipeline_v4"
     wrapper = {
         "verse_path": plan.verse_path,
         "ai_attribution": {
-            "model": "pipeline_v4",
+            "model": model_label,
             "generated_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "pipeline_version": PIPELINE_VERSION,
-            "generation_method": "claude_cli_p",
+            "generation_method": generation_method,
         },
         "generation_attempts": 1,
         "result": stripped_result,
