@@ -273,11 +273,12 @@ def build_queue(
     volume: Optional[int] = None,
 ) -> List[str]:
     """Filter verse paths to those not yet completed or quarantined."""
+    books = [b.strip() for b in book.split(",")] if book else []
     queue = []
     skipped_quarantine = 0
     for vp in verse_paths:
-        # Filter by book
-        if book and not vp.startswith(f"/books/{book}:"):
+        # Filter by book(s)
+        if books and not any(vp.startswith(f"/books/{b}:") for b in books):
             continue
         # Filter by volume
         if volume is not None:
@@ -901,7 +902,7 @@ def main():
     parser.add_argument("--responses-dir", default=None, help="Override responses output directory")
     parser.add_argument("--dry-run", action="store_true", help="Prepare only, no Claude calls")
     parser.add_argument("--single", type=str, help="Process a single verse path")
-    parser.add_argument("--book", type=str, help="Filter to specific book (e.g., al-kafi)")
+    parser.add_argument("--book", type=str, help="Filter to specific book(s), comma-separated (e.g., al-kafi,al-istibsar)")
     parser.add_argument("--volume", type=int, help="Filter to specific volume")
     parser.add_argument("--max-verses", type=int, help="Limit number of verses to process")
     parser.add_argument("--max-words", type=int, help="Skip verses with more than N Arabic words (filters out long hadiths)")
@@ -946,9 +947,10 @@ def main():
 
     # Apply book/volume filter
     if args.book or args.volume is not None:
+        books = [b.strip() for b in args.book.split(",")] if args.book else []
         verse_paths = [
             vp for vp in verse_paths
-            if (not args.book or vp.startswith(f"/books/{args.book}:"))
+            if (not books or any(vp.startswith(f"/books/{b}:") for b in books))
             and (args.volume is None or vp.replace("/books/", "").split(":")[1] == str(args.volume)
                  if len(vp.replace("/books/", "").split(":")) >= 2 else True)
         ]
