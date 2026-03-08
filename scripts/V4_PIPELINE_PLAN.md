@@ -275,4 +275,4 @@ Handles missing dictionary entries gracefully (marks as `"???"` for later fill-i
 
 **Recommendation**: Implement the v4 architectural changes (Phases 1-6), then run with Haiku to hit the budget target. The v4 changes alone save 59% of output, and Haiku gives another 3-5x on top. Combined: **$0.27-0.36/hadith, completing 58K hadith in ~1-1.5 months for ~$16-21K.**
 
-If that's still too expensive, switching to OpenAI API (GPT-4.1-mini) in the future would drop to ~$0.005-0.01/hadith ($290-580 total). That's a separate implementation effort but the v4 architectural changes (word dictionary, chunks-only) carry over and amplify the savings regardless of model.
+**OpenAI API backend is now IMPLEMENTED** via `--backend openai`. GPT-4.1-mini drops to ~$0.06/hadith (~$3.5K total for 58K corpus). GPT-4.1-nano drops to ~$0.02/hadith (~$1K total). The v4 architectural changes (word dictionary, chunks-only) carry over and amplify the savings regardless of model. See `app/pipeline_cli/openai_backend.py` and `ThaqalaynDataGenerator/CLAUDE.md` for details.

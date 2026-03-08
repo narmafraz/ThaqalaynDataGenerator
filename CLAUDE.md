@@ -173,10 +173,11 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 - `DESTINATION_DIR`: Output directory for generated JSON files (default: `../ThaqalaynData/`)
 - `PYTHONPATH`: Must include project root for imports to work
 - `AI_CONTENT_SUBDIR`: Output subdirectory for AI pipeline (default: `samples`, set to `corpus` for full runs)
+- `OPENAI_API_KEY`: OpenAI API key (only needed when running with `--backend openai`)
 
 ## AI Content Pipeline
 
-AI content is generated via `claude -p` (CLI print mode) with a Python asyncio orchestrator. No Anthropic API key needed.
+AI content is generated via `claude -p` (CLI print mode, default) or OpenAI API (`--backend openai`) with a Python asyncio orchestrator. Claude backend needs no API key; OpenAI backend requires `OPENAI_API_KEY`.
 
 ### Two-Phase Workflow (v3/v4)
 
@@ -240,10 +241,10 @@ Ten automated checks beyond schema validation:
 {
   "verse_path": "/books/al-kafi:1:1:1:1",
   "ai_attribution": {
-    "model": "sonnet",
+    "model": "pipeline_v4",
     "generated_date": "2026-03-08",
     "pipeline_version": "4.0.0",
-    "generation_method": "claude_cli_p"
+    "generation_method": "claude_cli_p"  // or "openai_api" when using --backend openai
   },
   "generation_attempts": 1,
   "result": { /* validated pipeline result */ }
@@ -270,6 +271,12 @@ python -m app.pipeline_cli.pipeline --book al-kafi --workers 20 --max-words 199
 
 # Retry quarantined verses
 python -m app.pipeline_cli.pipeline --book al-kafi --attempt-quarantined
+
+# OpenAI backend (requires OPENAI_API_KEY env var and pip install openai)
+OPENAI_API_KEY=sk-... python -m app.pipeline_cli.pipeline --backend openai --workers 20 --book al-kafi --volume 1
+
+# OpenAI with specific model
+python -m app.pipeline_cli.pipeline --backend openai --openai-model gpt-4.1-nano --max-verses 10
 ```
 
 ### Validation
@@ -316,6 +323,48 @@ The pipeline generates 12 fields per hadith/verse:
 **Generation attempts**: Each wrapper tracks `generation_attempts` (max 3). Verses exceeding the limit are quarantined in `ai-content/{subdir}/quarantine/`. `validate_wrapper()` validates the outer wrapper format.
 
 **Narrator word_ranges**: Optional `word_ranges` field per narrator in `isnad_matn.narrators` enables UI narrator highlighting. Format: `[{"word_start": int, "word_end": int}]`.
+
+### OpenAI API Backend (Alternative to `claude -p`)
+
+The pipeline supports an alternative OpenAI API backend via `--backend openai`. This is dramatically cheaper than `claude -p` for large corpus runs.
+
+**Module**: `app/pipeline_cli/openai_backend.py`
+
+**Requirements**:
+- `pip install openai` (or `uv pip install openai`)
+- `OPENAI_API_KEY` environment variable set
+
+**Usage**:
+```bash
+# Use OpenAI with gpt-4.1-mini (default OpenAI model)
+python -m app.pipeline_cli.pipeline --backend openai --workers 20 --book al-kafi --volume 1
+
+# Use a specific OpenAI model
+python -m app.pipeline_cli.pipeline --backend openai --openai-model gpt-4.1-nano --workers 20
+
+# Override model explicitly
+python -m app.pipeline_cli.pipeline --backend openai --model gpt-4.1 --workers 10
+```
+
+**Supported models and pricing** (per 1M tokens):
+
+| Model | Input | Output | Est. $/hadith (v4) | 58K corpus |
+|-------|-------|--------|---------------------|------------|
+| gpt-4.1 | $2.00 | $8.00 | ~$0.28 | ~$16K |
+| gpt-4.1-mini | $0.40 | $1.60 | ~$0.06 | ~$3.5K |
+| gpt-4.1-nano | $0.10 | $0.40 | ~$0.02 | ~$1K |
+| gpt-4o | $2.50 | $10.00 | ~$0.36 | ~$21K |
+| gpt-4o-mini | $0.15 | $0.60 | ~$0.03 | ~$1.7K |
+
+**Key differences from `claude -p`**:
+- Cost computed from token counts (OpenAI doesn't return `total_cost_usd`)
+- Both input and output tokens tracked in session stats
+- `ai_attribution.generation_method` set to `"openai_api"` (vs `"claude_cli_p"`)
+- Built-in retry with exponential backoff (3 retries via SDK + 2 pipeline retries)
+- 5-minute timeout per request (vs 30-minute for `claude -p`)
+- No fallback model mechanism (OpenAI handles this server-side)
+
+**Default is unchanged**: Running the pipeline without `--backend` uses `claude -p` as before.
 
 ## API-Only Code (Not Used)
 
