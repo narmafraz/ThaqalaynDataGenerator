@@ -155,6 +155,7 @@ def prepare_verse(
     data_dir: Optional[str] = None,
     include_few_shot: bool = False,
     use_compact_format: bool = True,
+    use_v3: bool = False,
 ) -> Optional[VersePlan]:
     """Extract verse data and build prompts. Zero Claude tokens.
 
@@ -164,6 +165,7 @@ def prepare_verse(
         data_dir: ThaqalaynData directory
         include_few_shot: Whether to include few-shot examples in system prompt
         use_compact_format: Whether to add compact array format instructions
+        use_v3: If True, use v3 compact word format instead of v4 word_tags
 
     Returns:
         VersePlan or None if verse not found.
@@ -182,9 +184,12 @@ def prepare_verse(
 
     system_prompt = build_system_prompt(few_shot_examples=few_shot)
 
-    # Add compact word format instructions
+    # Add compact format instructions (v3 or v4)
     if use_compact_format:
-        system_prompt += "\n" + COMPACT_WORD_INSTRUCTIONS
+        if use_v3:
+            system_prompt += "\n" + COMPACT_WORD_INSTRUCTIONS
+        else:
+            system_prompt += "\n" + V4_COMPACT_INSTRUCTIONS
 
     user_message = build_user_message(request)
 
@@ -207,6 +212,7 @@ def prepare_verse(
             "mode": "chunked" if word_count > 200 else "single",
             "include_few_shot": include_few_shot,
             "use_compact_format": use_compact_format,
+            "pipeline_format": "v3" if use_v3 else "v4",
             "prepared_at": datetime.now(timezone.utc).isoformat(),
         }, f, indent=2)
     logger.info("WROTE %s", meta_path)

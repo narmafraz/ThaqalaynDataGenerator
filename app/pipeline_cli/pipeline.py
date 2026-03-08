@@ -1,11 +1,12 @@
-"""Pipeline v3 orchestrator — asyncio-based parallel verse processing.
+"""Pipeline v4 orchestrator — asyncio-based parallel verse processing.
 
 Usage:
     python -m app.pipeline_cli.pipeline --workers 5
     python -m app.pipeline_cli.pipeline --workers 5 --dry-run
     python -m app.pipeline_cli.pipeline --single /books/al-kafi:1:1:1:1
-    python -m app.pipeline_cli.pipeline --workers 5 --resume
     python -m app.pipeline_cli.pipeline --workers 5 --book al-kafi --volume 1
+    python -m app.pipeline_cli.pipeline --workers 5 --v3  # use v3 word format
+    python -m app.pipeline_cli.pipeline word-dict extract  # word dictionary ops
 """
 
 import argparse
@@ -217,6 +218,7 @@ class PipelineConfig:
     max_fix_attempts: int = 1
     max_failures: int = 3
     attempt_quarantined: bool = False
+    use_v3: bool = False
     dry_run: bool = False
     max_words: Optional[int] = None
     max_verses: Optional[int] = None
@@ -483,7 +485,7 @@ async def process_verse(
 
     try:
         # Step 1: Prepare (0 tokens)
-        plan = prepare_verse(verse_path, work_dir, data_dir=config.data_dir)
+        plan = prepare_verse(verse_path, work_dir, data_dir=config.data_dir, use_v3=config.use_v3)
         if plan is None:
             stats.errors += 1
             config.event_log.log("VERSE_ERROR", verse_id=verse_id, error="verse not found")
@@ -952,8 +954,65 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
     print(f"Run log: {run_log_path}")
 
 
+def _handle_word_dict(args):
+    """Handle word-dict subcommands: extract, missing, stats."""
+    from app.pipeline_cli.word_dictionary import (
+        extract_unique_words,
+        find_missing_words,
+        load_v4_dictionary,
+        save_v4_dictionary,
+    )
+
+    responses_dir = args.responses_dir or AI_RESPONSES_DIR
+    subcmd = args.subcommand
+
+    if subcmd == "extract":
+        print(f"Extracting unique words from {responses_dir}...", flush=True)
+        counts = extract_unique_words(responses_dir)
+        print(f"Found {len(counts)} unique (word, POS) pairs", flush=True)
+        # Show top 20
+        for key, count in list(counts.items())[:20]:
+            word, pos = key.split("|", 1)
+            print(f"  {count:>5}x  {word} ({pos})", flush=True)
+        if len(counts) > 20:
+            print(f"  ... and {len(counts) - 20} more", flush=True)
+
+    elif subcmd == "missing":
+        dictionary = load_v4_dictionary()
+        print(f"Dictionary has {len(dictionary)} entries", flush=True)
+        missing = find_missing_words(responses_dir, dictionary)
+        print(f"Found {len(missing)} missing (word, POS) pairs", flush=True)
+        for word, pos, count in missing[:20]:
+            print(f"  {count:>5}x  {word} ({pos})", flush=True)
+        if len(missing) > 20:
+            print(f"  ... and {len(missing) - 20} more", flush=True)
+
+    elif subcmd == "stats":
+        dictionary = load_v4_dictionary()
+        counts = extract_unique_words(responses_dir)
+        covered = sum(1 for k in counts if k in dictionary)
+        total = len(counts)
+        pct = (covered / total * 100) if total else 0
+        print(f"Dictionary: {len(dictionary)} entries", flush=True)
+        print(f"Corpus words: {total} unique (word, POS) pairs", flush=True)
+        print(f"Coverage: {covered}/{total} ({pct:.1f}%)", flush=True)
+        if total > covered:
+            print(f"Missing: {total - covered} pairs need translation", flush=True)
+
+    else:
+        print("Usage: python -m app.pipeline_cli.pipeline word-dict <extract|missing|stats>", flush=True)
+        print("  extract  — Extract unique (word, POS) pairs from responses", flush=True)
+        print("  missing  — Find pairs not yet in the dictionary", flush=True)
+        print("  stats    — Show dictionary coverage statistics", flush=True)
+        sys.exit(1)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Pipeline v3 — AI content generation orchestrator")
+    parser = argparse.ArgumentParser(description="Pipeline v4 — AI content generation orchestrator")
+    parser.add_argument("command", nargs="?", default="run",
+                        help="Command: run (default), word-dict")
+    parser.add_argument("subcommand", nargs="?", default=None,
+                        help="Subcommand for word-dict: extract, missing, stats")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="Concurrent Claude calls")
     parser.add_argument("--model", default="sonnet", help="Model for generation (default: sonnet)")
     parser.add_argument("--fix-model", default="sonnet", help="Model for fix pass (default: sonnet)")
@@ -968,6 +1027,7 @@ def main():
     parser.add_argument("--max-words", type=int, help="Skip verses with more than N Arabic words (filters out long hadiths)")
     parser.add_argument("--max-failures", type=int, default=3, help="Quarantine verse after N cumulative failures (default: 3)")
     parser.add_argument("--attempt-quarantined", action="store_true", help="Include quarantined verses in queue (default: skip them)")
+    parser.add_argument("--v3", action="store_true", help="Use v3 format (compact word_analysis with translations) instead of v4 word_tags")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -980,6 +1040,12 @@ def main():
         stream=sys.stdout,
     )
     sys.stdout.reconfigure(encoding="utf-8")
+
+    # Handle word-dict subcommand
+    if args.command == "word-dict":
+        os.environ.setdefault("SOURCE_DATA_DIR", "../ThaqalaynDataSources/")
+        _handle_word_dict(args)
+        return
 
     # Setup signal handlers
     setup_signal_handlers()
@@ -996,6 +1062,7 @@ def main():
         max_verses=args.max_verses,
         max_failures=args.max_failures,
         attempt_quarantined=args.attempt_quarantined,
+        use_v3=args.v3,
     )
 
     # Load verse paths
