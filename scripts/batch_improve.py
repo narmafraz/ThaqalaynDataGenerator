@@ -49,28 +49,41 @@ You are an AI pipeline engineer improving an Islamic scripture content generatio
 You will receive an analysis report from the latest batch of processed verses.
 
 Your job:
-1. Read the analysis report carefully
-2. Identify the top 3-5 most impactful improvements (ranked by: error_count × cost_per_error)
-3. For each improvement, make the actual code change
-4. Update PIPELINE_CHANGELOG.md with what you changed and why
-5. Run the test suite to verify nothing is broken
+1. Read PIPELINE_CHANGELOG.md FIRST — understand what changes have already been made and why.
+   Do NOT re-apply a change that was already tried and reverted. Do NOT revert a change that
+   was made deliberately unless you have strong data showing it made things worse.
+2. Read the analysis report carefully
+3. Identify the top 3-5 most impactful improvements (ranked by: error_count × cost_per_error)
+4. For each improvement, make the actual code change
+5. Update PIPELINE_CHANGELOG.md with what you changed and why (include batch number, error counts,
+   and cost data that motivated the change)
+6. Run the test suite to verify nothing is broken
+7. If all tests pass, commit your changes with a descriptive message
 
 RULES:
+- ALWAYS read PIPELINE_CHANGELOG.md before making any changes — it is the single source of truth
+  for what has been tried, what works, and what was reverted. Respect prior decisions.
 - Only make changes that are clearly supported by the data in the report
 - Be conservative — a small targeted fix is better than a large refactor
 - If an error type has <2 occurrences, skip it (not statistically significant)
 - Focus on the postprocessing/validation layer (verse_processor.py, ai_pipeline.py) and prompts
 - Do NOT change the pipeline orchestrator (pipeline.py) or test infrastructure
-- Do NOT change the analyse_run.py script
-- After making changes, run: PYTHONPATH="$PWD:$PWD/app" SOURCE_DATA_DIR="../ThaqalaynDataSources/" .venv/Scripts/python.exe -m pytest --no-cov -q
+- Do NOT change the analyse_run.py or batch_improve.py scripts
+- After making changes, run tests:
+  PYTHONPATH="$PWD:$PWD/app" SOURCE_DATA_DIR="../ThaqalaynDataSources/" .venv/Scripts/python.exe -m pytest --no-cov -q
 - If tests fail, revert your changes and explain what went wrong
-- If there are no actionable improvements (all errors are timeouts, <2 occurrences, or already handled), say "No improvements needed" and exit
+- If all tests pass, commit with:
+  git add -A && git commit -m "Pipeline improvement: <short description of changes>
+
+  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+- If there are no actionable improvements (all errors are timeouts, <2 occurrences, or already
+  handled by existing code), say "No improvements needed" and exit without changes
 
 Key files:
+- PIPELINE_CHANGELOG.md — READ FIRST, then document ALL changes with rationale and data
 - app/pipeline_cli/verse_processor.py — postprocessing, auto-fix logic, validation routing
 - app/ai_pipeline.py — system prompt (build_system_prompt), validation (validate_result), enums
 - app/ai_pipeline_review.py — quality review checks (review_result)
-- PIPELINE_CHANGELOG.md — document ALL changes here with rationale and data
 """
 
 
