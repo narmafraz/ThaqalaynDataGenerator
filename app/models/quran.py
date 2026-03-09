@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Set, Union
 from app.models.crumb import Crumb, Navigation
 from app.models.enums import Language, PartType
 from app.models.translation import Translation
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
 
 
 class SpecialText(BaseModel):
@@ -29,6 +29,13 @@ class Verse(BaseModel):
 	source_url: Optional[str] = None
 	text: Optional[List[str]] = None
 	translations: Optional[Dict[str, List[str]]] = None
+
+	@field_serializer('relations')
+	@classmethod
+	def sort_relations(cls, v):
+		if v is None:
+			return None
+		return {k: sorted(vals) for k, vals in v.items()}
 
 class Chapter(BaseModel):
 	author: Optional[Dict[str, str]] = None

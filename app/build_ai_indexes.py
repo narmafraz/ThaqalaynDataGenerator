@@ -143,11 +143,13 @@ def build_topics_index(dest_dir: Optional[str] = None) -> dict:
                         index[l1_key][topic_key]["paths"].append(verse_path)
                         total_topics += 1
 
-    # Prune empty categories (L1s with all-zero L2s)
+    # Prune empty categories (L1s with all-zero L2s) and sort paths for stable output
     pruned = {}
     for l1_key, l2s in index.items():
         non_empty = {k: v for k, v in l2s.items() if v["count"] > 0}
         if non_empty:
+            for v in non_empty.values():
+                v["paths"] = sorted(v["paths"])
             pruned[l1_key] = non_empty
 
     # Write to index/topics.json
@@ -206,6 +208,10 @@ def build_phrases_index(dest_dir: Optional[str] = None) -> dict:
                     # Dedup paths
                     if verse_path not in index[normalized_key]["paths"]:
                         index[normalized_key]["paths"].append(verse_path)
+
+    # Sort paths within each phrase for stable output
+    for entry in index.values():
+        entry["paths"] = sorted(entry["paths"])
 
     # Write to index/phrases.json
     index_dir = os.path.join(dest_dir, "index")
