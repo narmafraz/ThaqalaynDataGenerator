@@ -1089,7 +1089,7 @@ def main():
     parser.add_argument("--tmp-dir", default=DEFAULT_TMP_DIR, help="Temp working directory")
     parser.add_argument("--responses-dir", default=None, help="Override responses output directory")
     parser.add_argument("--dry-run", action="store_true", help="Prepare only, no Claude calls")
-    parser.add_argument("--single", type=str, help="Process a single verse path")
+    parser.add_argument("--single", type=str, nargs="+", help="Process one or more specific verse paths")
     parser.add_argument("--book", type=str, help="Filter to specific book(s), comma-separated (e.g., al-kafi,al-istibsar)")
     parser.add_argument("--volume", type=int, help="Filter to specific volume")
     parser.add_argument("--max-verses", type=int, help="Limit number of verses to process")
@@ -1157,7 +1157,7 @@ def main():
 
     # Load verse paths
     if args.single:
-        verse_paths = [args.single]
+        verse_paths = list(args.single)
     else:
         verse_paths = load_corpus_manifest()
         if not verse_paths:
