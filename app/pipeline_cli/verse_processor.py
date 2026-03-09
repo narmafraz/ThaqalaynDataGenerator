@@ -795,7 +795,7 @@ def _save_response(plan: VersePlan, stripped_result: dict, responses_dir: str) -
     """Save the final response wrapper to the responses directory."""
     os.makedirs(responses_dir, exist_ok=True)
     generation_method = "openai_api" if plan.backend == "openai" else "claude_cli_p"
-    model_label = plan.model or "pipeline_v4"
+    model_label = plan.model or "unknown"
     wrapper = {
         "verse_path": plan.verse_path,
         "ai_attribution": {

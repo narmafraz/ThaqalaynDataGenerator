@@ -17,6 +17,7 @@ from app.thaqalayn_api import init_all_thaqalayn_api_books
 from app.ghbook import init_ghbook_books
 from app.ai_content_merger import merge_ai_content
 from app.create_indices import create_indices
+from app.lib_db import write_file
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,7 +36,15 @@ def init():
     link_all_books_to_quran()
     create_indices()
     merge_ai_content(report)
+    _write_data_version()
     report.print_summary()
+
+
+def _write_data_version():
+    """Write index/data_version.json with a timestamp for client cache invalidation."""
+    from datetime import datetime, timezone
+    version = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    write_file("/index/data_version", {"version": version})
 
 def main():
     logger.info("Creating initial data")

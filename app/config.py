@@ -24,8 +24,8 @@ AI_PIPELINE_DATA_DIR = os.path.join(SOURCE_DATA_DIR, "ai-pipeline-data")
 AI_CONTENT_DIR = os.path.join(SOURCE_DATA_DIR, "ai-content")
 
 # Configurable output subdirectory for AI pipeline runs.
-# Set AI_CONTENT_SUBDIR=corpus for full-corpus runs (default: samples).
-AI_CONTENT_SUBDIR = os.environ.get("AI_CONTENT_SUBDIR", "samples")
+# Set AI_CONTENT_SUBDIR=samples for dev/testing (default: corpus).
+AI_CONTENT_SUBDIR = os.environ.get("AI_CONTENT_SUBDIR", "corpus")
 AI_RESPONSES_DIR = os.path.join(AI_CONTENT_DIR, AI_CONTENT_SUBDIR, "responses")
 AI_CACHE_DIR = os.path.join(AI_CONTENT_DIR, AI_CONTENT_SUBDIR, "cache")
 AI_QUARANTINE_DIR = os.path.join(AI_CONTENT_DIR, AI_CONTENT_SUBDIR, "quarantine")

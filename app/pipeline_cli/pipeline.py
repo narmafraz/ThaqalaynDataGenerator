@@ -419,6 +419,7 @@ async def call_claude(
             "elapsed": round(elapsed, 2),
             "stop_reason": data.get("stop_reason"),
             "num_turns": data.get("num_turns", 1),
+            "model": data.get("model", model),
         }
 
     return {"error": "max retries exceeded", "elapsed": 0}
@@ -600,6 +601,10 @@ async def process_verse(
                         stats.total_output_tokens += cr.get("output_tokens", 0)
                         continue
             break  # valid-looking response or final attempt
+
+        # Update plan.model with actual model ID from response (if available)
+        if cr.get("model"):
+            plan.model = cr["model"]
 
         if "error" in cr:
             stats.errors += 1
