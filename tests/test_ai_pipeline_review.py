@@ -420,6 +420,43 @@ class TestWordAnalysisTextMatch:
         word_warnings = [w for w in warnings if w.category in ("word_count_mismatch", "word_text_mismatch")]
         assert len(word_warnings) == 0
 
+    def test_v4_word_count_mismatch_uses_word_tags_field(self):
+        """v4 word_count_mismatch warning uses field='word_tags' so fix model targets correct field."""
+        # Arabic text has 4 words; word_tags only has 2 (>30% loss → high severity)
+        result = _make_valid_result()
+        # Replace word_analysis with v4 word_tags format (only 2 of 4 words)
+        del result["word_analysis"]
+        result["word_tags"] = [
+            ["\u0628\u0650\u0633\u0652\u0645\u0650", "PREP"],
+            ["\u0627\u0644\u0644\u0651\u064e\u0647\u0650", "N"],
+        ]
+        request = _make_request()
+        warnings = review_result(result, request)
+        mismatch = [w for w in warnings if w.category == "word_count_mismatch"]
+        assert len(mismatch) == 1
+        assert mismatch[0].field == "word_tags", (
+            "v4 word_count_mismatch should target 'word_tags' so fix model corrects the canonical field"
+        )
+        assert "word_tags" in mismatch[0].message
+
+    def test_v4_word_text_mismatch_uses_word_tags_field(self):
+        """v4 word_text_mismatch warning uses field='word_tags[i]' so fix model targets correct field."""
+        result = _make_valid_result()
+        del result["word_analysis"]
+        result["word_tags"] = [
+            ["\u0643\u064e\u0628\u0650\u064a\u0631\u064c", "ADJ"],   # wrong first word
+            ["\u0627\u0644\u0644\u0651\u064e\u0647\u0650", "N"],
+            ["\u0627\u0644\u0631\u0651\u064e\u062d\u0652\u0645\u0670\u0646\u0650", "ADJ"],
+            ["\u0627\u0644\u0631\u0651\u064e\u062d\u0650\u064a\u0645\u0650", "ADJ"],
+        ]
+        request = _make_request()
+        warnings = review_result(result, request)
+        text_mismatch = [w for w in warnings if w.category == "word_text_mismatch"]
+        assert len(text_mismatch) == 1
+        assert "word_tags[0]" in text_mismatch[0].field, (
+            "v4 word_text_mismatch should target 'word_tags[i]' so fix model corrects the canonical field"
+        )
+
 
 # ===================================================================
 # TestChunkedProcessing — 8 tests

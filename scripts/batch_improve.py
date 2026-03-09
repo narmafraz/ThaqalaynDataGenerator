@@ -122,6 +122,10 @@ def run_batch(args, batch_num: int, batch_size: int, completed_so_far: int) -> d
         cmd.append("--dry-run")
     if args.v3:
         cmd.append("--v3")
+    if args.backend and args.backend != "claude":
+        cmd.extend(["--backend", args.backend])
+    if args.backend == "openai" and args.openai_model:
+        cmd.extend(["--openai-model", args.openai_model])
 
     env = {
         **os.environ,
@@ -217,7 +221,7 @@ Working directory: {PROJECT_ROOT}
         "--no-session-persistence",
         "--setting-sources", "",
         "--max-turns", "30",
-        "--max-budget-usd", "5.00",
+        "--max-budget-usd", "15.00",
         "--tools", "Read,Edit,Write,Bash,Grep,Glob",
         "--dangerously-skip-permissions",
         "--system-prompt", IMPROVEMENT_SYSTEM_PROMPT,
@@ -344,6 +348,10 @@ def main():
                         help="AI content subdirectory (default: corpus)")
     parser.add_argument("--max-cost", type=float, default=None,
                         help="Maximum total cost in USD across all batches (pipeline + improvement)")
+    parser.add_argument("--backend", choices=["claude", "openai"], default="claude",
+                        help="LLM backend: claude (default) or openai")
+    parser.add_argument("--openai-model", default="gpt-4.1-mini",
+                        help="OpenAI model when --backend openai (default: gpt-4.1-mini)")
     parser.add_argument("--v3", action="store_true",
                         help="Use v3 format (compact word_analysis) instead of v4 word_tags")
     parser.add_argument("--no-improve", action="store_true",
@@ -359,6 +367,10 @@ def main():
     print(f"  Total target: {args.total_verses} verses", flush=True)
     print(f"  Batch size: {args.batch_size}", flush=True)
     print(f"  Workers: {args.workers}", flush=True)
+    backend_label = args.backend
+    if args.backend == "openai":
+        backend_label = f"openai ({args.openai_model})"
+    print(f"  Backend: {backend_label}", flush=True)
     print(f"  Model: {args.model} | Fix: {args.fix_model} | Improve: {args.improve_model}", flush=True)
     print(f"  Already completed: {initial_completed}", flush=True)
     print(f"  Improvement: {'disabled' if args.no_improve else 'enabled'}", flush=True)
@@ -422,8 +434,8 @@ def main():
         else:
             consecutive_zero_batches = 0
 
-        # Step 2: Analyse + Improve (skip on last batch or if disabled)
-        if not args.no_improve and not args.dry_run and verses_processed < args.total_verses:
+        # Step 2: Analyse + Improve (after every batch unless disabled)
+        if not args.no_improve and not args.dry_run:
             # Run analysis (pass session ID to ensure we analyse the right batch)
             session_id = session.get("session_id") if session else None
             report = run_analysis(args, content_dir, session_id=session_id)
@@ -500,9 +512,11 @@ def main():
             "total_verses": args.total_verses,
             "batch_size": args.batch_size,
             "workers": args.workers,
+            "backend": args.backend,
             "model": args.model,
             "fix_model": args.fix_model,
             "improve_model": args.improve_model,
+            "openai_model": args.openai_model if args.backend == "openai" else None,
             "max_words": args.max_words,
             "book": args.book,
             "volume": args.volume,

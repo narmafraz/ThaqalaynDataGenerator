@@ -479,26 +479,37 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                 severity = "high"
             else:
                 severity = "low"
+            # For v4, target "word_tags" in the fix prompt — the fix model needs the
+            # actual word_tags list (not a synthetic word_analysis stub) so it can add
+            # missing entries in [word, POS] format. The fixed word_tags will persist
+            # in the saved result (strip_redundant_fields keeps word_tags, not word_analysis).
+            # For v3, keep targeting "word_analysis" as before.
+            _word_field = "word_tags" if is_v4 else "word_analysis"
+            _word_label = "word_tags" if is_v4 else "word_analysis"
             warnings.append(ReviewWarning(
-                field="word_analysis",
+                field=_word_field,
                 category="word_count_mismatch",
                 severity=severity,
-                message=f"word_analysis has {len(reconstructed_clean)} words but original has {len(original_clean)}",
+                message=f"{_word_label} has {len(reconstructed_clean)} words but original has {len(original_clean)}",
                 suggestion=(
-                    "word_analysis likely includes isnad chain or uses different tokenization."
+                    f"{_word_label} likely includes isnad chain or uses different tokenization."
                     if more_words else
-                    "Regenerate word_analysis to match original text word count."
+                    f"Regenerate {_word_label} to match original text word count."
                 ),
             ))
         elif reconstructed_clean != original_clean:
             # Same word count but different content — find first divergence
             for i, (rw, ow) in enumerate(zip(reconstructed_clean, original_clean)):
                 if rw != ow:
+                    # For v4, target word_tags so the fix model corrects the canonical
+                    # word list (not the synthetic stub). For v3, keep word_analysis.
+                    _word_field_idx = f"word_tags[{i}]" if is_v4 else f"word_analysis[{i}]"
+                    _word_label = "word_tags" if is_v4 else "word_analysis"
                     warnings.append(ReviewWarning(
-                        field=f"word_analysis[{i}]",
+                        field=_word_field_idx,
                         category="word_text_mismatch",
                         severity="high",
-                        message=f"word_analysis[{i}] is '{rw}' but original has '{ow}'",
+                        message=f"{_word_label}[{i}] is '{rw}' but original has '{ow}'",
                         suggestion="Fix the word to match the original Arabic text.",
                     ))
                     break

@@ -32,6 +32,12 @@ OPENAI_PRICING = {
     "gpt-4.1-nano": (0.10, 0.40),
     "gpt-4o": (2.50, 10.00),
     "gpt-4o-mini": (0.15, 0.60),
+    "gpt-5": (1.25, 10.00),
+    "gpt-5-mini": (0.25, 2.00),
+    "gpt-5-nano": (0.05, 0.40),
+    "gpt-5.1": (1.25, 10.00),
+    "gpt-5.2": (1.75, 14.00),
+    "gpt-5.4": (5.00, 30.00),
 }
 
 
@@ -74,7 +80,7 @@ def _get_client():
     return AsyncOpenAI(
         api_key=api_key,
         max_retries=3,
-        timeout=300.0,  # 5 minute timeout per request
+        timeout=900.0,  # 15 minute timeout (reasoning models need longer)
     )
 
 
@@ -107,17 +113,33 @@ async def call_openai(
     except (ImportError, ValueError) as e:
         return {"error": str(e), "elapsed": 0.0, "backend": "openai"}
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
-    ]
+    # GPT-5+, o3, o4 are reasoning models with different API parameters:
+    # - No 'temperature' support
+    # - Use 'max_completion_tokens' instead of 'max_tokens'
+    # - System prompt goes in 'developer' role instead of 'system'
+    is_reasoning = model.startswith(("gpt-5", "o3", "o4"))
+
+    if is_reasoning:
+        messages = [
+            {"role": "developer", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+    else:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
 
     kwargs = {
         "model": model,
         "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_output_tokens,
     }
+
+    if is_reasoning:
+        kwargs["max_completion_tokens"] = max_output_tokens
+    else:
+        kwargs["temperature"] = temperature
+        kwargs["max_tokens"] = max_output_tokens
 
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}

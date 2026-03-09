@@ -4,6 +4,78 @@ Tracks changes to the AI content generation pipeline with rationale. Each entry 
 
 ---
 
+## v4.0.3 — 2026-03-08
+
+**Motivation**: Run `20260308T163938Z` (20 verses processed, 17 passed, 1 needs_fix, 2 errors, $42.26 total). Fix pass rate: **40%** (5 attempted, 2 succeeded). Previous runs showed 100% fix pass rate. Root cause identified: validation errors routed to the fix pass had `field="validation"` which doesn't exist as a key in the result dict, causing `build_fix_prompt()` to produce an empty `flagged_fields` context — the model was asked to fix fields it couldn't see.
+
+Other errors in this batch (10× "no output", 6× git-bash, 1× paging-file OOM, 1× timeout) are all Windows infrastructure issues not addressable in pipeline code.
+
+### Root Cause
+
+In `verse_processor.py`, when fixable validation errors are routed to the LLM fix pass, synthetic `ReviewWarning` objects were created with `field="validation"`:
+
+```python
+verse_result.warnings.append(ReviewWarning(
+    field="validation",  # BUG: "validation" is not a key in the result dict
+    ...
+))
+```
+
+In `build_fix_prompt()` (`ai_pipeline_review.py`), the field is used to look up current values:
+
+```python
+top_key = field_path.split(".")[0].split("[")[0]
+if top_key in result:
+    flagged_fields[top_key] = result[top_key]
+elif field_path in result:
+    flagged_fields[field_path] = result[field_path]
+```
+
+Since `"validation"` was never a key in any result dict, `flagged_fields` was always `{}`. The fix model received:
+
+```
+FLAGGED FIELDS (current values):
+{}
+```
+
+With no context, the model couldn't fix anything — the output was either empty or fabricated, causing re-validation failure. This explains the 40% → 60% failure rate for validation-error fix passes.
+
+### Change
+
+#### 1. Add `_validation_error_to_field()` mapping helper in `verse_processor.py`
+
+**What**: New helper function that maps validation error message strings to their corresponding result dict field names:
+- `"word_tags[N] ... has no diacritics"` → `"word_tags"`
+- `"word_analysis[N] ... has no diacritics"` → `"word_analysis"`
+- `"invalid topic: ..."` → `"topics"`
+- `"invalid tag: ..."` → `"tags"`
+- `"invalid content_type: ..."` → `"content_type"`
+- `"missing ambiguity_note"` / `"invalid narrator role:"` / `"invalid identity_confidence:"` → `"isnad_matn"`
+- `"invalid chunk_type: ..."` → `"chunks"`
+- `"invalid diacritics_status: ..."` → `"diacritics_status"`
+- `"invalid quran relationship: ..."` → `"related_quran"`
+- `"key_terms key ..."` → `"translations"`
+- `"invalid pos: ..."` → `"word_tags"` (v4 default)
+
+#### 2. Use `_validation_error_to_field()` when creating synthetic warnings
+
+**What**: Changed the `ReviewWarning` creation in the fixable-error routing block from `field="validation"` to `field=_validation_error_to_field(err)`.
+
+**Why**: With the correct field name, `build_fix_prompt()` now includes the actual current field values in the prompt context, giving the fix model the information it needs to produce a valid correction.
+
+**Files changed**: `verse_processor.py`
+
+### Estimated Impact
+
+Fix pass route is exercised when `has no diacritics`, invalid enum, or missing narrator fields survive the auto-fix pass. Based on the 40% success rate across 5 attempts in this batch, fixing the empty-context bug should raise the fix pass success rate to **80%+**, converting ~1.5 additional pass/100 verses from error→pass. Saves ~$0.60-1.00/100 verses in wasted generation cost.
+
+### Test Changes
+
+- 1 new test: `test_validation_error_to_field_mapping`
+- Total: 1379+ tests passing
+
+---
+
 ## v4.0.2 — 2026-03-08
 
 **Motivation**: Run `20260308T123736Z` (8 verses processed, 8 errors, $9.97 wasted — 100% waste rate). ALL 8 verses failed with the same two intertwined errors as v4.0.1 was supposed to fix:
