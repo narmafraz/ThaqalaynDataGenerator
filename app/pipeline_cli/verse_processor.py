@@ -543,6 +543,77 @@ def _is_fixable_error(error_msg: str) -> bool:
     return any(pattern in error_msg for pattern in FIXABLE_PATTERNS)
 
 
+def _validation_error_to_field(error_msg: str) -> str:
+    """Map a validation error message to its corresponding result field name.
+
+    This ensures build_fix_prompt() can include the relevant field values
+    so the fix model has context to work with. Without this, the fix prompt
+    shows an empty 'flagged_fields' object, preventing the model from fixing
+    anything.
+
+    Examples:
+        "word_tags[5] word 'xxx' has no diacritics" → "word_tags"
+        "word_analysis[5] word 'xxx' has no diacritics" → "word_analysis"
+        "invalid topic: quran_commentary" → "topics"
+        "invalid tag: bad_tag" → "tags"
+        "invalid content_type: foo" → "content_type"
+        "missing ambiguity_note" → "isnad_matn"
+        "invalid narrator role: foo" → "isnad_matn"
+        "invalid chunk_type: foo" → "chunks"
+        "invalid diacritics_status: foo" → "diacritics_status"
+        "invalid quran relationship: foo" → "related_quran"
+        "invalid pos: foo" → "word_tags" (v4) or "word_analysis" (v3)
+        "key_terms key 'en' is not an Arabic term" → "translations"
+    """
+    msg_lower = error_msg.lower()
+
+    # Word-level fields — check explicit field name first
+    if "word_tags" in msg_lower:
+        return "word_tags"
+    if "word_analysis" in msg_lower:
+        return "word_analysis"
+
+    # Diacritics (fallback for generic "has no diacritics" match)
+    if "has no diacritics" in msg_lower:
+        return "word_tags"  # v4 default; v3 handled above via "word_analysis"
+
+    # POS errors (generic "invalid pos:" without explicit field name)
+    if "invalid pos:" in msg_lower:
+        return "word_tags"  # v4 default; v3 rare at this point
+
+    # Narrator / isnad
+    if any(p in msg_lower for p in ("ambiguity_note", "narrator role", "identity_confidence")):
+        return "isnad_matn"
+
+    # Topics / tags / content_type
+    if "invalid topic:" in msg_lower:
+        return "topics"
+    if "invalid tag:" in msg_lower:
+        return "tags"
+    if "invalid content_type:" in msg_lower:
+        return "content_type"
+
+    # Chunks
+    if "invalid chunk_type:" in msg_lower:
+        return "chunks"
+
+    # Diacritics status
+    if "invalid diacritics_status:" in msg_lower:
+        return "diacritics_status"
+
+    # Quran references
+    if "invalid quran relationship:" in msg_lower:
+        return "related_quran"
+
+    # Translations / key_terms
+    if "key_terms key" in msg_lower:
+        return "translations"
+
+    # Fallback — no match; return "validation" so it appears in the fix context
+    # as a note even if it can't be looked up in the result
+    return "validation"
+
+
 def postprocess_verse(
     plan: VersePlan,
     raw_response: str,
@@ -648,11 +719,14 @@ def postprocess_verse(
                         len(fixable), "; ".join(fixable))
             verse_result.status = "needs_fix"
             verse_result.result_dict = result
-            # Store validation errors as synthetic warnings for fix pass
+            # Store validation errors as synthetic warnings for fix pass.
+            # Use _validation_error_to_field() so build_fix_prompt() can look up
+            # the relevant result field — previously field="validation" caused an
+            # empty flagged_fields context, preventing the model from fixing anything.
             from app.ai_pipeline_review import ReviewWarning
             for err in fixable:
                 verse_result.warnings.append(ReviewWarning(
-                    field="validation",
+                    field=_validation_error_to_field(err),
                     category="validation_error",
                     severity="high",
                     message=err,
@@ -760,7 +834,7 @@ def prepare_fix(plan: VersePlan, verse_result: VerseResult) -> Tuple[str, str]:
         warnings=verse_result.warnings,
     )
 
-    system = "You are a specialist editor fixing specific issues in Islamic text analysis. Fix ONLY the flagged issues. Output the complete corrected JSON."
+    system = "You are a specialist editor fixing specific issues in Islamic text analysis. Fix ONLY the flagged issues. Output a JSON object containing ONLY the corrected fields — do NOT output the full document or any unflagged fields."
     return system, fix_prompt
 
 
@@ -805,8 +879,17 @@ def apply_fix(plan: VersePlan, fix_response: str,
         verse_result.error = f"Fix JSON parse error: {e}"
         return verse_result
 
-    # Determine if fix is partial or complete by checking for required fields
-    is_partial = "content_type" not in fix_data and original_result is not None
+    # Determine if fix is partial or complete.
+    # A complete result must contain ALL major required fields. Checking only for
+    # content_type was fragile — if the fix model outputs content_type alongside
+    # the corrected field (e.g. {"content_type": "narrative", "word_tags": [...]}),
+    # the result was wrongly treated as complete and validation would fail on all
+    # other missing required fields.
+    _COMPLETE_RESULT_FIELDS = {"content_type", "translations", "chunks", "isnad_matn", "tags"}
+    is_partial = (
+        not all(f in fix_data for f in _COMPLETE_RESULT_FIELDS)
+        and original_result is not None
+    )
     if is_partial:
         # Merge partial corrections into original result
         result = _deep_merge(original_result, fix_data)

@@ -146,5 +146,10 @@ _*.json
 _*.txt
 _*.py
 !__init__.py
+# API keys — never commit these
+*api_key*
+*API_KEY*
+*.key
+
 # AI pipeline agent temp files
 tmp/

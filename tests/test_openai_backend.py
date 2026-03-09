@@ -322,3 +322,64 @@ class TestOpenAIPricing:
         mini_input = OPENAI_PRICING["gpt-4.1-mini"][0]
         full_input = OPENAI_PRICING["gpt-4.1"][0]
         assert mini_input < full_input
+
+
+class TestValidationErrorToField:
+    """Verify _validation_error_to_field maps error messages to correct result keys.
+
+    This is critical for the fix pass: build_fix_prompt() uses the field name to
+    look up current values in the result dict. If the field is "validation" (the
+    old default), flagged_fields stays empty and the fix model has no context.
+    """
+
+    def _field(self, msg):
+        from app.pipeline_cli.verse_processor import _validation_error_to_field
+        return _validation_error_to_field(msg)
+
+    def test_word_tags_diacritics(self):
+        """Diacritics error on word_tags should map to 'word_tags'."""
+        msg = "word_tags[5] word 'بسم' has no diacritics (must be fully diacritized)"
+        assert self._field(msg) == "word_tags"
+
+    def test_word_analysis_diacritics(self):
+        """Diacritics error on word_analysis (v3) should map to 'word_analysis'."""
+        msg = "word_analysis[3] word 'بسم' has no diacritics (must be fully diacritized)"
+        assert self._field(msg) == "word_analysis"
+
+    def test_invalid_topic(self):
+        assert self._field("invalid topic: quran_commentary") == "topics"
+
+    def test_invalid_tag(self):
+        assert self._field("invalid tag: bad_tag") == "tags"
+
+    def test_invalid_content_type(self):
+        assert self._field("invalid content_type: foo") == "content_type"
+
+    def test_missing_ambiguity_note(self):
+        assert self._field("missing ambiguity_note for narrator X") == "isnad_matn"
+
+    def test_invalid_narrator_role(self):
+        assert self._field("invalid narrator role: scribe") == "isnad_matn"
+
+    def test_invalid_identity_confidence(self):
+        assert self._field("invalid identity_confidence: uncertain") == "isnad_matn"
+
+    def test_invalid_chunk_type(self):
+        assert self._field("invalid chunk_type: header") == "chunks"
+
+    def test_invalid_diacritics_status(self):
+        assert self._field("invalid diacritics_status: partial") == "diacritics_status"
+
+    def test_invalid_quran_relationship(self):
+        assert self._field("invalid quran relationship: implicit") == "related_quran"
+
+    def test_key_terms_key(self):
+        assert self._field("key_terms key 'en' is not an Arabic term") == "translations"
+
+    def test_invalid_pos_generic(self):
+        """Generic 'invalid pos:' without explicit field name defaults to word_tags."""
+        assert self._field("invalid pos: VERB for word قَالَ") == "word_tags"
+
+    def test_unknown_error_fallback(self):
+        """Unknown error messages should fall back to 'validation'."""
+        assert self._field("some unknown validation error") == "validation"

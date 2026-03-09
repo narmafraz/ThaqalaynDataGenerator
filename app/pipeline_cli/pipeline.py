@@ -7,7 +7,10 @@ Usage:
     python -m app.pipeline_cli.pipeline --workers 5 --book al-kafi --volume 1
     python -m app.pipeline_cli.pipeline --workers 5 --v3  # use v3 word format
     python -m app.pipeline_cli.pipeline --workers 5 --backend openai --openai-model gpt-4.1-mini
-    python -m app.pipeline_cli.pipeline word-dict extract  # word dictionary ops
+    python -m app.pipeline_cli.pipeline batch submit --book al-kafi  # OpenAI Batch API (50% off)
+    python -m app.pipeline_cli.pipeline batch status                 # check batch progress
+    python -m app.pipeline_cli.pipeline batch download               # download & postprocess results
+    python -m app.pipeline_cli.pipeline word-dict extract            # word dictionary ops
 """
 
 import argparse
@@ -1076,9 +1079,9 @@ def _handle_word_dict(args):
 def main():
     parser = argparse.ArgumentParser(description="Pipeline v4 — AI content generation orchestrator")
     parser.add_argument("command", nargs="?", default="run",
-                        help="Command: run (default), word-dict")
+                        help="Command: run (default), word-dict, batch")
     parser.add_argument("subcommand", nargs="?", default=None,
-                        help="Subcommand for word-dict: extract, missing, stats")
+                        help="Subcommand for word-dict (extract, missing, stats) or batch (submit, status, download, submit-fixes, download-fixes)")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="Concurrent Claude calls")
     parser.add_argument("--model", default="sonnet", help="Model for generation (default: sonnet)")
     parser.add_argument("--fix-model", default="sonnet", help="Model for fix pass (default: sonnet)")
@@ -1115,6 +1118,12 @@ def main():
     if args.command == "word-dict":
         os.environ.setdefault("SOURCE_DATA_DIR", "../ThaqalaynDataSources/")
         _handle_word_dict(args)
+        return
+
+    # Handle batch subcommand
+    if args.command == "batch":
+        from app.pipeline_cli.openai_batch import handle_batch_command
+        handle_batch_command(args)
         return
 
     # Setup signal handlers

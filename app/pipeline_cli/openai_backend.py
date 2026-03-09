@@ -21,6 +21,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Batch API pricing is 50% of standard
+BATCH_DISCOUNT = 0.5
+
 # Pricing per 1M tokens (input, output) — updated 2026-03
 # Source: https://openai.com/api/pricing/
 OPENAI_PRICING = {
