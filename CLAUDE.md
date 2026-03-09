@@ -366,6 +366,48 @@ python -m app.pipeline_cli.pipeline --backend openai --model gpt-4.1 --workers 1
 
 **Default is unchanged**: Running the pipeline without `--backend` uses `claude -p` as before.
 
+### OpenAI Batch API Mode (50% Cost Discount)
+
+For large corpus runs, the Batch API processes requests asynchronously (within 24 hours) at **50% off** standard pricing. State persists across machine restarts.
+
+**Module**: `app/pipeline_cli/openai_batch.py`
+
+**Workflow**:
+```bash
+# Step 1: Submit generation batch
+export OPENAI_API_KEY=sk-...
+python -m app.pipeline_cli.pipeline batch submit --book al-kafi --volume 1
+
+# Step 2: Check status (repeat until completed — safe to close terminal between checks)
+python -m app.pipeline_cli.pipeline batch status
+
+# Step 3: Download and postprocess results
+python -m app.pipeline_cli.pipeline batch download
+
+# Step 4: Submit fix batch (if any verses need fixes)
+python -m app.pipeline_cli.pipeline batch submit-fixes
+
+# Step 5: Check fix status, then download
+python -m app.pipeline_cli.pipeline batch status
+python -m app.pipeline_cli.pipeline batch download-fixes
+```
+
+**Batch pricing** (50% of standard):
+
+| Model | Batch $/hadith (v4) | 58K corpus |
+|-------|---------------------|------------|
+| gpt-4.1-mini | ~$0.03 | ~$1.7K |
+| gpt-4.1-nano | ~$0.01 | ~$500 |
+| gpt-4o-mini | ~$0.015 | ~$850 |
+
+**State persistence**: Batch state is saved to `ai-content/{subdir}/batches/batch_state_{phase}.json`. This file stores the batch ID, verse mapping, and config — everything needed to resume after a reboot. Completed batches are archived to `batches/history/`.
+
+**API key security**: `OPENAI_API_KEY` is read from environment variable only — never written to any file (state, logs, JSONL, config). Set it per-session:
+- Bash: `export OPENAI_API_KEY=sk-...`
+- PowerShell: `$env:OPENAI_API_KEY='sk-...'`
+
+**Fix batches**: Verses that need fixes after generation download are collected automatically. `submit-fixes` re-prepares the fix prompts and submits a second batch. `download-fixes` applies the corrections.
+
 ## API-Only Code (Not Used)
 
 The following functions/modules require an Anthropic API key and are NOT used in the current `claude -p` pipeline:
