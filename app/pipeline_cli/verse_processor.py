@@ -521,7 +521,32 @@ def _auto_fix_validation_errors(result: dict) -> list:
             )
             fixes.append(f"auto-filled ambiguity_note for {narrator.get('name_en', '?')}")
 
-    # Fix 2: Invalid topics — strip invalid values, keep valid ones
+    # Fix 2: Last chunk word_end off-by-one (model uses last index instead of length)
+    word_analysis = result.get("word_analysis", [])
+    chunks = result.get("chunks", [])
+    if word_analysis and chunks:
+        last_chunk = chunks[-1]
+        wa_len = len(word_analysis)
+        if (isinstance(last_chunk.get("word_end"), int)
+                and last_chunk["word_end"] == wa_len - 1):
+            last_chunk["word_end"] = wa_len
+            fixes.append(f"corrected last chunk word_end from {wa_len - 1} to {wa_len}")
+
+    # Fix 3: Narrator word_ranges with word_end == word_start (zero-width range)
+    for narrator in narrators:
+        if not isinstance(narrator, dict):
+            continue
+        for wr in narrator.get("word_ranges", []):
+            if (isinstance(wr.get("word_start"), int)
+                    and isinstance(wr.get("word_end"), int)
+                    and wr["word_end"] == wr["word_start"]):
+                wr["word_end"] = wr["word_start"] + 1
+                fixes.append(
+                    f"corrected narrator {narrator.get('name_en', '?')} "
+                    f"word_end from {wr['word_start']} to {wr['word_start'] + 1}"
+                )
+
+    # Fix 4: Invalid topics — strip invalid values, keep valid ones
     if "topics" in result and isinstance(result["topics"], list) and VALID_TOPICS:
         original = result["topics"]
         valid = [t for t in original if t in VALID_TOPICS]
