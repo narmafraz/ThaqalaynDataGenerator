@@ -1969,3 +1969,94 @@ class TestWordDictionary:
             save_v4_dictionary(words, path=path)
             loaded = load_v4_dictionary(path=path)
             assert loaded == words
+
+
+class TestFixChunkBoundaries:
+    """Test the deterministic chunk boundary fix for OpenAI models."""
+
+    def test_zero_length_isnad_chunk(self):
+        """Fix zero-length isnad chunk using isnad_ar word count."""
+        from app.pipeline_cli.verse_processor import fix_chunk_boundaries
+        result = {
+            "word_tags": [["w", "N"]] * 10,
+            "isnad_matn": {"isnad_ar": "حَدَّثَنَا مُحَمَّدُ بْنُ يَحْيَى"},
+            "chunks": [
+                {"chunk_type": "isnad", "word_start": 0, "word_end": 0},
+                {"chunk_type": "matn", "word_start": 0, "word_end": 10},
+            ],
+        }
+        fixes = fix_chunk_boundaries(result)
+        assert len(fixes) >= 1
+        assert result["chunks"][0]["word_end"] == 4  # 4 words in isnad_ar
+        assert result["chunks"][1]["word_start"] == 4  # sequential
+
+    def test_single_zero_length_chunk(self):
+        """Single chunk with (0,0) should span entire text."""
+        from app.pipeline_cli.verse_processor import fix_chunk_boundaries
+        result = {
+            "word_tags": [["w", "N"]] * 5,
+            "chunks": [
+                {"chunk_type": "matn", "word_start": 0, "word_end": 0},
+            ],
+        }
+        fixes = fix_chunk_boundaries(result)
+        assert result["chunks"][0]["word_end"] == 5
+
+    def test_off_by_one_last_chunk(self):
+        """Last chunk word_end should be array length, not last index."""
+        from app.pipeline_cli.verse_processor import fix_chunk_boundaries
+        result = {
+            "word_tags": [["w", "N"]] * 10,
+            "chunks": [
+                {"chunk_type": "matn", "word_start": 0, "word_end": 9},
+            ],
+        }
+        fixes = fix_chunk_boundaries(result)
+        assert result["chunks"][0]["word_end"] == 10
+
+    def test_sequential_gap_repair(self):
+        """Enforce chunk[i+1].word_start == chunk[i].word_end."""
+        from app.pipeline_cli.verse_processor import fix_chunk_boundaries
+        result = {
+            "word_tags": [["w", "N"]] * 10,
+            "chunks": [
+                {"chunk_type": "isnad", "word_start": 0, "word_end": 3},
+                {"chunk_type": "matn", "word_start": 0, "word_end": 10},
+            ],
+        }
+        fixes = fix_chunk_boundaries(result)
+        assert result["chunks"][1]["word_start"] == 3
+
+    def test_already_correct_noop(self):
+        """Correct chunks should not be modified."""
+        from app.pipeline_cli.verse_processor import fix_chunk_boundaries
+        result = {
+            "word_tags": [["w", "N"]] * 10,
+            "chunks": [
+                {"chunk_type": "isnad", "word_start": 0, "word_end": 3},
+                {"chunk_type": "matn", "word_start": 3, "word_end": 10},
+            ],
+        }
+        fixes = fix_chunk_boundaries(result)
+        assert fixes == []
+
+    def test_no_chunks_noop(self):
+        """No chunks — should return empty fixes."""
+        from app.pipeline_cli.verse_processor import fix_chunk_boundaries
+        result = {"word_tags": [["w", "N"]] * 5, "chunks": []}
+        fixes = fix_chunk_boundaries(result)
+        assert fixes == []
+
+    def test_isnad_ar_longer_than_text(self):
+        """isnad_ar word count capped at total_words."""
+        from app.pipeline_cli.verse_processor import fix_chunk_boundaries
+        result = {
+            "word_tags": [["w", "N"]] * 3,
+            "isnad_matn": {"isnad_ar": "a b c d e f g h i j"},  # 10 words > 3 total
+            "chunks": [
+                {"chunk_type": "isnad", "word_start": 0, "word_end": 0},
+                {"chunk_type": "matn", "word_start": 0, "word_end": 3},
+            ],
+        }
+        fixes = fix_chunk_boundaries(result)
+        assert result["chunks"][0]["word_end"] == 3  # capped at total_words

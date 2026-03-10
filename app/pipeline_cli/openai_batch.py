@@ -190,15 +190,27 @@ def batch_submit(
         custom_id = f"gen-{vid}"
         verse_mapping[custom_id] = vp
 
-        request_body = {
-            "model": model,
-            "temperature": 0.0,
-            "max_tokens": 32768,
-            "messages": [
-                {"role": "system", "content": plan.system_prompt},
-                {"role": "user", "content": plan.user_message},
-            ],
-        }
+        # Reasoning models (gpt-5, o3, o4) use different API parameters
+        is_reasoning = model.startswith(("gpt-5", "o3", "o4"))
+        if is_reasoning:
+            request_body = {
+                "model": model,
+                "max_completion_tokens": 40000,
+                "messages": [
+                    {"role": "developer", "content": plan.system_prompt},
+                    {"role": "user", "content": plan.user_message},
+                ],
+            }
+        else:
+            request_body = {
+                "model": model,
+                "temperature": 0.0,
+                "max_tokens": 40000,
+                "messages": [
+                    {"role": "system", "content": plan.system_prompt},
+                    {"role": "user", "content": plan.user_message},
+                ],
+            }
 
         jsonl_lines.append(json.dumps({
             "custom_id": custom_id,
@@ -671,15 +683,27 @@ def batch_submit_fixes(responses_dir: str) -> None:
         fix_custom_id = f"fix-{verse_id}"
         verse_mapping[fix_custom_id] = verse_path
 
-        request_body = {
-            "model": model,
-            "temperature": 0.0,
-            "max_tokens": 32768,
-            "messages": [
-                {"role": "system", "content": fix_system},
-                {"role": "user", "content": fix_user},
-            ],
-        }
+        # Reasoning models (gpt-5, o3, o4) use different API parameters
+        is_reasoning = model.startswith(("gpt-5", "o3", "o4"))
+        if is_reasoning:
+            request_body = {
+                "model": model,
+                "max_completion_tokens": 40000,
+                "messages": [
+                    {"role": "developer", "content": fix_system},
+                    {"role": "user", "content": fix_user},
+                ],
+            }
+        else:
+            request_body = {
+                "model": model,
+                "temperature": 0.0,
+                "max_tokens": 40000,
+                "messages": [
+                    {"role": "system", "content": fix_system},
+                    {"role": "user", "content": fix_user},
+                ],
+            }
 
         jsonl_lines.append(json.dumps({
             "custom_id": fix_custom_id,

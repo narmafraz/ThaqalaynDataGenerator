@@ -312,9 +312,9 @@ class TestOpenAIPricing:
 
     def test_nano_cheapest(self):
         from app.pipeline_cli.openai_backend import OPENAI_PRICING
-        nano_input = OPENAI_PRICING["gpt-4.1-nano"][0]
+        nano_input = OPENAI_PRICING["gpt-5-nano"][0]
         for model_id, (input_price, _) in OPENAI_PRICING.items():
-            assert input_price >= nano_input, f"{model_id} cheaper than nano"
+            assert input_price >= nano_input, f"{model_id} cheaper than gpt-5-nano"
 
     def test_relative_pricing(self):
         """gpt-4.1-mini should be cheaper than gpt-4.1."""

@@ -564,6 +564,16 @@ async def process_verse(
             if "error" in cr:
                 break  # real error, don't retry
 
+            # Check for truncation (output hit max_output_tokens limit)
+            stop = cr.get("stop_reason")
+            if stop == "length":
+                if gen_attempt == 0:
+                    logger.warning("GEN %s: truncated (stop_reason=length, %d output tokens), retrying...",
+                                   verse_id, cr.get("output_tokens", 0))
+                    stats.total_cost += cr.get("cost", 0)
+                    stats.total_output_tokens += cr.get("output_tokens", 0)
+                    continue
+
             # Check for truncated/malformed response
             raw = cr.get("result", "").strip()
 

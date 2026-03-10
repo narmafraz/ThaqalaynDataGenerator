@@ -501,6 +501,58 @@ FIXABLE_PATTERNS = {
 }
 
 
+def fix_chunk_boundaries(result: dict) -> list:
+    """Recalculate chunk word_start/word_end from actual text.
+
+    Fixes zero-length chunks (word_start == word_end) using isnad_matn text
+    and enforces sequential coverage. Called before validate_result() to
+    prevent structural validation failures from OpenAI models.
+
+    Returns list of fixes applied (for logging).
+    """
+    fixes = []
+    word_analysis = result.get("word_analysis") or result.get("word_tags", [])
+    total_words = len(word_analysis)
+    chunks = result.get("chunks", [])
+    if not chunks or total_words == 0:
+        return fixes
+
+    for i, chunk in enumerate(chunks):
+        ws = chunk.get("word_start", 0)
+        we = chunk.get("word_end", 0)
+
+        # Fix zero-length chunks (word_start == word_end)
+        if ws == we:
+            if chunk.get("chunk_type") == "isnad" and result.get("isnad_matn", {}).get("isnad_ar"):
+                isnad_words = len(result["isnad_matn"]["isnad_ar"].split())
+                chunk["word_start"] = 0
+                chunk["word_end"] = min(isnad_words, total_words)
+                fixes.append(
+                    f"chunk[{i}] isnad: set word_end={chunk['word_end']} "
+                    f"from isnad_ar word count ({isnad_words})"
+                )
+            elif len(chunks) == 1:
+                chunk["word_start"] = 0
+                chunk["word_end"] = total_words
+                fixes.append(f"chunk[{i}] single: set word_end={total_words}")
+
+        # Fix off-by-one on last chunk (model uses last index instead of length)
+        if i == len(chunks) - 1:
+            if chunk.get("word_end", 0) == total_words - 1 and total_words > 1:
+                chunk["word_end"] = total_words
+                fixes.append(f"chunk[{i}] last: word_end {total_words - 1} -> {total_words}")
+
+    # Enforce sequential coverage: chunk[i+1].word_start = chunk[i].word_end
+    for i in range(len(chunks) - 1):
+        expected = chunks[i]["word_end"]
+        actual = chunks[i + 1].get("word_start")
+        if actual != expected:
+            chunks[i + 1]["word_start"] = expected
+            fixes.append(f"chunk[{i + 1}] sequential: word_start {actual} -> {expected}")
+
+    return fixes
+
+
 def _auto_fix_validation_errors(result: dict) -> list:
     """Attempt to programmatically fix trivial validation errors in-place.
 
@@ -714,6 +766,11 @@ def postprocess_verse(
 
     # Auto-normalize narrator positions to 1-based
     _normalize_narrator_positions(result)
+
+    # Deterministic chunk boundary fix (zero-cost, before validation)
+    chunk_fixes = fix_chunk_boundaries(result)
+    if chunk_fixes:
+        logger.info("CHUNK-FIX %s: %s", plan.verse_id, "; ".join(chunk_fixes))
 
     # Validate schema
     validation_errors = validate_result(result)
@@ -940,6 +997,9 @@ def apply_fix(plan: VersePlan, fix_response: str,
 
     # Auto-normalize narrator positions to 1-based
     _normalize_narrator_positions(result)
+
+    # Deterministic chunk boundary fix (zero-cost, before validation)
+    fix_chunk_boundaries(result)
 
     # Validate
     errors = validate_result(result)

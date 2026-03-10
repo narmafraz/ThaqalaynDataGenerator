@@ -37,7 +37,9 @@ OPENAI_PRICING = {
     "gpt-5-nano": (0.05, 0.40),
     "gpt-5.1": (1.25, 10.00),
     "gpt-5.2": (1.75, 14.00),
-    "gpt-5.4": (5.00, 30.00),
+    "gpt-5.3": (1.75, 14.00),
+    "gpt-5.3-codex": (1.75, 14.00),
+    "gpt-5.4": (2.50, 15.00),
 }
 
 
@@ -90,7 +92,7 @@ async def call_openai(
     model: str = "gpt-4.1-mini",
     max_retries: int = 2,
     temperature: float = 0.0,
-    max_output_tokens: int = 32768,
+    max_output_tokens: int = 40000,
     json_mode: bool = False,
 ) -> dict:
     """Call OpenAI chat completion API. Returns dict matching call_claude() format.
