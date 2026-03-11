@@ -618,6 +618,11 @@ async def process_verse(
 
         if "error" in cr:
             stats.errors += 1
+            # Track timeout cost estimates (OpenAI may charge for timed-out requests)
+            if cr.get("timeout_cost_estimate"):
+                stats.total_cost += cr["timeout_cost_estimate"]
+                logger.warning("GEN %s: adding estimated timeout cost $%.4f to session total",
+                               verse_id, cr["timeout_cost_estimate"])
             logger.error("GEN %s FAILED: %s", verse_id, cr["error"][:100])
             config.event_log.log("VERSE_ERROR", verse_id=verse_id,
                                  error=cr["error"][:200], elapsed=cr.get("elapsed", 0))
@@ -1119,14 +1124,17 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
-    # Setup logging
+    # Setup logging — force handler replacement (basicConfig is a no-op if handlers exist)
     level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stdout,
-    )
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    # Remove any pre-existing handlers (e.g. from library imports)
+    for h in root_logger.handlers[:]:
+        root_logger.removeHandler(h)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
+    root_logger.addHandler(handler)
     sys.stdout.reconfigure(encoding="utf-8")
 
     # Handle word-dict subcommand

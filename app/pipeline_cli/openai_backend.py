@@ -82,7 +82,7 @@ def _get_client():
     return AsyncOpenAI(
         api_key=api_key,
         max_retries=3,
-        timeout=900.0,  # 15 minute timeout (reasoning models need longer)
+        timeout=3600.0,  # 1 hour timeout (long chunked verses with reasoning models)
     )
 
 
@@ -186,12 +186,25 @@ async def call_openai(
 
             # Check if retryable
             retryable = False
+            is_timeout = False
             try:
                 from openai import RateLimitError, APITimeoutError, APIConnectionError, InternalServerError
                 if isinstance(e, (RateLimitError, APITimeoutError, APIConnectionError, InternalServerError)):
                     retryable = True
+                is_timeout = isinstance(e, APITimeoutError)
             except ImportError:
                 pass
+
+            # Estimate cost for timeouts — model may have processed tokens we'll be charged for
+            timeout_cost = 0.0
+            if is_timeout and elapsed > 30:
+                # Estimate input tokens (~4 chars per token) and assume partial output
+                est_input_tokens = (len(system_prompt) + len(user_message)) // 4
+                timeout_cost = compute_cost(model, est_input_tokens, 0)
+                logger.warning(
+                    "TIMEOUT after %.0fs (attempt %d/%d) — estimated input cost: $%.4f (output cost unknown, may be charged by OpenAI)",
+                    elapsed, attempt + 1, max_retries + 1, timeout_cost,
+                )
 
             if retryable and attempt < max_retries:
                 wait = 5 * (2 ** attempt)
@@ -202,11 +215,14 @@ async def call_openai(
                 await asyncio.sleep(wait)
                 continue
 
-            return {
+            result = {
                 "error": f"{error_type}: {error_msg}",
                 "elapsed": elapsed,
                 "backend": "openai",
             }
+            if timeout_cost > 0:
+                result["timeout_cost_estimate"] = timeout_cost
+            return result
 
     return {"error": "max retries exceeded", "elapsed": 0.0, "backend": "openai"}
 
