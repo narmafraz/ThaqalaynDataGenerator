@@ -461,8 +461,9 @@ def build_user_message(request: PipelineRequest) -> str:
 7. "related_quran": (array) [{"ref": "surah:ayah", "relationship": "explicit"|"thematic", "word_start": int (optional), "word_end": int (optional)}] or []
    For "explicit" references where the Quran verse is mentioned or cited in the text, include optional "word_start" and "word_end" (half-open indexing into word_tags) marking where the reference/citation appears. This enables UI highlighting of Quran references. Omit for "thematic" references.
 8. "isnad_matn": {"isnad_ar": "...", "matn_ar": "...", "has_chain": boolean, "narrators": [...]}
-   Each narrator: {"name_ar": "...", "name_en": "...", "role": "narrator"|"companion"|"imam"|"author", "position": int, "identity_confidence": "definite"|"likely"|"ambiguous", "ambiguity_note": string|null, "known_identity": string|null, "word_ranges": [{"word_start": int, "word_end": int}]}
+   Each narrator: {"name_ar": "...", "name_en": "...", "role": "narrator"|"companion"|"imam"|"author", "position": int, "identity_confidence": "definite"|"likely"|"ambiguous", "ambiguity_note": string|null, "known_identity": string|null, "canonical_id": int|null, "word_ranges": [{"word_start": int, "word_end": int}]}
    CRITICAL: If identity_confidence is "likely" or "ambiguous", ambiguity_note MUST be a non-empty string explaining why (e.g. "Multiple narrators share this name; identified as X based on the chain context"). Set ambiguity_note to null ONLY when identity_confidence is "definite".
+   "canonical_id" is optional — integer ID from the NARRATOR REGISTRY (if provided below). Use it to link this narrator to a canonical profile. Set to null if the narrator is not in the registry.
    "word_ranges" is optional but recommended — array of {word_start, word_end} marking where this narrator's name appears in word_tags (half-open indexing, same as chunk word ranges). This enables clickable narrator highlighting in the UI.
 9. "translations": Object with keys en, ur, tr, fa, id, bn, es, fr, de, ru, zh. Each:
    {"summary": "...", "key_terms": {"تَقْوَى": "God-consciousness, piety", "عِلْم": "knowledge, sacred learning"}, "seo_question": "..."}
@@ -1130,6 +1131,12 @@ def validate_result(result: dict) -> List[str]:
                     )
                 if narrator.get("position") != i + 1:
                     errors.append(f"narrator position mismatch: expected {i+1}, got {narrator.get('position')}")
+                # Validate optional canonical_id
+                if "canonical_id" in narrator:
+                    cid = narrator["canonical_id"]
+                    if cid is not None:
+                        if not isinstance(cid, int) or cid <= 0:
+                            errors.append(f"narrator[{i}] canonical_id must be positive integer, got {cid}")
                 # Validate optional word_ranges
                 if "word_ranges" in narrator:
                     wr = narrator["word_ranges"]

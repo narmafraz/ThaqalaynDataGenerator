@@ -7,7 +7,7 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
 
 from app.books import init_books
 from app.kafi import init_kafi
-from app.kafi_narrators import kafi_narrators
+from app.kafi_narrators import process_all_narrators
 from app.kafi_sarwar import add_kafi_sarwar
 from app.lib_model import ProcessingReport
 from app.link_books import link_all_books_to_quran
@@ -30,10 +30,10 @@ def init():
     init_kafi(report)
     add_kafi_sarwar(report)
     link_quran_kafi()
-    kafi_narrators(report)
     init_all_thaqalayn_api_books()
     init_ghbook_books()
     link_all_books_to_quran()
+    process_all_narrators(report)   # Replaces kafi_narrators(); runs after all books loaded
     create_indices()
     merge_ai_content(report)
     _write_data_version()

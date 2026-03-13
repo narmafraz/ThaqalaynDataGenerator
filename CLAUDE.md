@@ -44,7 +44,12 @@ The main generation pipeline (`app/main_add.py`) runs these steps in order:
 3. `init_kafi()` - Parse Al-Kafi hadith collection
 4. `add_kafi_sarwar()` - Add Sarwar translation to Al-Kafi
 5. `link_quran_kafi()` - Create links between Quran verses and hadith references
-6. `kafi_narrators()` - Extract and process narrator chains from hadiths
+6. `init_all_thaqalayn_api_books()` - Parse ThaqalaynAPI books
+7. `init_ghbook_books()` - Parse GHBook books (Tahdhib, Istibsar)
+8. `link_all_books_to_quran()` - Cross-reference all books with Quran
+9. `process_all_narrators()` - Extract narrator chains from ALL books using canonical registry
+10. `create_indices()` - Generate search and book indexes
+11. `merge_ai_content()` - Merge AI-generated content into JSON files
 
 ## Testing
 
@@ -93,9 +98,18 @@ uv run pytest --cov=app --cov-report=html
 
 - **kafi_sarwar.py**: Adds Sarwar translation to existing Al-Kafi structure
 
-- **kafi_narrators.py**: Extracts narrator chains (isnad) from hadith text
-  - Uses regex patterns to identify Arabic narrator patterns
-  - Builds graph data for narrator relationships
+- **kafi_narrators.py**: Narrator chain extraction and linking
+  - `process_all_narrators()`: Entry point — walks ALL books (not just Al-Kafi), uses `NarratorRegistry` for canonical IDs
+  - Legacy `kafi_narrators()` preserved as fallback if registry is empty
+  - Delegates regex extraction to `narrator_linker.py`
+
+- **narrator_linker.py**: Generic narrator extraction module (works across all books)
+  - `extract_isnad_text()`, `split_narrator_names()`, `resolve_narrators()`, `build_chain_parts()`, `link_verse_narrators()`
+  - Diacritized patterns (precise, for Al-Kafi) + undiacritized fallback (for other books)
+
+- **narrator_registry.py**: Canonical narrator registry loader
+  - Loads `canonical_narrators.json` (4,629 consolidated entries from 4,860 originals)
+  - O(1) exact/normalized lookups, context-aware disambiguation for ambiguous names (e.g., "أَبِيهِ")
 
 - **link_quran_kafi.py**: Creates bidirectional references between Quran verses cited in hadiths
 
@@ -167,6 +181,8 @@ Run queries directly: `python app/queries/kitab_hujjat_narrators.py`
 
 7. **Narrator Subchain Optimization**: `getCombinations()` in `kafi_narrators.py` generates only full chains + consecutive pairs (not all contiguous subsequences). A chain of N narrators produces N entries (1 full chain + N-1 pairs) instead of N*(N+1)/2 - N. When the chain has exactly 2 narrators, the full chain equals the only pair, so a dedup check avoids double-counting.
 
+8. **Canonical Narrator Registry**: `canonical_narrators.json` (in `ThaqalaynDataSources/ai-pipeline-data/`) is the single source of truth for narrator identity. Built by `scripts/build_canonical_registry.py` from the narrator index + AI templates. Each entry has `canonical_name_ar`, `canonical_name_en`, `role`, `variants_ar` (all Arabic spellings), and `disambiguation_context` (for ambiguous names like "أَبِيهِ"). IDs are monotonically increasing and never reused.
+
 ## Environment Variables
 
 - `SOURCE_DATA_DIR`: Source data directory containing scraped/, ai-pipeline-data/, ai-content/ (default: `../ThaqalaynDataSources/`)
@@ -212,7 +228,8 @@ Hadiths with >80 Arabic words use chunked processing (threshold: `CHUNKED_PROCES
 The pipeline CLI uses two caching mechanisms for consistency:
 
 - **Word translations cache** (`ai-pipeline-data/word_translations_cache.json`): High-frequency words with stable translations. Applied as overrides in `override_known_words()`.
-- **Narrator templates** (`ai-pipeline-data/narrator_templates.json`): 1,074 pre-validated narrator entries. Applied in `override_narrators()` for consistent identification across verses.
+- **Narrator templates** (`ai-pipeline-data/narrator_templates.json`): 1,074 pre-validated narrator entries with `canonical_id` cross-references. Applied in `override_narrators()` for consistent identification across verses.
+- **Canonical narrator registry** (`ai-pipeline-data/canonical_narrators.json`): 4,629 consolidated narrators with Arabic/English names, roles, variant spellings, and disambiguation rules. Used by `NarratorRegistry` for narrator linking and by `build_caches.py` for template enrichment.
 
 Built via: `python -m app.pipeline_cli.build_caches`
 

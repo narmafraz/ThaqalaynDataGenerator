@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from typing import Dict, List, Set
 
@@ -11,6 +12,11 @@ from app.lib_model import ProcessingReport, get_chapters, get_default_report, ge
 from app.models import Chapter, Language, PartType, Translation, Verse
 from app.models.people import ChainVerses, Narrator, NarratorIndex
 from app.models.quran import NarratorChain, SpecialText
+from app.narrator_linker import (
+    extract_isnad_text, split_narrator_names, resolve_narrators,
+    build_chain_parts, link_verse_narrators, strip_html,
+)
+from app.narrator_registry import NarratorRegistry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -284,4 +290,199 @@ def kafi_narrators(report: ProcessingReport = None):
     insert_narrator_index(narrator_index, narrators)
     insert_chapter(kafi)
     write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
+
+
+# ── New unified narrator processing using NarratorRegistry ──────────────
+
+
+def _process_book_with_registry(
+    book: Chapter,
+    registry: NarratorRegistry,
+    narrators: Dict[int, Narrator],
+    narrator_id_name: Dict[int, str],
+    report: ProcessingReport,
+    use_undiacritized: bool = False,
+):
+    """Process a single book's narrator chains using the canonical registry.
+
+    Walks the book recursively, extracting and linking narrators for each verse.
+    """
+    chapters = get_chapters(book)
+    verses = get_verses(book)
+
+    if chapters:
+        for chapter in chapters:
+            _process_book_with_registry(
+                chapter, registry, narrators, narrator_id_name, report, use_undiacritized
+            )
+    elif verses:
+        for hadith in verses:
+            if not hadith.text or len(hadith.text) < 1:
+                continue
+            hadith.text[0] = strip_html(hadith.text[0])
+            try:
+                canonical_ids = link_verse_narrators(
+                    hadith, registry, use_undiacritized=use_undiacritized
+                )
+                if not canonical_ids:
+                    report.narrations_without_narrators += 1
+
+                # Update narrator tracking (verse_paths, subchains)
+                for cid in canonical_ids:
+                    narrator = _get_or_create_narrator(cid, registry, narrators, narrator_id_name)
+                    narrator.verse_paths.add(hadith.path)
+
+                # Build subchains
+                narrator_id_to_subchain_ids = getCombinations(canonical_ids)
+                for cid in canonical_ids:
+                    narrator = narrators[cid]
+                    if cid in narrator_id_to_subchain_ids:
+                        for (subchain_key, subchain_ids) in narrator_id_to_subchain_ids[cid]:
+                            if subchain_key not in narrator.subchains:
+                                cv = ChainVerses()
+                                cv.narrator_ids = subchain_ids
+                                cv.verse_paths = set()
+                                narrator.subchains[subchain_key] = cv
+                            narrator.subchains[subchain_key].verse_paths.add(hadith.path)
+            except Exception as e:
+                logger.error("Narrator extraction error at %s: %s", hadith.path, e)
+
+
+def _get_or_create_narrator(
+    canonical_id: int,
+    registry: NarratorRegistry,
+    narrators: Dict[int, Narrator],
+    narrator_id_name: Dict[int, str],
+) -> Narrator:
+    """Get or create a Narrator object for a canonical ID."""
+    if canonical_id in narrators:
+        return narrators[canonical_id]
+
+    narrator = Narrator()
+    narrator.index = canonical_id
+    narrator.path = f"/people/narrators/{canonical_id}"
+    narrator.titles = {}
+
+    # Get names from registry
+    ar_name = registry.get_name_ar(canonical_id)
+    en_name = registry.get_name_en(canonical_id)
+    if ar_name:
+        narrator.titles[Language.AR.value] = ar_name
+        narrator_id_name[canonical_id] = ar_name
+    if en_name:
+        narrator.titles[Language.EN.value] = en_name
+
+    narrator.verse_paths = set()
+    narrator.subchains = {}
+
+    narrators[canonical_id] = narrator
+    return narrator
+
+
+def _insert_narrator_index_registry(
+    narrators: Dict[int, Narrator],
+    narrator_id_name: Dict[int, str],
+):
+    """Write narrator index using canonical names."""
+    narrators_with_metadata = {}
+    for cid, narrator in narrators.items():
+        name = narrator_id_name.get(cid, narrator.titles.get(Language.AR.value, ""))
+        narrators_with_metadata[cid] = compose_narrator_metadata(name, narrator)
+        # Add English name to metadata if available
+        en_name = narrator.titles.get(Language.EN.value)
+        if en_name:
+            narrators_with_metadata[cid]["titles"][Language.EN.value] = en_name
+
+    obj = {
+        "index": "people",
+        "kind": "person_list",
+        "data": narrators_with_metadata,
+    }
+    write_file("/people/narrators/index", obj)
+
+
+def process_all_narrators(report: ProcessingReport = None):
+    """Process narrators across ALL books using the canonical narrator registry.
+
+    Replaces kafi_narrators() in the pipeline. Uses NarratorRegistry for
+    consolidated IDs and narrator_linker for extraction.
+
+    Steps:
+    1. Load NarratorRegistry from canonical_narrators.json
+    2. Delete /people/narrators/ folder
+    3. Walk ALL books (al-kafi first, then thaqalayn_api books, then ghbook books)
+    4. Extract and link narrators for each verse
+    5. Write narrator files + narrator index
+    6. Re-save complete book files with updated narrator_chain.parts
+    """
+    if report is None:
+        report = get_default_report()
+
+    registry = NarratorRegistry()
+    if registry.narrator_count == 0:
+        logger.warning("Narrator registry is empty — falling back to kafi_narrators()")
+        kafi_narrators(report)
+        return
+
+    logger.info("Loaded narrator registry: %d canonical narrators", registry.narrator_count)
+
+    # Reset narrators
+    delete_folder("/people/narrators")
+
+    narrators: Dict[int, Narrator] = {}
+    narrator_id_name: Dict[int, str] = {}
+
+    # Process Al-Kafi (well-diacritized, no undiacritized fallback needed)
+    try:
+        kafi = load_chapter("/books/complete/al-kafi")
+        _process_book_with_registry(kafi, registry, narrators, narrator_id_name, report, use_undiacritized=False)
+        logger.info("Al-Kafi: processed, %d narrators found so far", len(narrators))
+    except Exception as e:
+        logger.error("Failed to process Al-Kafi narrators: %s", e)
+
+    # Process other complete books (thaqalayn_api + ghbook)
+    dest_dir = os.environ.get("DESTINATION_DIR", "../ThaqalaynData/")
+    complete_dir = os.path.join(dest_dir, "books", "complete")
+    complete_books = {}
+
+    if os.path.isdir(complete_dir):
+        for filename in sorted(os.listdir(complete_dir)):
+            if not filename.endswith(".json"):
+                continue
+            book_slug = filename[:-5]  # Remove .json
+            if book_slug in ("al-kafi", "quran"):
+                continue  # Already processed or skip Quran
+
+            try:
+                book = load_chapter(f"/books/complete/{book_slug}")
+                _process_book_with_registry(
+                    book, registry, narrators, narrator_id_name, report,
+                    use_undiacritized=True,  # Non-Kafi books may have less diacritization
+                )
+                complete_books[book_slug] = book
+                logger.info("Processed %s, %d narrators total", book_slug, len(narrators))
+            except Exception as e:
+                logger.error("Failed to process %s narrators: %s", book_slug, e)
+
+    logger.info("Total narrators found across all books: %d", len(narrators))
+    logger.info("Narrations without narrators: %d", report.narrations_without_narrators)
+
+    # Write narrator files
+    insert_narrators(narrators)
+    _insert_narrator_index_registry(narrators, narrator_id_name)
+
+    # Re-save Al-Kafi with updated narrator_chain.parts
+    try:
+        insert_chapter(kafi)
+        write_file("/books/complete/al-kafi", jsonable_encoder(kafi))
+    except Exception as e:
+        logger.error("Failed to re-save Al-Kafi: %s", e)
+
+    # Re-save other complete books
+    for book_slug, book in complete_books.items():
+        try:
+            insert_chapter(book)
+            write_file(f"/books/complete/{book_slug}", jsonable_encoder(book))
+        except Exception as e:
+            logger.error("Failed to re-save %s: %s", book_slug, e)
 

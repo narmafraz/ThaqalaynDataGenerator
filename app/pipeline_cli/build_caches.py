@@ -132,11 +132,24 @@ def build_word_dictionary(responses: List[dict]) -> dict:
     }
 
 
+def _load_canonical_registry() -> Optional[Any]:
+    """Try to load the canonical narrator registry for cross-referencing."""
+    try:
+        from app.narrator_registry import NarratorRegistry
+        registry = NarratorRegistry()
+        if registry.narrator_count > 0:
+            return registry
+    except Exception:
+        pass
+    return None
+
+
 def build_narrator_templates(responses: List[dict]) -> dict:
     """Build narrator profile templates from response files.
 
     Groups narrators by Arabic name, picks the most common English
-    transliteration, role, and identity info.
+    transliteration, role, and identity info. Cross-references against
+    canonical_narrators.json to add canonical_id.
 
     Returns dict ready to write as JSON.
     """
@@ -152,6 +165,9 @@ def build_narrator_templates(responses: List[dict]) -> dict:
             if not name_ar:
                 continue
             narrator_data[name_ar].append(n)
+
+    # Load canonical registry for cross-referencing
+    registry = _load_canonical_registry()
 
     # Build templates for narrators appearing enough times
     templates = {}
@@ -180,7 +196,12 @@ def build_narrator_templates(responses: List[dict]) -> dict:
         )
         known_identity = identities.most_common(1)[0][0] if identities else None
 
-        templates[name_ar] = {
+        # Cross-reference against canonical registry
+        canonical_id = None
+        if registry:
+            canonical_id = registry.resolve(name_ar)
+
+        template_entry = {
             "name_en": name_en,
             "role": role,
             "identity_confidence": confidence,
@@ -188,6 +209,10 @@ def build_narrator_templates(responses: List[dict]) -> dict:
             "occurrences": len(entries),
             "en_name_variants": dict(en_names.most_common(5)),
         }
+        if canonical_id is not None:
+            template_entry["canonical_id"] = canonical_id
+
+        templates[name_ar] = template_entry
 
     return {
         "version": "1.0.0",
