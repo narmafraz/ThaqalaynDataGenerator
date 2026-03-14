@@ -16,6 +16,7 @@ from app.ai_content_merger import (
     merge_ai_into_complete_file,
     merge_ai_into_file,
     merge_ai_into_verse,
+    resolve_canonical_ids,
     update_translations_index,
     _collect_ai_translation_ids,
 )
@@ -561,3 +562,122 @@ class TestMergeAiContentIntegration:
                 second = _read_json(str(books_dir / "1.json"))
 
         assert first == second
+
+
+# ─── resolve_canonical_ids ────────────────────────────────────────────────────
+
+class TestResolveCanonicalIds:
+    def _make_lookup(self, narrators):
+        """Build an ai_lookup with one verse containing given narrators."""
+        return {
+            "/books/al-kafi:1:1:1:1": {
+                "ai_attribution": {},
+                "result": {
+                    "isnad_matn": {
+                        "has_chain": True,
+                        "narrators": narrators,
+                    },
+                },
+            },
+        }
+
+    def test_resolves_known_narrator(self):
+        """Resolves canonical_id for a narrator found in registry."""
+        lookup = self._make_lookup([
+            {"name_ar": "عَلِيّ", "name_en": "Ali", "position": 1},
+        ])
+
+        with patch("app.ai_content_merger.NarratorRegistry") as MockRegistry:
+            instance = MockRegistry.return_value
+            instance.narrator_count = 1
+            instance.resolve.return_value = 1
+            count = resolve_canonical_ids(lookup)
+
+        assert count == 1
+        narrator = lookup["/books/al-kafi:1:1:1:1"]["result"]["isnad_matn"]["narrators"][0]
+        assert narrator["canonical_id"] == 1
+
+    def test_skips_when_registry_empty(self):
+        """No resolution when registry has zero entries."""
+        lookup = self._make_lookup([
+            {"name_ar": "عَلِيّ", "name_en": "Ali", "position": 1},
+        ])
+
+        with patch("app.ai_content_merger.NarratorRegistry") as MockRegistry:
+            instance = MockRegistry.return_value
+            instance.narrator_count = 0
+            count = resolve_canonical_ids(lookup)
+
+        assert count == 0
+        assert "canonical_id" not in lookup["/books/al-kafi:1:1:1:1"]["result"]["isnad_matn"]["narrators"][0]
+
+    def test_skips_unknown_narrator(self):
+        """No canonical_id set when registry returns None."""
+        lookup = self._make_lookup([
+            {"name_ar": "مجهول", "name_en": "Unknown", "position": 1},
+        ])
+
+        with patch("app.ai_content_merger.NarratorRegistry") as MockRegistry:
+            instance = MockRegistry.return_value
+            instance.narrator_count = 100
+            instance.resolve.return_value = None
+            count = resolve_canonical_ids(lookup)
+
+        assert count == 0
+        assert "canonical_id" not in lookup["/books/al-kafi:1:1:1:1"]["result"]["isnad_matn"]["narrators"][0]
+
+    def test_passes_preceding_names(self):
+        """Preceding names are accumulated for chain-context disambiguation."""
+        lookup = self._make_lookup([
+            {"name_ar": "عَلِيّ", "name_en": "Ali", "position": 1},
+            {"name_ar": "أَبِيهِ", "name_en": "his father", "position": 2},
+        ])
+
+        resolve_calls = []
+
+        def track_resolve(name_ar, preceding_names=None):
+            resolve_calls.append((name_ar, list(preceding_names or [])))
+            return {"عَلِيّ": 10, "أَبِيهِ": 20}.get(name_ar)
+
+        with patch("app.ai_content_merger.NarratorRegistry") as MockRegistry:
+            instance = MockRegistry.return_value
+            instance.narrator_count = 100
+            instance.resolve.side_effect = track_resolve
+            count = resolve_canonical_ids(lookup)
+
+        assert count == 2
+        assert resolve_calls[0] == ("عَلِيّ", [])
+        assert resolve_calls[1] == ("أَبِيهِ", ["عَلِيّ"])
+
+    def test_no_narrators_in_result(self):
+        """Gracefully handles results with no narrators."""
+        lookup = {
+            "/books/quran:1:1": {
+                "ai_attribution": {},
+                "result": {
+                    "isnad_matn": {"has_chain": False, "narrators": []},
+                },
+            },
+        }
+
+        with patch("app.ai_content_merger.NarratorRegistry") as MockRegistry:
+            instance = MockRegistry.return_value
+            instance.narrator_count = 100
+            count = resolve_canonical_ids(lookup)
+
+        assert count == 0
+
+    def test_idempotent(self):
+        """Running twice doesn't double-count (already-resolved narrators)."""
+        lookup = self._make_lookup([
+            {"name_ar": "عَلِيّ", "name_en": "Ali", "position": 1, "canonical_id": 10},
+        ])
+
+        with patch("app.ai_content_merger.NarratorRegistry") as MockRegistry:
+            instance = MockRegistry.return_value
+            instance.narrator_count = 100
+            instance.resolve.return_value = 10  # same ID
+            count = resolve_canonical_ids(lookup)
+
+        # Already had the same canonical_id, so count should be 0
+        assert count == 0

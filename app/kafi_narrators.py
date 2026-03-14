@@ -319,6 +319,10 @@ def _process_book_with_registry(
         for hadith in verses:
             if not hadith.text or len(hadith.text) < 1:
                 continue
+            if hadith.path is None:
+                # Colophons and editorial notes (e.g. "هَذَا آخِرُ كِتَابِ")
+                # are parsed as verses but have no index/path — skip them
+                continue
             hadith.text[0] = strip_html(hadith.text[0])
             try:
                 canonical_ids = link_verse_narrators(

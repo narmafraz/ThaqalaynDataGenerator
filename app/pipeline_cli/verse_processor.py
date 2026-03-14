@@ -304,35 +304,88 @@ def override_known_words(word_analysis: list, word_dict_data: Optional[dict]) ->
     return word_analysis, overrides
 
 
-def override_narrators(result: dict, narrator_templates: Optional[dict]) -> Tuple[dict, List[dict]]:
-    """Override narrator transliterations with template values for consistency.
+def override_narrators(
+    result: dict,
+    narrator_templates: Optional[dict],
+    registry: Optional["NarratorRegistry"] = None,
+) -> Tuple[dict, List[dict]]:
+    """Override narrator transliterations and resolve canonical_id.
+
+    Uses templates for name_en overrides and canonical_id (fast path).
+    Falls back to registry.resolve() with chain context for disambiguation.
 
     Returns (updated_result, list_of_overrides_applied).
     """
-    if not narrator_templates or "narrators" not in narrator_templates:
+    templates = {}
+    if narrator_templates and "narrators" in narrator_templates:
+        templates = narrator_templates["narrators"]
+
+    if not templates and registry is None:
         return result, []
 
-    templates = narrator_templates["narrators"]
     overrides = []
     isnad_matn = result.get("isnad_matn", {})
     narrators = isnad_matn.get("narrators", [])
 
+    preceding_names: List[str] = []
     for n in narrators:
         name_ar = n.get("name_ar", "").strip()
-        if name_ar not in templates:
-            continue
-        tmpl = templates[name_ar]
-        # Override English name if different
-        if n.get("name_en") != tmpl["name_en"]:
-            overrides.append({
-                "name_ar": name_ar,
-                "field": "name_en",
-                "was": n.get("name_en"),
-                "now": tmpl["name_en"],
-            })
-            n["name_en"] = tmpl["name_en"]
+
+        # Override English name from template
+        if name_ar in templates:
+            tmpl = templates[name_ar]
+            if n.get("name_en") != tmpl["name_en"]:
+                overrides.append({
+                    "name_ar": name_ar,
+                    "field": "name_en",
+                    "was": n.get("name_en"),
+                    "now": tmpl["name_en"],
+                })
+                n["name_en"] = tmpl["name_en"]
+
+        # Resolve canonical_id
+        canonical_id = None
+
+        # Fast path: use canonical_id from template if present
+        if name_ar in templates and "canonical_id" in templates[name_ar]:
+            canonical_id = templates[name_ar]["canonical_id"]
+
+        # Disambiguation path: use registry with chain context
+        # when template has no canonical_id, or name is ambiguous
+        if registry and (canonical_id is None or _is_ambiguous_name(name_ar, templates)):
+            resolved = registry.resolve(name_ar, preceding_names=preceding_names)
+            if resolved is not None:
+                canonical_id = resolved
+
+        if canonical_id is not None:
+            if n.get("canonical_id") != canonical_id:
+                overrides.append({
+                    "name_ar": name_ar,
+                    "field": "canonical_id",
+                    "was": n.get("canonical_id"),
+                    "now": canonical_id,
+                })
+            n["canonical_id"] = canonical_id
+
+        preceding_names.append(name_ar)
 
     return result, overrides
+
+
+def _is_ambiguous_name(name_ar: str, templates: dict) -> bool:
+    """Check if a narrator name is ambiguous (multiple possible identities).
+
+    A name is ambiguous if the template entry has an explicit
+    disambiguation_context or identity_confidence of 'ambiguous'.
+    """
+    tmpl = templates.get(name_ar)
+    if not tmpl:
+        return False
+    if tmpl.get("disambiguation_context"):
+        return True
+    if tmpl.get("identity_confidence") == "ambiguous":
+        return True
+    return False
 
 
 def repair_json_quotes(text: str) -> str:
@@ -698,6 +751,7 @@ def postprocess_verse(
     narrator_templates: Optional[dict] = None,
     responses_dir: Optional[str] = None,
     parsed_dict: Optional[dict] = None,
+    registry: Optional["NarratorRegistry"] = None,
 ) -> VerseResult:
     """Parse AI response, validate, review, apply overrides, save.
 
@@ -709,6 +763,7 @@ def postprocess_verse(
         responses_dir: Where to save the final response file.
         parsed_dict: Pre-parsed dict from --json-schema structured_output.
             If provided, skips JSON parsing/fence stripping/quote repair.
+        registry: Optional NarratorRegistry for canonical_id resolution.
 
     Returns:
         VerseResult with status and details.
@@ -761,8 +816,8 @@ def postprocess_verse(
         else:
             word_overrides = []
 
-    # Apply narrator overrides
-    result, narrator_overrides = override_narrators(result, narrator_templates)
+    # Apply narrator overrides (including canonical_id resolution)
+    result, narrator_overrides = override_narrators(result, narrator_templates, registry=registry)
 
     # Auto-normalize narrator positions to 1-based
     _normalize_narrator_positions(result)
@@ -935,7 +990,8 @@ def apply_fix(plan: VersePlan, fix_response: str,
               word_dict_data: Optional[dict] = None,
               narrator_templates: Optional[dict] = None,
               responses_dir: Optional[str] = None,
-              original_result: Optional[dict] = None) -> VerseResult:
+              original_result: Optional[dict] = None,
+              registry: Optional["NarratorRegistry"] = None) -> VerseResult:
     """Apply fix response, re-validate, and save if clean.
 
     The fix response may be a complete result or just the corrected fields.
@@ -993,7 +1049,7 @@ def apply_fix(plan: VersePlan, fix_response: str,
         has_translations = isinstance(first_entry, dict) and "translation" in first_entry
         if has_translations:
             result["word_analysis"], _ = override_known_words(result["word_analysis"], word_dict_data)
-    result, _ = override_narrators(result, narrator_templates)
+    result, _ = override_narrators(result, narrator_templates, registry=registry)
 
     # Auto-normalize narrator positions to 1-based
     _normalize_narrator_positions(result)

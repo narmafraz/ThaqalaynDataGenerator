@@ -25,6 +25,7 @@ from app.config import (
     JSON_INDENT,
     SOURCE_DATA_DIR,
 )
+from app.narrator_registry import NarratorRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -360,11 +361,53 @@ def update_translations_index(dest_dir: Optional[str] = None):
         logger.info("Added %d AI translation entries to translations.json", added)
 
 
+def resolve_canonical_ids(ai_lookup: Dict[str, dict]) -> int:
+    """Resolve canonical_id on all narrators in loaded AI responses.
+
+    Uses NarratorRegistry with chain-context disambiguation. This backfills
+    canonical_id for content generated before the pipeline added resolution,
+    and re-resolves for content where the registry has been updated.
+
+    Returns the number of narrators that received a canonical_id.
+    """
+    registry = NarratorRegistry()
+    if registry.narrator_count == 0:
+        logger.info("Narrator registry empty — skipping canonical_id resolution")
+        return 0
+
+    resolved_count = 0
+    for verse_path, ai_data in ai_lookup.items():
+        result = ai_data.get("result", {})
+        narrators = result.get("isnad_matn", {}).get("narrators", [])
+        if not narrators:
+            continue
+
+        preceding_names: list = []
+        for n in narrators:
+            if not isinstance(n, dict):
+                continue
+            name_ar = n.get("name_ar", "").strip()
+            if not name_ar:
+                preceding_names.append("")
+                continue
+
+            canonical_id = registry.resolve(name_ar, preceding_names=preceding_names)
+            if canonical_id is not None:
+                if n.get("canonical_id") != canonical_id:
+                    n["canonical_id"] = canonical_id
+                    resolved_count += 1
+
+            preceding_names.append(name_ar)
+
+    return resolved_count
+
+
 def merge_ai_content(report=None):
     """Main entry point: merge AI content into generated JSON files.
 
     Steps:
     1. Load AI responses from SOURCE_DATA_DIR
+    1b. Resolve canonical_id on all narrators
     2. Walk DESTINATION_DIR/books/ for all JSON files
     3. Merge AI content into each file
     4. Handle complete book files separately
@@ -381,6 +424,11 @@ def merge_ai_content(report=None):
             report.ai_verses_available = 0
             report.ai_verses_merged = 0
         return
+
+    # Step 1b: Resolve canonical_id on narrators (backfills existing content)
+    resolved = resolve_canonical_ids(ai_lookup)
+    if resolved:
+        logger.info("Resolved canonical_id on %d narrators", resolved)
 
     if report is not None:
         report.ai_verses_available = len(ai_lookup)
