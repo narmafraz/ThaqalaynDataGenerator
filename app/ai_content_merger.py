@@ -103,10 +103,16 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
     ai = {}
 
     # Add attribution
-    clean_attribution = {
-        k: v for k, v in attribution.items()
-        if k in ("model", "generated_date", "pipeline_version")
-    }
+    if isinstance(attribution, str):
+        # Legacy format: just the model name as a string
+        clean_attribution = {"model": attribution}
+    elif isinstance(attribution, dict):
+        clean_attribution = {
+            k: v for k, v in attribution.items()
+            if k in ("model", "generated_date", "pipeline_version")
+        }
+    else:
+        clean_attribution = {}
     if clean_attribution:
         ai["ai_attribution"] = clean_attribution
 
