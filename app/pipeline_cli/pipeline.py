@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import AI_PIPELINE_DATA_DIR, AI_RESPONSES_DIR
+from app.narrator_registry import NarratorRegistry
 from app.pipeline_cli.verse_processor import (
     VersePlan,
     VerseResult,
@@ -228,6 +229,11 @@ class PipelineConfig:
     max_words: Optional[int] = None
     max_verses: Optional[int] = None
     progress_interval: int = 30
+    # Phased pipeline settings
+    phased: bool = False
+    skip_scholarly: bool = False
+    phase1_model: str = "gpt-5.4"
+    phase4_model: str = "gpt-5-mini"
     # Derived paths (set by run_pipeline)
     stats_dir: str = ""
     logs_dir: str = ""
@@ -501,6 +507,7 @@ async def process_verse(
     stats: SessionStats,
     word_dict: Optional[dict],
     narrator_tmpl: Optional[dict],
+    narrator_registry: Optional[NarratorRegistry] = None,
 ) -> VerseResult:
     """Process a single verse through the full pipeline."""
     verse_id = verse_path_to_id(verse_path)
@@ -673,6 +680,7 @@ async def process_verse(
             narrator_templates=narrator_tmpl,
             responses_dir=responses_dir,
             parsed_dict=None,
+            registry=narrator_registry,
         )
         result.token_usage = {
             "output_tokens": cr.get("output_tokens", 0),
@@ -723,6 +731,7 @@ async def process_verse(
                     narrator_templates=narrator_tmpl,
                     responses_dir=responses_dir,
                     original_result=orig_result,
+                    registry=narrator_registry,
                 )
                 stats.total_cost += fix_cr.get("cost", 0)
                 stats.total_output_tokens += fix_cr.get("output_tokens", 0)
@@ -830,6 +839,236 @@ async def process_verse(
                 pass
 
 
+async def process_verse_phased(
+    verse_path: str,
+    config: PipelineConfig,
+    semaphore: asyncio.Semaphore,
+    stats: SessionStats,
+    word_dict: Optional[dict],
+    narrator_tmpl: Optional[dict],
+    narrator_registry: Optional[NarratorRegistry] = None,
+    phrases_dict: Optional[dict] = None,
+    taxonomy: Optional[dict] = None,
+) -> VerseResult:
+    """Process a single verse through the multi-phase pipeline.
+
+    Phase 1: Reduced AI call (core fields only) via --phase1-model
+    Phase 2: Programmatic enrichment (narrators, topics, tags, key_phrases, etc.)
+    Phase 3: Scholarly enrichment (optional, Claude)
+    Phase 4: Multi-language translation via --phase4-model
+    """
+    from app.pipeline_cli.phased_prompts import (
+        build_phase1_system_prompt,
+        build_phase1_user_message,
+        parse_phase1_response,
+    )
+    from app.pipeline_cli.programmatic_enrichment import programmatic_enrich
+    from app.pipeline_cli.translation_phase import translate_chunks
+    from app.ai_pipeline import (
+        extract_pipeline_request,
+        validate_result,
+        reconstruct_fields,
+    )
+    from app.ai_pipeline_review import review_result
+
+    verse_id = verse_path_to_id(verse_path)
+    responses_dir = config.responses_dir or AI_RESPONSES_DIR
+    work_dir = os.path.join(config.tmp_dir, verse_id)
+
+    # Skip if already complete
+    if is_complete(verse_id, responses_dir):
+        stats.skipped += 1
+        return VerseResult(verse_id=verse_id, status="skipped")
+
+    if shutdown_event.is_set():
+        return VerseResult(verse_id=verse_id, status="skipped")
+
+    try:
+        # Extract verse data
+        request = extract_pipeline_request(verse_path, data_dir=config.data_dir)
+        if request is None:
+            stats.errors += 1
+            config.event_log.log("VERSE_ERROR", verse_id=verse_id, error="verse not found")
+            return VerseResult(verse_id=verse_id, status="error", error="verse not found")
+
+        # Skip if word count exceeds limit
+        word_count = len(request.arabic_text.split())
+        if config.max_words and word_count > config.max_words:
+            stats.skipped += 1
+            return VerseResult(verse_id=verse_id, status="skipped")
+
+        if config.dry_run:
+            logger.info("[DRY-RUN/PHASED] %s: words=%d", verse_id, word_count)
+            stats.skipped += 1
+            return VerseResult(verse_id=verse_id, status="skipped")
+
+        config.event_log.log("VERSE_START", verse_id=verse_id,
+                             words=word_count, mode="phased")
+
+        # ── Phase 1: Reduced AI call ──────────────────────────────────
+        system_prompt = build_phase1_system_prompt()
+        user_message = build_phase1_user_message(request)
+
+        async with semaphore:
+            if shutdown_event.is_set():
+                return VerseResult(verse_id=verse_id, status="skipped")
+
+            logger.info("P1-GEN %s (%d words, phased, %s/%s)...",
+                        verse_id, word_count, config.backend, config.phase1_model)
+            cr = await call_llm(
+                system_prompt, user_message,
+                model=config.phase1_model, backend="openai",
+            )
+
+        if "error" in cr:
+            stats.errors += 1
+            logger.error("P1-GEN %s FAILED: %s", verse_id, cr["error"][:100])
+            config.event_log.log("VERSE_ERROR", verse_id=verse_id,
+                                 error=cr["error"][:200], phase="p1")
+            stats.completed += 1
+            return VerseResult(verse_id=verse_id, status="error", error=cr["error"])
+
+        stats.total_cost += cr.get("cost", 0)
+        stats.total_output_tokens += cr.get("output_tokens", 0)
+        stats.total_input_tokens += cr.get("input_tokens", 0)
+
+        # Parse Phase 1 response
+        from app.pipeline_cli.verse_processor import strip_code_fences, repair_json_quotes
+        raw = cr.get("result", "").strip()
+        try:
+            cleaned = strip_code_fences(raw)
+            cleaned = repair_json_quotes(cleaned)
+            phase1_dict = json.loads(cleaned)
+        except (json.JSONDecodeError, ValueError) as e:
+            stats.errors += 1
+            logger.error("P1-GEN %s JSON parse failed: %s", verse_id, e)
+            stats.completed += 1
+            return VerseResult(verse_id=verse_id, status="error",
+                               error=f"Phase 1 JSON parse: {e}")
+
+        phase1_result = parse_phase1_response(phase1_dict)
+
+        # ── Phase 2: Programmatic enrichment ($0) ─────────────────────
+        logger.info("P2-ENRICH %s...", verse_id)
+        full_result = programmatic_enrich(
+            phase1_result=phase1_result,
+            request=request,
+            narrator_templates=narrator_tmpl,
+            registry=narrator_registry,
+            word_dict=word_dict,
+            phrases_dict=phrases_dict,
+            taxonomy=taxonomy,
+        )
+
+        # ── Phase 3: Scholarly enrichment (optional) ──────────────────
+        if not config.skip_scholarly:
+            from app.pipeline_cli.scholarly_phase import enrich_scholarly
+            logger.info("P3-SCHOLARLY %s...", verse_id)
+            async with semaphore:
+                if shutdown_event.is_set():
+                    return VerseResult(verse_id=verse_id, status="skipped")
+                full_result = await enrich_scholarly(
+                    full_result,
+                    arabic_text=request.arabic_text,
+                    book_name=request.book_name,
+                    chapter_title=request.chapter_title,
+                    backend="claude",
+                    model="sonnet",
+                )
+            p3_cost = full_result.pop("_phase3_cost", 0)
+            full_result.pop("_phase3_tokens", 0)
+            stats.total_cost += p3_cost
+
+        # ── Phase 4: Multi-language translation ───────────────────────
+        logger.info("P4-TRANSLATE %s...", verse_id)
+        async with semaphore:
+            if shutdown_event.is_set():
+                return VerseResult(verse_id=verse_id, status="skipped")
+            full_result = await translate_chunks(
+                full_result,
+                model=config.phase4_model,
+                arabic_text=request.arabic_text,
+            )
+        p4_cost = full_result.pop("_phase4_cost", 0)
+        full_result.pop("_phase4_tokens", 0)
+        stats.total_cost += p4_cost
+
+        # ── Validate using existing infrastructure ────────────────────
+        errors = validate_result(full_result)
+        if errors:
+            logger.warning("PHASED %s: %d validation errors: %s",
+                           verse_id, len(errors), errors[:3])
+            stats.errors += 1
+            stats.completed += 1
+            config.event_log.log("VERSE_DONE", verse_id=verse_id, status="error",
+                                 phase="validation", errors=len(errors))
+            return VerseResult(
+                verse_id=verse_id, status="error",
+                validation_errors=errors,
+                error=f"Validation: {errors[0]}",
+            )
+
+        warnings = review_result(full_result, request)
+        w_high = len([w for w in warnings if w.severity == "high"])
+        w_med = len([w for w in warnings if w.severity == "medium"])
+
+        # Save response
+        from app.ai_pipeline import strip_redundant_fields, PIPELINE_VERSION
+        stripped = strip_redundant_fields(full_result)
+        wrapper = {
+            "verse_path": verse_path,
+            "ai_attribution": {
+                "model": f"phased_{config.phase1_model}+{config.phase4_model}",
+                "generated_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "pipeline_version": PIPELINE_VERSION,
+                "generation_method": "phased_pipeline",
+            },
+            "generation_attempts": 1,
+            "result": stripped,
+        }
+        os.makedirs(responses_dir, exist_ok=True)
+        out_path = os.path.join(responses_dir, f"{verse_id}.json")
+        out_path = os.path.abspath(out_path)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(wrapper, f, ensure_ascii=False, indent=2)
+        logger.info("WROTE %s", out_path)
+
+        stats.passed += 1
+        stats.completed += 1
+
+        status_icon = "OK" if w_high == 0 and w_med == 0 else "WARN"
+        total_cost = cr.get("cost", 0) + p4_cost + (p3_cost if not config.skip_scholarly else 0)
+        logger.info("%s %s [phased, $%.4f, %d tok]",
+                    status_icon, verse_id, total_cost, cr.get("output_tokens", 0))
+
+        config.event_log.log(
+            "VERSE_DONE", verse_id=verse_id, status="pass",
+            words=word_count, mode="phased",
+            cost=round(total_cost, 4),
+            warnings_h=w_high, warnings_m=w_med,
+        )
+
+        return VerseResult(
+            verse_id=verse_id, status="pass",
+            warnings=warnings,
+            result_dict=stripped,
+        )
+
+    except Exception as e:
+        stats.errors += 1
+        stats.completed += 1
+        logger.exception("CRASH %s (phased): %s", verse_id, e)
+        config.event_log.log("VERSE_CRASH", verse_id=verse_id, error=str(e)[:300])
+        return VerseResult(verse_id=verse_id, status="error", error=str(e))
+
+    finally:
+        if os.path.exists(work_dir) and not config.dry_run:
+            try:
+                shutil.rmtree(work_dir)
+            except OSError:
+                pass
+
+
 async def progress_reporter(stats: SessionStats, config: PipelineConfig):
     """Periodically check progress and print only when something changes."""
     last_snapshot = (0, 0, 0, 0, 0)  # completed, passed, fixed, errors, skipped
@@ -895,8 +1134,10 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
     # Load dictionaries and schema once
     word_dict = load_word_dictionary()
     narrator_tmpl = load_narrator_templates()
+    narrator_registry = NarratorRegistry()  # loads from AI_PIPELINE_DATA_DIR/canonical_narrators.json
     logger.info("Word dictionary: %d entries", len(word_dict.get("words", {})) if word_dict else 0)
     logger.info("Narrator templates: %d entries", len(narrator_tmpl.get("narrators", {})) if narrator_tmpl else 0)
+    logger.info("Narrator registry: %d entries", narrator_registry.narrator_count)
 
     # Build system prompt once and archive it
     # (prepare_verse builds it per-call but it's identical for all — save once for audit)
@@ -939,8 +1180,11 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
     stats = SessionStats(total_queued=len(queue))
     semaphore = asyncio.Semaphore(config.workers)
 
+    mode_str = "phased" if config.phased else "monolithic"
+    model_str = (f"p1={config.phase1_model}, p4={config.phase4_model}"
+                 if config.phased else f"model={config.model}")
     print(f"Pipeline v4 starting: {len(queue)} verses, {config.workers} workers, "
-          f"backend={config.backend}, model={config.model}", flush=True)
+          f"mode={mode_str}, backend={config.backend}, {model_str}", flush=True)
     if config.dry_run:
         print("DRY RUN — no Claude calls will be made.", flush=True)
 
@@ -956,11 +1200,35 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
     # Start progress reporter
     progress_task = asyncio.create_task(progress_reporter(stats, config))
 
+    # Load phased pipeline resources if needed
+    phrases_dict = None
+    taxonomy = None
+    if config.phased:
+        from app.ai_pipeline import load_key_phrases_dictionary
+        phrases_dict = load_key_phrases_dictionary()
+        # Load tag_topic_mapping.json for Phase 2 topic/tag heuristics
+        taxonomy_path = os.path.join(AI_PIPELINE_DATA_DIR, "tag_topic_mapping.json")
+        if os.path.exists(taxonomy_path):
+            with open(taxonomy_path, "r", encoding="utf-8") as f:
+                taxonomy = json.load(f)
+        logger.info("Phased pipeline: key_phrases=%d, taxonomy=%s",
+                     len(phrases_dict.get("phrases", [])) if phrases_dict else 0,
+                     "loaded" if taxonomy else "missing")
+
     # Process all verses
-    tasks = [
-        process_verse(vp, config, semaphore, stats, word_dict, narrator_tmpl)
-        for vp in queue
-    ]
+    if config.phased:
+        tasks = [
+            process_verse_phased(
+                vp, config, semaphore, stats, word_dict, narrator_tmpl,
+                narrator_registry, phrases_dict, taxonomy,
+            )
+            for vp in queue
+        ]
+    else:
+        tasks = [
+            process_verse(vp, config, semaphore, stats, word_dict, narrator_tmpl, narrator_registry)
+            for vp in queue
+        ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Stop progress reporter
@@ -1121,6 +1389,14 @@ def main():
                         help="LLM backend: 'claude' (claude -p, default) or 'openai' (OpenAI API)")
     parser.add_argument("--openai-model", default="gpt-4.1-mini",
                         help="OpenAI model when --backend=openai (default: gpt-4.1-mini)")
+    parser.add_argument("--phased", action="store_true",
+                        help="Use multi-phase pipeline (reduced AI + programmatic enrichment)")
+    parser.add_argument("--skip-scholarly", action="store_true",
+                        help="Skip Phase 3 scholarly enrichment (with --phased)")
+    parser.add_argument("--phase1-model", default="gpt-5.4",
+                        help="Model for Phase 1 core generation (with --phased, default: gpt-5.4)")
+    parser.add_argument("--phase4-model", default="gpt-5-mini",
+                        help="Model for Phase 4 translation (with --phased, default: gpt-5-mini)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -1176,6 +1452,10 @@ def main():
         max_failures=args.max_failures,
         attempt_quarantined=args.attempt_quarantined,
         use_v3=args.v3,
+        phased=args.phased,
+        skip_scholarly=args.skip_scholarly,
+        phase1_model=args.phase1_model,
+        phase4_model=args.phase4_model,
     )
 
     # Load verse paths

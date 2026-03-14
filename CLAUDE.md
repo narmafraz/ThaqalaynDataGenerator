@@ -296,6 +296,47 @@ OPENAI_API_KEY=sk-... python -m app.pipeline_cli.pipeline --backend openai --wor
 python -m app.pipeline_cli.pipeline --backend openai --openai-model gpt-4.1-nano --max-verses 10
 ```
 
+### Multi-Phase Pipeline (`--phased`)
+
+The phased pipeline splits generation into 4 specialized phases for better quality and cost efficiency. Each phase uses the optimal tool for the job.
+
+**Phases:**
+1. **Phase 1 — Structure** (LLM): Generates structural fields (`diacritized_text`, `word_tags`, `isnad_matn`, `chunks`, `related_quran`, `key_phrases`). Uses GPT-5.4 batch by default.
+2. **Phase 2 — Enrichment** (programmatic): Derives `topics` and `key_terms` deterministically from Phase 1 output using `tag_topic_mapping.json`. Zero LLM cost.
+3. **Phase 3 — Scholarly** (LLM): Generates `seo_question` and verse-level translation summaries. Uses Claude Sonnet for scholarly quality.
+4. **Phase 4 — Translation** (LLM/API): Generates 10-language translations from English. Uses Azure Translate or cheap LLM.
+
+**Flags:**
+- `--phased` — Enable multi-phase pipeline (instead of single-pass)
+- `--skip-scholarly` — Skip Phase 3 (useful for cost-sensitive runs)
+- `--phase1-model MODEL` — Override Phase 1 model (default: gpt-5.4 via batch)
+- `--phase4-model MODEL` — Override Phase 4 model
+
+**Example commands:**
+```bash
+# Full phased pipeline
+python -m app.pipeline_cli.pipeline --phased --book al-kafi --workers 20
+
+# Phased with custom Phase 1 model, skip scholarly phase
+python -m app.pipeline_cli.pipeline --phased --phase1-model gpt-4.1-mini --skip-scholarly --book al-kafi
+
+# Single verse, phased
+python -m app.pipeline_cli.pipeline --phased --single /books/al-kafi:1:1:1:1
+```
+
+**New modules:**
+- `app/pipeline_cli/programmatic_enrichment.py` — Phase 2 deterministic enrichment (topics from POS tags, key_terms extraction)
+- `app/pipeline_cli/phased_prompts.py` — Phase-specific prompt templates
+- `app/pipeline_cli/translation_phase.py` — Phase 4 translation orchestration
+- `app/pipeline_cli/scholarly_phase.py` — Phase 3 scholarly content generation
+
+**New data file:**
+- `ThaqalaynDataSources/ai-pipeline-data/tag_topic_mapping.json` — Maps POS tag patterns and Arabic terms to topic taxonomy entries for Phase 2
+
+**New scripts:**
+- `scripts/build_enrichment_maps.py` — Builds the tag-to-topic mapping from existing corpus data
+- `scripts/benchmark_phase2.py` — Benchmarks Phase 2 enrichment accuracy against LLM-generated topics/key_terms
+
 ### Validation
 
 ```bash
