@@ -223,7 +223,8 @@ def shellify_complete_books() -> int:
 			logger.warning("Could not read complete file %s: %s", file_path, e)
 			continue
 
-		data = doc.get("data", {})
+		# Complete books may be wrapped ({kind, data: {...}}) or unwrapped (raw chapter)
+		data = doc.get("data", doc)
 		converted = _shellify_node(data)
 		if converted > 0:
 			with open(file_path, "w", encoding="utf-8") as f:

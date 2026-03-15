@@ -611,3 +611,34 @@ class TestShellifyCompleteBooks:
         assert "verses" not in leaf
         assert len(leaf["verse_refs"]) == 1
         assert leaf["verse_refs"][0]["path"] == "/books/test:1:1"
+
+    def test_shellify_complete_books_unwrapped(self, temp_destination_dir):
+        """shellify_complete_books handles unwrapped format (no kind/data wrapper)."""
+        complete_dir = os.path.join(str(temp_destination_dir), "books", "complete")
+        os.makedirs(complete_dir, exist_ok=True)
+
+        # Unwrapped format: raw chapter dump (as written by quran.py / kafi.py)
+        doc = {
+            "index": "quran",
+            "path": "/books/quran",
+            "chapters": [
+                {
+                    "verses": [
+                        {"local_index": 1, "part_type": "Verse", "path": "/books/quran:1:1", "text": ["bismillah"]},
+                    ],
+                    "verse_translations": ["en.qarai"],
+                },
+            ],
+        }
+        with open(os.path.join(complete_dir, "quran.json"), "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+
+        count = shellify_complete_books()
+        assert count == 1
+
+        with open(os.path.join(complete_dir, "quran.json"), "r", encoding="utf-8") as f:
+            result = json.load(f)
+
+        leaf = result["chapters"][0]
+        assert "verses" not in leaf
+        assert leaf["verse_refs"][0]["path"] == "/books/quran:1:1"
