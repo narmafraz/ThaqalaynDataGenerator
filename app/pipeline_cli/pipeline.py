@@ -906,7 +906,7 @@ async def process_verse_phased(
                              words=word_count, mode="phased")
 
         # ── Phase 1: Reduced AI call ──────────────────────────────────
-        system_prompt = build_phase1_system_prompt()
+        system_prompt = build_phase1_system_prompt(topic_taxonomy=taxonomy)
         user_message = build_phase1_user_message(request)
 
         async with semaphore:

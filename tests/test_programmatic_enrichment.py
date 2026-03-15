@@ -453,7 +453,7 @@ class TestEnrichNarrators:
         assert len(result["narrators"]) >= 1
         narrator = result["narrators"][0]
         assert narrator["canonical_id"] == 99
-        assert narrator["identity_confidence"] == "high"
+        assert narrator["identity_confidence"] == "definite"
 
     def test_none_templates(self):
         """templates=None -> still returns basic structure."""
@@ -497,8 +497,8 @@ class TestProgrammaticEnrichOrchestrator:
                     "name_ar": "عَلِيُّ بْنُ إِبْرَاهِيمَ",
                     "name_en": "Ali ibn Ibrahim",
                     "role": "narrator",
-                    "position": 0,
-                    "identity_confidence": "high",
+                    "position": 1,
+                    "identity_confidence": "definite",
                     "ambiguity_note": None,
                     "known_identity": None,
                     "canonical_id": 42,

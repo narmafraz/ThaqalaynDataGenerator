@@ -47,9 +47,19 @@ class TestBuildPhase1SystemPrompt:
         assert "صَلَاة" in prompt
         assert "ritual prayer" in prompt
 
-    def test_omits_taxonomy(self):
-        prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY)
-        assert "TOPIC TAXONOMY" not in prompt
+    def test_includes_taxonomy(self):
+        taxonomy = {
+            "taxonomy": {
+                "creed": {
+                    "topics": {
+                        "tawhid": {"en": "Monotheism"},
+                    }
+                }
+            }
+        }
+        prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY, topic_taxonomy=taxonomy)
+        assert "TOPIC TAXONOMY" in prompt
+        assert "tawhid" in prompt
 
     def test_omits_key_phrases(self):
         prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY)
@@ -60,12 +70,24 @@ class TestBuildPhase1SystemPrompt:
         assert "EXAMPLES" not in prompt
 
     def test_smaller_than_monolithic(self):
-        phase1 = build_phase1_system_prompt(glossary=MOCK_GLOSSARY)
+        mock_taxonomy = {
+            "taxonomy": {
+                "creed": {
+                    "topics": {
+                        "tawhid": {"en": "Monotheism"},
+                        "imamate": {"en": "Imamate"},
+                    }
+                }
+            }
+        }
+        phase1 = build_phase1_system_prompt(
+            glossary=MOCK_GLOSSARY, topic_taxonomy=mock_taxonomy
+        )
         monolithic = build_system_prompt(
             glossary=MOCK_GLOSSARY,
             few_shot_examples={"examples": []},
             word_dictionary=None,
-            topic_taxonomy={"taxonomy": []},
+            topic_taxonomy=mock_taxonomy,
             key_phrases_dict={"phrases": []},
         )
         assert len(phase1) < len(monolithic), (
@@ -91,16 +113,19 @@ class TestBuildPhase1UserMessage:
         assert "Al-Kafi" in msg
         assert "Book of Reason and Ignorance" in msg
 
-    def test_requests_only_6_fields(self):
+    def test_requests_9_fields(self):
         req = _make_request()
         msg = build_phase1_user_message(req)
-        # The 6 core Phase 1 fields should be mentioned
+        # The 9 Phase 1 fields should be mentioned
         assert "diacritized_text" in msg
         assert "word_tags" in msg
         assert "chunks" in msg
         assert "translations" in msg
         assert "related_quran" in msg
         assert "isnad_matn" in msg
+        assert '"tags"' in msg
+        assert '"content_type"' in msg
+        assert '"topics"' in msg
 
     def test_omits_narrator_details(self):
         req = _make_request()
@@ -144,6 +169,9 @@ class TestParsePhase1Response:
             "translations": {"en": {"summary": "A short hadith.", "seo_question": "Who narrated?"}},
             "related_quran": [{"ref": "2:255", "relationship": "thematic"}],
             "isnad_matn": {"isnad_ar": "حدثنا علي", "matn_ar": "", "has_chain": True},
+            "topics": ["tawhid", "imamate"],
+            "tags": ["theology", "ethics"],
+            "content_type": "theological",
         }
         result = parse_phase1_response(raw)
         assert result["diacritized_text"] == "حَدَّثَنَا عَلِيٌّ"
@@ -153,6 +181,9 @@ class TestParsePhase1Response:
         assert result["translations"]["en"]["summary"] == "A short hadith."
         assert result["related_quran"][0]["ref"] == "2:255"
         assert result["isnad_matn"]["has_chain"] is True
+        assert result["topics"] == ["tawhid", "imamate"]
+        assert result["tags"] == ["theology", "ethics"]
+        assert result["content_type"] == "theological"
 
     def test_strips_non_en_translations(self):
         raw = {
@@ -200,3 +231,6 @@ class TestParsePhase1Response:
         assert result["isnad_matn"]["matn_ar"] == ""
         assert result["isnad_matn"]["has_chain"] is False
         assert result["isnad_matn"]["narrators"] == []
+        assert result["topics"] == []
+        assert result["tags"] == []
+        assert result["content_type"] == ""

@@ -139,26 +139,26 @@ def enrich_narrators(
         }
 
     narrators: List[dict] = []
-    for position, name_ar in enumerate(names):
+    for position, name_ar in enumerate(names, start=1):
         entry: dict = {
             "name_ar": name_ar.strip(),
             "name_en": "",
             "role": "narrator",
             "position": position,
-            "identity_confidence": "low",
-            "ambiguity_note": None,
+            "identity_confidence": "ambiguous",
+            "ambiguity_note": "Not resolved against canonical narrator registry",
             "known_identity": None,
             "canonical_id": None,
         }
 
         canonical_id: Optional[int] = None
         if registry is not None and isinstance(registry, NarratorRegistry):
-            preceding = [n.strip() for n in names[:position]]
+            preceding = [n.strip() for n in names[:position - 1]]
             canonical_id = registry.resolve(name_ar.strip(), preceding_names=preceding)
 
         if canonical_id is not None:
             entry["canonical_id"] = canonical_id
-            entry["identity_confidence"] = "high"
+            entry["identity_confidence"] = "definite"
 
             # Enrich from registry.
             narrator_data = registry.get_narrator(canonical_id)
@@ -631,5 +631,27 @@ def programmatic_enrich(
     result.setdefault("key_phrases", [])
     result.setdefault("tags", [])
     result.setdefault("content_type", _default_content_type(book_name))
+
+    # Fix: ensure translations.*.key_terms exists (required by validate_result).
+    for lang_key, lang_data in result.get("translations", {}).items():
+        if isinstance(lang_data, dict):
+            lang_data.setdefault("key_terms", {})
+
+    # Fix: reconstruct chunks[].arabic_text from word_tags if missing.
+    word_tags = result.get("word_tags", [])
+    for chunk in result.get("chunks", []):
+        if "arabic_text" not in chunk and word_tags:
+            ws = chunk.get("word_start", 0)
+            we = chunk.get("word_end", 0)
+            chunk["arabic_text"] = " ".join(
+                wt[0] if isinstance(wt, (list, tuple)) else str(wt)
+                for wt in word_tags[ws:we]
+            )
+
+    # Fix: diacritics_status consistency — if changes exist, can't be "added".
+    status = result.get("diacritics_status", "")
+    changes = result.get("diacritics_changes", [])
+    if status == "added" and isinstance(changes, list) and len(changes) > 0:
+        result["diacritics_status"] = "corrected"
 
     return result

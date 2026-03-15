@@ -989,7 +989,7 @@ def handle_batch_command(args) -> None:
         # Load verse paths
         from app.pipeline_cli.pipeline import load_corpus_manifest
         if args.single:
-            verse_paths = [args.single]
+            verse_paths = list(args.single)
         else:
             verse_paths = load_corpus_manifest()
             if not verse_paths:

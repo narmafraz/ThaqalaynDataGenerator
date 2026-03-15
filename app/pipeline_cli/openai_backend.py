@@ -90,7 +90,7 @@ async def call_openai(
     system_prompt: str,
     user_message: str,
     model: str = "gpt-4.1-mini",
-    max_retries: int = 2,
+    max_retries: int = 0,  # SDK already retries 3x; no need to retry again
     temperature: float = 0.0,
     max_output_tokens: int = 40000,
     json_mode: bool = False,
