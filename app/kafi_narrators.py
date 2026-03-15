@@ -490,3 +490,87 @@ def process_all_narrators(report: ProcessingReport = None):
         except Exception as e:
             logger.error("Failed to re-save %s: %s", book_slug, e)
 
+    generate_featured_narrators()
+
+
+# Map of known Imam kunyas/titles to their canonical English names
+_IMAM_LABELS = [
+    ("أَبِي عَبْدِ اللَّهِ", "Imam al-Sadiq"),
+    ("أَبِي جَعْفَرٍ", "Imam al-Baqir"),
+    ("أَبِي الْحَسَنِ الرِّضَا", "Imam al-Ridha"),
+    ("الرِّضَا", "Imam al-Ridha"),
+    ("أَبِي الْحَسَنِ مُوسَى", "Imam al-Kadhim"),
+    ("أَبِي إِبْرَاهِيمَ", "Imam al-Kadhim"),
+    ("أَبِي الْحَسَنِ الْأَوَّلِ", "Imam al-Kadhim"),
+    ("أَبِي الْحَسَنِ", "Imam (Abu al-Hasan)"),
+    ("عَلِيِّ بْنِ الْحُسَيْنِ", "Imam al-Sajjad"),
+    ("أَمِيرِ الْمُؤْمِنِينَ", "Amir al-Mu'minin"),
+    ("عَلِيٍّ", "Imam Ali"),
+    ("أَبِي جَعْفَرٍ الثَّانِي", "Imam al-Jawad"),
+    ("أَبِي الْحَسَنِ الثَّالِثِ", "Imam al-Hadi"),
+    ("أَبِي الْحَسَنِ صَاحِبِ الْعَسْكَرِ", "Imam al-Askari"),
+    ("أَبِي الْحَسَنِ الْعَسْكَرِيِّ", "Imam al-Askari"),
+    ("الْحُسَيْنِ بْنِ عَلِيٍّ", "Imam al-Husayn"),
+    ("الْحُسَيْنِ", "Imam al-Husayn"),
+    ("الْحَسَنِ بْنِ عَلِيٍّ", "Imam al-Hasan"),
+]
+
+
+def generate_featured_narrators():
+    """Generate people/narrators/featured.json with Imam data from the narrator index."""
+    try:
+        index_data = load_json("/people/narrators/index")['data']
+    except Exception:
+        logger.warning("Could not load narrator index for featured generation")
+        return
+
+    # Find narrators with عليه السلام in their title (Imam marker)
+    imam_entries = []
+    for nid_str, info in index_data.items():
+        title_ar = info.get('titles', {}).get('ar', '')
+        if 'عليه السلام' not in title_ar:
+            continue
+        narrations = info.get('narrations', 0)
+        if narrations < 1:
+            continue
+
+        # Determine English label from known patterns (check longest patterns first)
+        label_en = None
+        for pattern, label in _IMAM_LABELS:
+            if pattern in title_ar:
+                label_en = label
+                break
+
+        if not label_en:
+            label_en = "Imam"
+
+        imam_entries.append({
+            "id": int(nid_str),
+            "name_ar": title_ar,
+            "name_en": label_en,
+            "narrations": narrations,
+        })
+
+    # Sort by narrations descending, pick top entry per English label for featured list
+    imam_entries.sort(key=lambda x: -x["narrations"])
+    seen_labels = set()
+    featured = []
+    for entry in imam_entries:
+        if entry["name_en"] not in seen_labels:
+            seen_labels.add(entry["name_en"])
+            featured.append(entry)
+
+    # Also include all entries (for badge detection on narrator pages)
+    all_imam_ids = {e["id"]: {"name_en": e["name_en"], "name_ar": e["name_ar"]} for e in imam_entries}
+
+    obj = {
+        "index": "featured",
+        "kind": "person_list",
+        "data": {
+            "featured": featured,
+            "imam_ids": all_imam_ids,
+        }
+    }
+    write_file("/people/narrators/featured", obj)
+    logger.info("Generated featured narrators: %d featured, %d total imam entries", len(featured), len(all_imam_ids))
+
