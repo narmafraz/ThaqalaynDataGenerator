@@ -97,6 +97,9 @@ def insert_verse_details(chapter: Chapter) -> None:
 			"nav": nav,
 		}
 
+		if hasattr(chapter, 'verse_translations') and chapter.verse_translations:
+			detail_data["verse_translations"] = chapter.verse_translations
+
 		if verse.gradings:
 			detail_data["gradings"] = verse.gradings
 		if verse.source_url:
