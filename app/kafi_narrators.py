@@ -493,26 +493,40 @@ def process_all_narrators(report: ProcessingReport = None):
     generate_featured_narrators()
 
 
-# Map of known Imam kunyas/titles to their canonical English names
+# Map of known Imam kunyas/titles to their canonical English names.
+# Order matters: more specific patterns MUST come before generic ones.
 _IMAM_LABELS = [
-    ("أَبِي عَبْدِ اللَّهِ", "Imam al-Sadiq"),
-    ("أَبِي جَعْفَرٍ", "Imam al-Baqir"),
-    ("أَبِي الْحَسَنِ الرِّضَا", "Imam al-Ridha"),
-    ("الرِّضَا", "Imam al-Ridha"),
-    ("أَبِي الْحَسَنِ مُوسَى", "Imam al-Kadhim"),
-    ("أَبِي إِبْرَاهِيمَ", "Imam al-Kadhim"),
-    ("أَبِي الْحَسَنِ الْأَوَّلِ", "Imam al-Kadhim"),
-    ("أَبِي الْحَسَنِ", "Imam (Abu al-Hasan)"),
+    # Specific compound names first
     ("عَلِيِّ بْنِ الْحُسَيْنِ", "Imam al-Sajjad"),
-    ("أَمِيرِ الْمُؤْمِنِينَ", "Amir al-Mu'minin"),
-    ("عَلِيٍّ", "Imam Ali"),
-    ("أَبِي جَعْفَرٍ الثَّانِي", "Imam al-Jawad"),
-    ("أَبِي الْحَسَنِ الثَّالِثِ", "Imam al-Hadi"),
-    ("أَبِي الْحَسَنِ صَاحِبِ الْعَسْكَرِ", "Imam al-Askari"),
-    ("أَبِي الْحَسَنِ الْعَسْكَرِيِّ", "Imam al-Askari"),
     ("الْحُسَيْنِ بْنِ عَلِيٍّ", "Imam al-Husayn"),
-    ("الْحُسَيْنِ", "Imam al-Husayn"),
     ("الْحَسَنِ بْنِ عَلِيٍّ", "Imam al-Hasan"),
+    ("مُوسَى بْنِ جَعْفَرٍ", "Imam al-Kadhim"),
+    ("مُوسَى بْنُ جَعْفَرٍ", "Imam al-Kadhim"),
+    ("جَعْفَرِ بْنِ مُحَمَّدٍ", "Imam al-Sadiq"),
+    ("عَلِيِّ بْنِ مُوسَى", "Imam al-Ridha"),
+    # Specific kunyas (with qualifiers)
+    ("أَبِي جَعْفَرٍ الثَّانِي", "Imam al-Jawad"),
+    ("أَبِي جَعْفَرٍ الْأَوَّلِ", "Imam al-Baqir"),
+    ("أَبِي الْحَسَنِ الثَّالِثِ", "Imam al-Hadi"),
+    ("أَبِي الْحَسَنِ الْعَسْكَرِيِّ", "Imam al-Askari"),
+    ("صَاحِبِ الْعَسْكَرِ", "Imam al-Askari"),
+    ("أَبِي الْحَسَنِ الرِّضَا", "Imam al-Ridha"),
+    ("أَبِي الْحَسَنِ مُوسَى", "Imam al-Kadhim"),
+    ("أَبِي الْحَسَنِ الْأَوَّلِ", "Imam al-Kadhim"),
+    ("أَبِي الْحَسَنِ الْمَاضِي", "Imam al-Kadhim"),
+    ("الْعَبْدِ الصَّالِحِ", "Imam al-Kadhim"),
+    ("عَبْدٍ صَالِحٍ", "Imam al-Kadhim"),
+    # Generic kunyas
+    ("أَبِي عَبْدِ اللَّهِ", "Imam al-Sadiq"),
+    ("الصَّادِقِ", "Imam al-Sadiq"),
+    ("أَبِي جَعْفَرٍ", "Imam al-Baqir"),
+    ("الرِّضَا", "Imam al-Ridha"),
+    ("أَبِي إِبْرَاهِيمَ", "Imam al-Kadhim"),
+    ("أَبِي الْحَسَنِ", "Imam (Abu al-Hasan)"),
+    ("أَمِيرِ الْمُؤْمِنِينَ", "Amir al-Mu'minin"),
+    # Very generic — last resort
+    ("الْحُسَيْنِ", "Imam al-Husayn"),
+    ("عَلِيٍّ", "Imam Ali"),
 ]
 
 
