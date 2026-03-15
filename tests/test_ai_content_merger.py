@@ -461,6 +461,34 @@ class TestMergeAiIntoFile:
         assert count == 1
 
 
+    def test_verse_detail_gets_ai_translation_ids(self, tmp_path):
+        """verse_detail files should get AI translation IDs in verse_translations."""
+        doc = {
+            "kind": "verse_detail",
+            "index": "al-kafi:1:1:1:1",
+            "data": {
+                "verse": {"path": "/books/al-kafi:1:1:1:1", "text": ["arabic"], "translations": {"en.hubeali": ["English"]}},
+                "chapter_path": "/books/al-kafi:1:1:1",
+                "chapter_title": {"en": "Test"},
+                "nav": {"up": "/books/al-kafi:1:1:1"},
+                "verse_translations": ["en.hubeali"],
+            },
+        }
+        fpath = str(tmp_path / "verse.json")
+        _write_json(fpath, doc)
+
+        lookup = {"/books/al-kafi:1:1:1:1": {"ai_attribution": _sample_attribution(), "result": _sample_ai_result()}}
+        count = merge_ai_into_file(fpath, lookup)
+        assert count == 1
+
+        written = _read_json(fpath)
+        assert "ai" in written["data"]["verse"]
+        vt = written["data"]["verse_translations"]
+        assert "en.ai" in vt
+        assert "fr.ai" in vt
+        assert "en.hubeali" in vt
+
+
 # ─── merge_ai_into_complete_file ─────────────────────────────────────────────
 
 class TestMergeAiIntoCompleteFile:

@@ -285,6 +285,14 @@ def merge_ai_into_file(file_path: str, ai_lookup: Dict[str, dict]) -> int:
         verse = data.get("verse", data)
         if merge_ai_into_verse(verse, ai_lookup):
             merge_count += 1
+            # Update verse_translations to include AI IDs
+            ai_ids = _collect_ai_translation_ids([verse], ai_lookup)
+            if ai_ids:
+                existing = data.get("verse_translations", [])
+                for ai_id in ai_ids:
+                    if ai_id not in existing:
+                        existing.append(ai_id)
+                data["verse_translations"] = existing
 
     elif kind == "chapter_list":
         # No verses to merge
