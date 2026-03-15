@@ -231,7 +231,7 @@ class TestInsertChapter:
     """Test recursive chapter insertion"""
 
     def test_insert_chapter_with_verses(self, temp_destination_dir):
-        """Test inserting a leaf chapter with verses"""
+        """Test inserting a leaf chapter produces shell format with verse_refs"""
         chapter = Chapter()
         chapter.part_type = PartType.Chapter
         chapter.titles = {"en": "Chapter 1"}
@@ -247,10 +247,53 @@ class TestInsertChapter:
 
         insert_chapter(chapter)
 
-        # Should create the JSON file
         loaded = load_json("/books/test:1")
         assert loaded["kind"] == "verse_list"
         assert loaded["index"] == "test:1"
+        # Shell format: no verses, has verse_refs
+        assert "verses" not in loaded["data"]
+        assert "verse_refs" in loaded["data"]
+        assert len(loaded["data"]["verse_refs"]) == 1
+        ref = loaded["data"]["verse_refs"][0]
+        assert ref["local_index"] == 1
+        assert ref["part_type"] == "Hadith"
+        assert ref["path"] == "/books/test:1:1"
+        assert "inline" not in ref
+
+    def test_insert_chapter_shell_with_heading(self, temp_destination_dir):
+        """Test headings are inlined in verse_refs"""
+        chapter = Chapter()
+        chapter.part_type = PartType.Chapter
+        chapter.titles = {"en": "Chapter 1"}
+        chapter.path = "/books/test:1"
+
+        heading = Verse()
+        heading.part_type = PartType.Heading
+        heading.text = ["Section Title"]
+        heading.local_index = 0
+
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = ["Test text"]
+        v.index = 1
+        v.local_index = 1
+        v.path = "/books/test:1:1"
+        chapter.verses = [heading, v]
+
+        insert_chapter(chapter)
+
+        loaded = load_json("/books/test:1")
+        refs = loaded["data"]["verse_refs"]
+        assert len(refs) == 2
+        # Heading is inlined
+        assert refs[0]["part_type"] == "Heading"
+        assert "inline" in refs[0]
+        assert refs[0]["inline"]["text"] == ["Section Title"]
+        assert "path" not in refs[0]
+        # Hadith has path, no inline
+        assert refs[1]["part_type"] == "Hadith"
+        assert refs[1]["path"] == "/books/test:1:1"
+        assert "inline" not in refs[1]
 
     def test_insert_chapter_with_subchapters(self, temp_destination_dir):
         """Test inserting a chapter with nested subchapters"""
@@ -463,9 +506,12 @@ class TestInsertVerseDetails:
 
         insert_chapter(chapter)
 
-        # Both chapter verse_list and individual verse_detail should exist
+        # Shell chapter should exist with verse_refs (no verses)
         chapter_json = load_json("/books/test:1")
         assert chapter_json["kind"] == "verse_list"
+        assert "verses" not in chapter_json["data"]
+        assert "verse_refs" in chapter_json["data"]
 
+        # Individual verse_detail should also exist
         verse_json = load_json("/books/test:1:1")
         assert verse_json["kind"] == "verse_detail"

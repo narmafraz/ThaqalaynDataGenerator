@@ -9,6 +9,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.lib_model import get_chapters, get_verses
 from app.models import Chapter, Language, Translation, Verse
+from app.models.enums import PartType
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -55,7 +56,18 @@ def insert_chapters_list(chapter: Chapter) -> None:
 		insert_chapter(subchapter)
 
 def insert_chapter_content(chapter: Chapter) -> None:
-	chapter_data = jsonable_encoder(chapter)
+	chapter_data = jsonable_encoder(chapter, exclude={'verses', 'chapters'})
+
+	verse_refs = []
+	for verse in get_verses(chapter):
+		ref = {"local_index": verse.local_index, "part_type": verse.part_type.value if verse.part_type else None}
+		if verse.part_type == PartType.Heading:
+			ref["inline"] = jsonable_encoder(verse)
+		else:
+			ref["path"] = verse.path
+		verse_refs.append(ref)
+	chapter_data["verse_refs"] = verse_refs
+
 	obj_in = {
 		"index": index_from_path(chapter_data['path']),
 		"kind": "verse_list",
