@@ -532,11 +532,19 @@ _IMAM_LABELS = [
 
 def generate_featured_narrators():
     """Generate people/narrators/featured.json with Imam data from the narrator index."""
+    import unicodedata
+
     try:
         index_data = load_json("/people/narrators/index")['data']
     except Exception:
         logger.warning("Could not load narrator index for featured generation")
         return
+
+    # Normalize combining characters so diacritic order doesn't matter
+    def nfc(s):
+        return unicodedata.normalize('NFC', s)
+
+    nfc_labels = [(nfc(pat), label) for pat, label in _IMAM_LABELS]
 
     # Find narrators with عليه السلام in their title (Imam marker)
     imam_entries = []
@@ -549,9 +557,10 @@ def generate_featured_narrators():
             continue
 
         # Determine English label from known patterns (check longest patterns first)
+        title_nfc = nfc(title_ar)
         label_en = None
-        for pattern, label in _IMAM_LABELS:
-            if pattern in title_ar:
+        for pattern, label in nfc_labels:
+            if pattern in title_nfc:
                 label_en = label
                 break
 
