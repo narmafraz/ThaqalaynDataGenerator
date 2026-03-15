@@ -393,6 +393,73 @@ class TestMergeAiIntoFile:
         # but should be in the chapter's verse_translations
         assert "en.ai" in written["data"]["verse_translations"]
 
+    def test_shell_format_verse_refs(self, tmp_path):
+        """Shell format (verse_refs, no verses) updates verse_translations."""
+        doc = {
+            "kind": "verse_list",
+            "index": "al-kafi:1:1:1",
+            "data": {
+                "verse_translations": ["en.hubeali"],
+                "verse_refs": [
+                    {"local_index": 1, "part_type": "Hadith", "path": "/books/al-kafi:1:1:1:1"},
+                    {"local_index": 2, "part_type": "Hadith", "path": "/books/al-kafi:1:1:1:2"},
+                ],
+            },
+        }
+        fpath = str(tmp_path / "chapter.json")
+        _write_json(fpath, doc)
+
+        lookup = {"/books/al-kafi:1:1:1:1": {"ai_attribution": _sample_attribution(), "result": _sample_ai_result()}}
+        count = merge_ai_into_file(fpath, lookup)
+        assert count == 1
+
+        written = _read_json(fpath)
+        vt = written["data"]["verse_translations"]
+        assert "en.ai" in vt
+        assert "fr.ai" in vt
+        assert "en.hubeali" in vt
+        # No verses key should appear
+        assert "verses" not in written["data"]
+
+    def test_shell_format_no_match(self, tmp_path):
+        """Shell format with no matching AI content is unchanged."""
+        doc = {
+            "kind": "verse_list",
+            "index": "al-kafi:1:1:1",
+            "data": {
+                "verse_translations": ["en.hubeali"],
+                "verse_refs": [
+                    {"local_index": 1, "part_type": "Hadith", "path": "/books/al-kafi:9:9:9:9"},
+                ],
+            },
+        }
+        fpath = str(tmp_path / "chapter.json")
+        _write_json(fpath, doc)
+
+        lookup = {"/books/al-kafi:1:1:1:1": {"ai_attribution": _sample_attribution(), "result": _sample_ai_result()}}
+        count = merge_ai_into_file(fpath, lookup)
+        assert count == 0
+
+    def test_shell_format_heading_refs_ignored(self, tmp_path):
+        """Shell format heading refs (no path) don't cause errors."""
+        doc = {
+            "kind": "verse_list",
+            "index": "al-kafi:1:1:1",
+            "data": {
+                "verse_translations": ["en.hubeali"],
+                "verse_refs": [
+                    {"local_index": 0, "part_type": "Heading", "inline": {"text": ["Title"]}},
+                    {"local_index": 1, "part_type": "Hadith", "path": "/books/al-kafi:1:1:1:1"},
+                ],
+            },
+        }
+        fpath = str(tmp_path / "chapter.json")
+        _write_json(fpath, doc)
+
+        lookup = {"/books/al-kafi:1:1:1:1": {"ai_attribution": _sample_attribution(), "result": _sample_ai_result()}}
+        count = merge_ai_into_file(fpath, lookup)
+        assert count == 1
+
 
 # ─── merge_ai_into_complete_file ─────────────────────────────────────────────
 

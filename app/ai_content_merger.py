@@ -251,19 +251,34 @@ def merge_ai_into_file(file_path: str, ai_lookup: Dict[str, dict]) -> int:
 
     if kind == "verse_list":
         verses = data.get("verses", [])
-        for verse in verses:
-            if merge_ai_into_verse(verse, ai_lookup):
-                merge_count += 1
+        if verses:
+            # Legacy format: inline verses
+            for verse in verses:
+                if merge_ai_into_verse(verse, ai_lookup):
+                    merge_count += 1
 
-        # Update verse_translations to include AI IDs
-        if merge_count > 0:
-            ai_ids = _collect_ai_translation_ids(verses, ai_lookup)
-            if ai_ids:
-                existing = data.get("verse_translations", [])
-                for ai_id in ai_ids:
-                    if ai_id not in existing:
-                        existing.append(ai_id)
-                data["verse_translations"] = existing
+            if merge_count > 0:
+                ai_ids = _collect_ai_translation_ids(verses, ai_lookup)
+                if ai_ids:
+                    existing = data.get("verse_translations", [])
+                    for ai_id in ai_ids:
+                        if ai_id not in existing:
+                            existing.append(ai_id)
+                    data["verse_translations"] = existing
+        else:
+            # Shell format: verse_refs with paths, no inline verses to merge.
+            # Update verse_translations by checking verse_refs paths against ai_lookup.
+            verse_refs = data.get("verse_refs", [])
+            ref_verses = [{"path": ref["path"]} for ref in verse_refs if "path" in ref]
+            if ref_verses:
+                ai_ids = _collect_ai_translation_ids(ref_verses, ai_lookup)
+                if ai_ids:
+                    existing = data.get("verse_translations", [])
+                    for ai_id in ai_ids:
+                        if ai_id not in existing:
+                            existing.append(ai_id)
+                    data["verse_translations"] = existing
+                    merge_count = 1  # signal that file was modified
 
     elif kind == "verse_detail":
         # Single verse wrapped in data
