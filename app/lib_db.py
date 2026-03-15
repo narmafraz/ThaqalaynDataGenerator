@@ -174,6 +174,66 @@ def delete_folder(path: str) -> None:
 	if os.path.exists(filename):
 		shutil.rmtree(filename)
 
+def _shellify_node(node: dict) -> int:
+	"""Recursively convert inline verses to verse_refs in a complete book node.
+
+	Returns the number of chapters converted.
+	"""
+	converted = 0
+	verses = node.get("verses")
+	if verses:
+		verse_refs = []
+		for verse in verses:
+			ref = {"local_index": verse.get("local_index"), "part_type": verse.get("part_type")}
+			if verse.get("part_type") == "Heading":
+				ref["inline"] = verse
+			else:
+				ref["path"] = verse.get("path")
+			verse_refs.append(ref)
+		node["verse_refs"] = verse_refs
+		del node["verses"]
+		converted += 1
+
+	for chapter in node.get("chapters", []):
+		converted += _shellify_node(chapter)
+
+	return converted
+
+
+def shellify_complete_books() -> int:
+	"""Convert all complete book files to shell format (verse_refs instead of inline verses).
+
+	Should be called as the final post-processing step after all other pipeline steps.
+	Returns the total number of leaf chapters converted.
+	"""
+	dest_dir = get_destination_dir()
+	complete_dir = os.path.join(dest_dir, "books", "complete")
+	if not os.path.isdir(complete_dir):
+		return 0
+
+	total_converted = 0
+	for filename in sorted(os.listdir(complete_dir)):
+		if not filename.endswith(".json"):
+			continue
+		file_path = os.path.join(complete_dir, filename)
+		try:
+			with open(file_path, "r", encoding="utf-8") as f:
+				doc = json.load(f)
+		except (json.JSONDecodeError, OSError) as e:
+			logger.warning("Could not read complete file %s: %s", file_path, e)
+			continue
+
+		data = doc.get("data", {})
+		converted = _shellify_node(data)
+		if converted > 0:
+			with open(file_path, "w", encoding="utf-8") as f:
+				json.dump(doc, f, ensure_ascii=False, indent=2, sort_keys=True)
+			total_converted += converted
+			logger.info("Shellified %d chapters in %s", converted, filename)
+
+	return total_converted
+
+
 def clean_nones(value: object) -> object:
 	"""
 	Recursively remove all None values from dictionaries and lists, and returns

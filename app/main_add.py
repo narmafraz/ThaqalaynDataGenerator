@@ -17,7 +17,7 @@ from app.thaqalayn_api import init_all_thaqalayn_api_books
 from app.ghbook import init_ghbook_books
 from app.ai_content_merger import merge_ai_content
 from app.create_indices import create_indices
-from app.lib_db import write_file
+from app.lib_db import write_file, shellify_complete_books
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,6 +36,7 @@ def init():
     process_all_narrators(report)   # Replaces kafi_narrators(); runs after all books loaded
     create_indices()
     merge_ai_content(report)
+    shellify_complete_books()
     _write_data_version()
     report.print_summary()
 

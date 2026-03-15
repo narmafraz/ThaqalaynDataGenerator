@@ -5,6 +5,7 @@ from app.lib_db import (
     index_from_path, get_dest_path, clean_nones,
     write_file, load_json, load_chapter, ensure_dir,
     insert_chapter, insert_verse_details, delete_file, delete_folder,
+    shellify_complete_books, _shellify_node,
 )
 from app.models import Chapter, Verse, PartType
 
@@ -515,3 +516,98 @@ class TestInsertVerseDetails:
         # Individual verse_detail should also exist
         verse_json = load_json("/books/test:1:1")
         assert verse_json["kind"] == "verse_detail"
+
+
+class TestShellifyCompleteBooks:
+    """Test conversion of complete book files to shell format."""
+
+    def test_shellify_node_converts_verses_to_refs(self):
+        """_shellify_node replaces verses with verse_refs."""
+        node = {
+            "verses": [
+                {"local_index": 1, "part_type": "Hadith", "path": "/books/test:1:1", "text": ["arabic"]},
+                {"local_index": 2, "part_type": "Hadith", "path": "/books/test:1:2", "text": ["arabic2"]},
+            ],
+            "verse_translations": ["en.hubeali"],
+        }
+        count = _shellify_node(node)
+        assert count == 1
+        assert "verses" not in node
+        assert len(node["verse_refs"]) == 2
+        assert node["verse_refs"][0]["path"] == "/books/test:1:1"
+        assert node["verse_refs"][0]["part_type"] == "Hadith"
+        assert "text" not in node["verse_refs"][0]
+
+    def test_shellify_node_inlines_headings(self):
+        """_shellify_node inlines Heading verses."""
+        node = {
+            "verses": [
+                {"local_index": 0, "part_type": "Heading", "text": ["Title"]},
+                {"local_index": 1, "part_type": "Hadith", "path": "/books/test:1:1"},
+            ],
+        }
+        _shellify_node(node)
+        assert node["verse_refs"][0]["part_type"] == "Heading"
+        assert node["verse_refs"][0]["inline"]["text"] == ["Title"]
+        assert "path" not in node["verse_refs"][0]
+        assert node["verse_refs"][1]["path"] == "/books/test:1:1"
+
+    def test_shellify_node_recursive(self):
+        """_shellify_node recurses into chapters."""
+        node = {
+            "chapters": [
+                {
+                    "chapters": [
+                        {
+                            "verses": [
+                                {"local_index": 1, "part_type": "Hadith", "path": "/books/test:1:1:1"},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
+        count = _shellify_node(node)
+        assert count == 1
+        leaf = node["chapters"][0]["chapters"][0]
+        assert "verses" not in leaf
+        assert leaf["verse_refs"][0]["path"] == "/books/test:1:1:1"
+
+    def test_shellify_node_no_verses(self):
+        """_shellify_node is a no-op for nodes without verses."""
+        node = {"chapters": [{"chapters": []}]}
+        count = _shellify_node(node)
+        assert count == 0
+
+    def test_shellify_complete_books(self, temp_destination_dir):
+        """shellify_complete_books converts on-disk complete book files."""
+        complete_dir = os.path.join(str(temp_destination_dir), "books", "complete")
+        os.makedirs(complete_dir)
+
+        doc = {
+            "kind": "complete_book",
+            "index": "test",
+            "data": {
+                "chapters": [
+                    {
+                        "verses": [
+                            {"local_index": 1, "part_type": "Hadith", "path": "/books/test:1:1", "text": ["arabic"]},
+                        ],
+                        "verse_translations": ["en.hubeali"],
+                    },
+                ],
+            },
+        }
+        with open(os.path.join(complete_dir, "test.json"), "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+
+        count = shellify_complete_books()
+        assert count == 1
+
+        with open(os.path.join(complete_dir, "test.json"), "r", encoding="utf-8") as f:
+            result = json.load(f)
+
+        leaf = result["data"]["chapters"][0]
+        assert "verses" not in leaf
+        assert len(leaf["verse_refs"]) == 1
+        assert leaf["verse_refs"][0]["path"] == "/books/test:1:1"
