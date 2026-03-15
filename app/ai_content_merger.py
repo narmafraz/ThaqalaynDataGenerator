@@ -94,6 +94,9 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
     Transformations:
     - Remove: diacritized_text (reconstruct from word_analysis)
     - Remove: chunks[].arabic_text (reconstruct from word_analysis)
+    - Remove: isnad_matn.isnad_ar and isnad_matn.matn_ar (unused in UI)
+    - Remove: diacritics_changes (unused in UI)
+    - Remove: similar_content_hints (unused in UI, no longer generated in v4)
     - Dissolve translations[lang] into: summaries[lang], key_terms[lang], seo_questions[lang]
     - Remove: top-level translations dict entirely
     - Add: ai_attribution
@@ -128,9 +131,12 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
             lean_chunks.append(lean_chunk)
         ai["chunks"] = lean_chunks
 
-    # Copy isnad_matn as-is
+    # Copy isnad_matn, stripping isnad_ar and matn_ar (unused in UI)
     if "isnad_matn" in result:
-        ai["isnad_matn"] = result["isnad_matn"]
+        ai["isnad_matn"] = {
+            k: v for k, v in result["isnad_matn"].items()
+            if k not in ("isnad_ar", "matn_ar")
+        }
 
     # Copy related_quran as-is
     if "related_quran" in result:
@@ -152,9 +158,7 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
     if "key_phrases" in result:
         ai["key_phrases"] = result["key_phrases"]
 
-    # Copy similar_content_hints as-is
-    if "similar_content_hints" in result:
-        ai["similar_content_hints"] = result["similar_content_hints"]
+    # NOTE: similar_content_hints intentionally NOT copied (unused in UI, removed in v4)
 
     # Dissolve translations into summaries, key_terms, seo_questions
     translations = result.get("translations", {})
@@ -177,13 +181,12 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
         if seo_questions:
             ai["seo_questions"] = seo_questions
 
-    # Copy diacritics fields
+    # Copy diacritics_status only (diacritics_changes is unused in UI)
     if "diacritics_status" in result:
         ai["diacritics_status"] = result["diacritics_status"]
-    if "diacritics_changes" in result:
-        ai["diacritics_changes"] = result["diacritics_changes"]
 
-    # NOTE: diacritized_text is intentionally NOT copied (zero duplication)
+    # NOTE: diacritized_text intentionally NOT copied (zero duplication)
+    # NOTE: diacritics_changes intentionally NOT copied (unused in UI)
 
     return ai
 

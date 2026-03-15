@@ -241,9 +241,19 @@ class TestBuildLeanAiContent:
         lean = build_lean_ai_content(_sample_ai_result(), _sample_attribution())
         assert len(lean["key_phrases"]) == 1
 
-    def test_preserves_similar_content_hints(self):
+    def test_strips_similar_content_hints(self):
         lean = build_lean_ai_content(_sample_ai_result(), _sample_attribution())
-        assert len(lean["similar_content_hints"]) == 1
+        assert "similar_content_hints" not in lean
+
+    def test_strips_diacritics_changes(self):
+        lean = build_lean_ai_content(_sample_ai_result(), _sample_attribution())
+        assert "diacritics_changes" not in lean
+
+    def test_strips_isnad_ar_and_matn_ar(self):
+        lean = build_lean_ai_content(_sample_ai_result(), _sample_attribution())
+        assert "isnad_ar" not in lean["isnad_matn"]
+        assert "matn_ar" not in lean["isnad_matn"]
+        assert lean["isnad_matn"]["has_chain"] is True
 
     def test_preserves_diacritics_status(self):
         lean = build_lean_ai_content(_sample_ai_result(), _sample_attribution())
