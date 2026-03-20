@@ -92,8 +92,11 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
     """Restructure AI pipeline result into lean zero-duplication format.
 
     Transformations:
-    - Remove: diacritized_text (reconstruct from word_analysis)
-    - Remove: chunks[].arabic_text (reconstruct from word_analysis)
+    - v3 (word_analysis present): Remove diacritized_text and chunks[].arabic_text
+      (both can be reconstructed from word_analysis via word_start/word_end)
+    - v4 (word_tags only): Preserve diacritized_text and chunks[].arabic_text
+      (cannot be reconstructed from word_tags alone)
+    - Copy word_tags as-is when present (v4 format)
     - Remove: isnad_matn.isnad_ar and isnad_matn.matn_ar (unused in UI)
     - Remove: diacritics_changes (unused in UI)
     - Remove: similar_content_hints (unused in UI, no longer generated in v4)
@@ -119,15 +122,30 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
     if clean_attribution:
         ai["ai_attribution"] = clean_attribution
 
-    # Copy word_analysis as-is
-    if "word_analysis" in result:
+    # Copy word_analysis as-is (v3 format: per-word objects with translations)
+    has_word_analysis = "word_analysis" in result
+    if has_word_analysis:
         ai["word_analysis"] = result["word_analysis"]
 
-    # Copy chunks, stripping arabic_text from each
+    # Copy word_tags as-is (v4 format: [word, POS] pairs, no per-word translations)
+    if "word_tags" in result:
+        ai["word_tags"] = result["word_tags"]
+
+    # When word_analysis is absent (v4), preserve diacritized_text since it
+    # cannot be reconstructed from word_tags alone
+    if not has_word_analysis and "diacritized_text" in result:
+        ai["diacritized_text"] = result["diacritized_text"]
+
+    # Copy chunks — only strip arabic_text when word_analysis is available
+    # (it can be reconstructed from word_analysis via word_start/word_end).
+    # For v4 (word_tags only), preserve arabic_text so the UI can display it.
     if "chunks" in result:
         lean_chunks = []
         for chunk in result["chunks"]:
-            lean_chunk = {k: v for k, v in chunk.items() if k != "arabic_text"}
+            if has_word_analysis:
+                lean_chunk = {k: v for k, v in chunk.items() if k != "arabic_text"}
+            else:
+                lean_chunk = dict(chunk)
             lean_chunks.append(lean_chunk)
         ai["chunks"] = lean_chunks
 
@@ -185,7 +203,7 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
     if "diacritics_status" in result:
         ai["diacritics_status"] = result["diacritics_status"]
 
-    # NOTE: diacritized_text intentionally NOT copied (zero duplication)
+    # NOTE: diacritized_text only copied when word_analysis is absent (v4/word_tags)
     # NOTE: diacritics_changes intentionally NOT copied (unused in UI)
 
     return ai
