@@ -1479,7 +1479,7 @@ async def run_retranslate(config: PipelineConfig):
             wrapper = json.load(f)
         result = wrapper.get("result", {})
         # Reconstruct stripped fields so we can check translations
-        reconstruct_fields(result)
+        result = reconstruct_fields(result)
         translations = result.get("translations", {})
         # Check if any non-EN language is missing or has empty summary
         missing = False
@@ -1508,7 +1508,7 @@ async def run_retranslate(config: PipelineConfig):
 
     for fname, fpath, wrapper in needs_translation:
         result = wrapper.get("result", {})
-        reconstruct_fields(result)
+        result = reconstruct_fields(result)
         verse_id = fname.replace(".json", "")
         verse_path = wrapper.get("verse_path", "")
 
