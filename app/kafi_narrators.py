@@ -471,6 +471,15 @@ def process_all_narrators(report: ProcessingReport = None):
     logger.info("Total narrators found across all books: %d", len(narrators))
     logger.info("Narrations without narrators: %d", report.narrations_without_narrators)
 
+    # Add shared chain relations before writing files
+    from app.link_chains import collect_shared_chains, build_verse_relations, apply_shared_chain_relations
+    chain_groups = collect_shared_chains(narrators)
+    logger.info("Found %d shared chains (3+ narrators, 2-20 occurrences)", len(chain_groups))
+    verse_relations = build_verse_relations(chain_groups)
+    all_books = [kafi] + list(complete_books.values())
+    updated = apply_shared_chain_relations(all_books, verse_relations)
+    logger.info("Added 'Shared Chain' relations to %d verses", updated)
+
     # Write narrator files
     insert_narrators(narrators)
     _insert_narrator_index_registry(narrators, narrator_id_name)

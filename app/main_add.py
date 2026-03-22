@@ -11,12 +11,14 @@ from app.kafi_narrators import process_all_narrators
 from app.kafi_sarwar import add_kafi_sarwar
 from app.lib_model import ProcessingReport
 from app.link_books import link_all_books_to_quran
+from app.link_quran_fuzzy import link_fuzzy_quran
 from app.link_quran_kafi import link_quran_kafi
 from app.quran import init_quran
 from app.thaqalayn_api import init_all_thaqalayn_api_books
 from app.ghbook import init_ghbook_books
 from app.ai_content_merger import merge_ai_content
 from app.create_indices import create_indices
+from app.link_chapters import link_related_chapters
 from app.lib_db import write_file, shellify_complete_books
 
 logging.basicConfig(level=logging.INFO)
@@ -33,8 +35,10 @@ def init():
     init_all_thaqalayn_api_books()
     init_ghbook_books()
     link_all_books_to_quran()
+    link_fuzzy_quran()
     process_all_narrators(report)   # Replaces kafi_narrators(); runs after all books loaded
     create_indices()
+    link_related_chapters()
     merge_ai_content(report)
     shellify_complete_books()
     _write_data_version()
