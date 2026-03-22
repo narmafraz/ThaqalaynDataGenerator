@@ -258,7 +258,13 @@ class SessionStats:
     total_cost: float = 0.0
     total_output_tokens: int = 0
     total_input_tokens: int = 0
+    total_cache_creation_tokens: int = 0
+    total_cache_read_tokens: int = 0
     total_elapsed: float = 0.0
+    # Per-phase cost tracking (phased pipeline)
+    phase1_cost: float = 0.0
+    phase3_cost: float = 0.0
+    phase4_cost: float = 0.0
 
 
 # Global shutdown event for graceful Ctrl+C handling
@@ -418,14 +424,19 @@ async def call_claude(
         except json.JSONDecodeError as e:
             return {"error": f"CLI JSON parse error: {e}", "elapsed": round(elapsed, 2)}
 
+        usage = data.get("usage", {})
         return {
             "result": data.get("result", ""),
             "cost": data.get("total_cost_usd", 0),
-            "output_tokens": data.get("usage", {}).get("output_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "input_tokens": usage.get("input_tokens", 0),
+            "cache_creation_tokens": usage.get("cache_creation_input_tokens", 0),
+            "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
             "elapsed": round(elapsed, 2),
             "stop_reason": data.get("stop_reason"),
             "num_turns": data.get("num_turns", 1),
             "model": data.get("model", model),
+            "backend": "claude",
         }
 
     return {"error": "max retries exceeded", "elapsed": 0}
@@ -928,9 +939,13 @@ async def process_verse_phased(
             stats.completed += 1
             return VerseResult(verse_id=verse_id, status="error", error=cr["error"])
 
-        stats.total_cost += cr.get("cost", 0)
+        p1_cost = cr.get("cost", 0)
+        stats.total_cost += p1_cost
+        stats.phase1_cost += p1_cost
         stats.total_output_tokens += cr.get("output_tokens", 0)
         stats.total_input_tokens += cr.get("input_tokens", 0)
+        stats.total_cache_creation_tokens += cr.get("cache_creation_tokens", 0)
+        stats.total_cache_read_tokens += cr.get("cache_read_tokens", 0)
 
         # Parse Phase 1 response
         from app.pipeline_cli.verse_processor import strip_code_fences, repair_json_quotes
@@ -992,6 +1007,7 @@ async def process_verse_phased(
             p3_cost = full_result.pop("_phase3_cost", 0)
             full_result.pop("_phase3_tokens", 0)
             stats.total_cost += p3_cost
+            stats.phase3_cost += p3_cost
 
         # ── Phase 4: Multi-language translation ───────────────────────
         logger.info("P4-TRANSLATE %s...", verse_id)
@@ -1006,6 +1022,7 @@ async def process_verse_phased(
         p4_cost = full_result.pop("_phase4_cost", 0)
         full_result.pop("_phase4_tokens", 0)
         stats.total_cost += p4_cost
+        stats.phase4_cost += p4_cost
 
         # ── Validate using existing infrastructure ────────────────────
         errors = validate_result(full_result)
@@ -1122,15 +1139,21 @@ async def progress_reporter(stats: SessionStats, config: PipelineConfig):
         remaining = stats.total_queued - stats.completed - stats.skipped
         eta_hours = remaining / rate if rate > 0 else 0
 
-        print(
-            f"\n--- Progress [{elapsed_min:.0f}m] ---\n"
+        avg = stats.total_cost / stats.completed if stats.completed else 0
+        progress_lines = [
+            f"\n--- Progress [{elapsed_min:.0f}m] ---",
             f"  Done: {stats.completed}/{stats.total_queued} "
-            f"(pass={stats.passed}, fix={stats.needs_fix}, fixed={stats.fixed}, err={stats.errors})\n"
-            f"  Rate: {rate:.0f}/hr | ETA: {eta_hours:.1f}h\n"
-            f"  Cost: ${stats.total_cost:.2f} | Tokens: {stats.total_output_tokens:,}\n"
-            f"---",
-            flush=True,
-        )
+            f"(pass={stats.passed}, fix={stats.needs_fix}, fixed={stats.fixed}, err={stats.errors})",
+            f"  Rate: {rate:.0f}/hr | ETA: {eta_hours:.1f}h",
+            f"  Cost: ${stats.total_cost:.2f} (avg ${avg:.4f}/verse)",
+        ]
+        if config.phased and (stats.phase1_cost or stats.phase4_cost):
+            progress_lines.append(
+                f"  Phases: P1=${stats.phase1_cost:.2f} | P4=${stats.phase4_cost:.2f}"
+            )
+        progress_lines.append(f"  Out tokens: {stats.total_output_tokens:,}")
+        progress_lines.append("---")
+        print("\n".join(progress_lines), flush=True)
 
 
 async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
@@ -1282,10 +1305,31 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
     print(f"Pipeline Complete ({elapsed_min:.1f} min)", flush=True)
     print(f"  Total: {stats.completed} processed, {stats.skipped} skipped", flush=True)
     print(f"  Pass: {stats.passed} | Fixed: {stats.fixed} | Errors: {stats.errors}", flush=True)
-    token_detail = f"Out: {stats.total_output_tokens:,}"
+    avg_cost = stats.total_cost / stats.completed if stats.completed else 0
+    print(f"  Cost: ${stats.total_cost:.2f} (avg ${avg_cost:.4f}/verse)", flush=True)
+    # Phase breakdown (phased pipeline)
+    if config.phased and (stats.phase1_cost or stats.phase4_cost):
+        parts = []
+        if stats.phase1_cost:
+            parts.append(f"P1=${stats.phase1_cost:.2f}")
+        if stats.phase3_cost:
+            parts.append(f"P3=${stats.phase3_cost:.2f}")
+        if stats.phase4_cost:
+            parts.append(f"P4=${stats.phase4_cost:.2f}")
+        print(f"  Phase breakdown: {' | '.join(parts)}", flush=True)
+    # Token details
+    token_parts = []
     if stats.total_input_tokens:
-        token_detail = f"In: {stats.total_input_tokens:,} | {token_detail}"
-    print(f"  Cost: ${stats.total_cost:.2f} | {token_detail}", flush=True)
+        token_parts.append(f"In: {stats.total_input_tokens:,}")
+    if stats.total_cache_creation_tokens:
+        token_parts.append(f"Cache-create: {stats.total_cache_creation_tokens:,}")
+    if stats.total_cache_read_tokens:
+        token_parts.append(f"Cache-read: {stats.total_cache_read_tokens:,}")
+    token_parts.append(f"Out: {stats.total_output_tokens:,}")
+    print(f"  Tokens: {' | '.join(token_parts)}", flush=True)
+    # 58K projection
+    if stats.completed and avg_cost > 0:
+        print(f"  Projected 58K corpus: ${avg_cost * 58000:.0f}", flush=True)
     print(f"{'=' * 60}", flush=True)
 
     # Build session summary dict
@@ -1302,8 +1346,13 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
         "fixed": stats.fixed,
         "errors": stats.errors,
         "total_cost_usd": round(stats.total_cost, 4),
+        "phase1_cost_usd": round(stats.phase1_cost, 4),
+        "phase3_cost_usd": round(stats.phase3_cost, 4),
+        "phase4_cost_usd": round(stats.phase4_cost, 4),
         "total_input_tokens": stats.total_input_tokens,
         "total_output_tokens": stats.total_output_tokens,
+        "total_cache_creation_tokens": stats.total_cache_creation_tokens,
+        "total_cache_read_tokens": stats.total_cache_read_tokens,
         "total_elapsed_s": round(stats.total_elapsed, 1),
         "avg_cost_per_verse": round(stats.total_cost / stats.completed, 4) if stats.completed else 0,
         "avg_elapsed_per_verse": round(stats.total_elapsed / stats.completed, 1) if stats.completed else 0,
