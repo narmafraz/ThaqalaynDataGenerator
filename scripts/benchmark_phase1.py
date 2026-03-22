@@ -57,7 +57,7 @@ from app.config import AI_RESPONSES_DIR
 
 def find_unprocessed_verses(n: int, book: str = "al-kafi", volume: int = 2) -> List[str]:
     """Find verse paths that don't have responses yet."""
-    from app.ai_pipeline import load_corpus_manifest
+    from app.pipeline_cli.pipeline import load_corpus_manifest
     manifest = load_corpus_manifest()
     responses_dir = AI_RESPONSES_DIR
 
