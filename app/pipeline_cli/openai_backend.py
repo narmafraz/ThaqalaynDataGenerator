@@ -40,6 +40,9 @@ OPENAI_PRICING = {
     "gpt-5.3": (1.75, 14.00),
     "gpt-5.3-codex": (1.75, 14.00),
     "gpt-5.4": (2.50, 15.00),
+    "gpt-5.4-mini": (0.75, 4.50),
+    "gpt-5.4-nano": (0.20, 1.25),
+    "gpt-5.4-pro": (30.00, 180.00),
 }
 
 
@@ -115,11 +118,25 @@ async def call_openai(
     except (ImportError, ValueError) as e:
         return {"error": str(e), "elapsed": 0.0, "backend": "openai"}
 
-    # GPT-5+, o3, o4 are reasoning models with different API parameters:
-    # - No 'temperature' support
-    # - Use 'max_completion_tokens' instead of 'max_tokens'
-    # - System prompt goes in 'developer' role instead of 'system'
-    is_reasoning = model.startswith(("gpt-5", "o3", "o4"))
+    # GPT-5 family and o-series API differences:
+    #
+    # 1. max_completion_tokens vs max_tokens:
+    #    ALL gpt-5*, o3, o4 models require max_completion_tokens.
+    #    gpt-4.1* and gpt-4o* use max_tokens.
+    #
+    # 2. Reasoning models (developer role, no temperature):
+    #    gpt-5, gpt-5.1, gpt-5.2, gpt-5.3-codex, gpt-5.4, gpt-5.4-pro, o3, o4
+    #    These use 'developer' role and don't support temperature.
+    #
+    # 3. Standard gpt-5 models (system role, temperature OK):
+    #    gpt-5-mini, gpt-5-nano, gpt-5.4-mini, gpt-5.4-nano
+    #    These use the new token param but still support system role + temperature.
+    uses_new_token_param = model.startswith(("gpt-5", "o3", "o4"))
+
+    _STANDARD_GPT5 = ("gpt-5-mini", "gpt-5-nano", "gpt-5.4-mini", "gpt-5.4-nano")
+    is_reasoning = uses_new_token_param and not any(
+        model.startswith(prefix) for prefix in _STANDARD_GPT5
+    )
 
     if is_reasoning:
         messages = [
@@ -137,11 +154,13 @@ async def call_openai(
         "messages": messages,
     }
 
-    if is_reasoning:
+    if uses_new_token_param:
         kwargs["max_completion_tokens"] = max_output_tokens
     else:
-        kwargs["temperature"] = temperature
         kwargs["max_tokens"] = max_output_tokens
+
+    if not is_reasoning:
+        kwargs["temperature"] = temperature
 
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}

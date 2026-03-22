@@ -560,6 +560,23 @@ def extract_pipeline_request(verse_path: str,
         # If no specific verse index, use first verse (for chapter-level paths)
         target_verse = verses[0]
 
+    # Shell format: chapter has verse_refs instead of inline verses.
+    # Try loading the verse_detail file directly.
+    if target_verse is None and "verse_refs" in data:
+        verse_file_path = verse_path.replace(":", "/")
+        if verse_file_path.startswith("/"):
+            verse_file_path = verse_file_path[1:]
+        verse_file = os.path.join(data_dir, verse_file_path + ".json")
+        if os.path.exists(verse_file):
+            with open(verse_file, "r", encoding="utf-8") as vf:
+                verse_data = json.load(vf)
+            vd = verse_data.get("data", verse_data)
+            target_verse = vd.get("verse")
+            # Get chapter_title from verse_detail if available
+            ct = vd.get("chapter_title")
+            if ct:
+                chapter_title = ct if isinstance(ct, str) else ct.get("en", chapter_title)
+
     if target_verse is None:
         logger.warning("No verse found at path: %s", verse_path)
         return None

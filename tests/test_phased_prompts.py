@@ -18,6 +18,17 @@ MOCK_GLOSSARY = {
     ]
 }
 
+MOCK_TAXONOMY = {
+    "taxonomy": {
+        "creed": {
+            "topics": {
+                "tawhid": {"en": "Monotheism"},
+                "imamate": {"en": "Imamate"},
+            }
+        }
+    }
+}
+
 
 def _make_request(**overrides):
     """Create a mock PipelineRequest using SimpleNamespace."""
@@ -41,59 +52,44 @@ def _make_request(**overrides):
 
 class TestBuildPhase1SystemPrompt:
     def test_contains_glossary(self):
-        prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY)
+        prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY, topic_taxonomy=MOCK_TAXONOMY)
         assert "تَقْوَى" in prompt
         assert "God-consciousness" in prompt
         assert "صَلَاة" in prompt
         assert "ritual prayer" in prompt
 
     def test_includes_taxonomy(self):
-        taxonomy = {
-            "taxonomy": {
-                "creed": {
-                    "topics": {
-                        "tawhid": {"en": "Monotheism"},
-                    }
-                }
-            }
-        }
-        prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY, topic_taxonomy=taxonomy)
+        prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY, topic_taxonomy=MOCK_TAXONOMY)
         assert "TOPIC TAXONOMY" in prompt
         assert "tawhid" in prompt
 
     def test_omits_key_phrases(self):
-        prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY)
+        prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY, topic_taxonomy=MOCK_TAXONOMY)
         assert "KEY PHRASES REFERENCE" not in prompt
 
     def test_omits_examples(self):
-        prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY)
+        prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY, topic_taxonomy=MOCK_TAXONOMY)
         assert "EXAMPLES" not in prompt
 
     def test_smaller_than_monolithic(self):
-        mock_taxonomy = {
-            "taxonomy": {
-                "creed": {
-                    "topics": {
-                        "tawhid": {"en": "Monotheism"},
-                        "imamate": {"en": "Imamate"},
-                    }
-                }
-            }
-        }
         phase1 = build_phase1_system_prompt(
-            glossary=MOCK_GLOSSARY, topic_taxonomy=mock_taxonomy
+            glossary=MOCK_GLOSSARY, topic_taxonomy=MOCK_TAXONOMY
         )
         monolithic = build_system_prompt(
             glossary=MOCK_GLOSSARY,
             few_shot_examples={"examples": []},
             word_dictionary=None,
-            topic_taxonomy=mock_taxonomy,
+            topic_taxonomy=MOCK_TAXONOMY,
             key_phrases_dict={"phrases": []},
         )
         assert len(phase1) < len(monolithic), (
             f"Phase 1 prompt ({len(phase1)} chars) should be shorter than "
             f"monolithic ({len(monolithic)} chars)"
         )
+
+    def test_requires_diacritics(self):
+        prompt = build_phase1_system_prompt(glossary=MOCK_GLOSSARY, topic_taxonomy=MOCK_TAXONOMY)
+        assert "tashkeel" in prompt.lower() or "diacritics" in prompt.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -113,34 +109,57 @@ class TestBuildPhase1UserMessage:
         assert "Al-Kafi" in msg
         assert "Book of Reason and Ignorance" in msg
 
-    def test_requests_9_fields(self):
+    def test_requests_7_fields(self):
         req = _make_request()
         msg = build_phase1_user_message(req)
-        # The 9 Phase 1 fields should be mentioned
-        assert "diacritized_text" in msg
-        assert "word_tags" in msg
-        assert "chunks" in msg
-        assert "translations" in msg
-        assert "related_quran" in msg
-        assert "isnad_matn" in msg
+        assert '"has_chain"' in msg
         assert '"tags"' in msg
         assert '"content_type"' in msg
+        assert '"chunks"' in msg
+        assert '"translations"' in msg
+        assert '"related_quran"' in msg
         assert '"topics"' in msg
+
+    def test_chunks_have_arabic_text(self):
+        req = _make_request()
+        msg = build_phase1_user_message(req)
+        assert "arabic_text" in msg
+
+    def test_chunks_no_word_start_end(self):
+        req = _make_request()
+        msg = build_phase1_user_message(req)
+        assert "word_start" not in msg
+        assert "word_end" not in msg
+
+    def test_has_chain_is_top_level(self):
+        req = _make_request()
+        msg = build_phase1_user_message(req)
+        assert "isnad_matn" not in msg
+
+    def test_includes_key_terms(self):
+        req = _make_request()
+        msg = build_phase1_user_message(req)
+        assert "key_terms" in msg
 
     def test_omits_narrator_details(self):
         req = _make_request()
         msg = build_phase1_user_message(req)
-        # Phase 1 should NOT ask for the narrators array
-        assert "No narrators array needed" in msg or "narrators array" not in msg
-        # Specifically, the detailed narrator schema instructions should be absent
         assert "identity_confidence" not in msg
         assert "ambiguity_note" not in msg
+
+    def test_omits_word_tags(self):
+        req = _make_request()
+        msg = build_phase1_user_message(req)
+        assert "word_tags" not in msg
+
+    def test_omits_diacritized_text_field(self):
+        req = _make_request()
+        msg = build_phase1_user_message(req)
+        assert '"diacritized_text"' not in msg
 
     def test_omits_multilang_instructions(self):
         req = _make_request()
         msg = build_phase1_user_message(req)
-        # Phase 1 only asks for EN translations, not the other 10 languages
-        # Check that the multi-language translation keys are not instructed
         assert '"ur"' not in msg
         assert '"tr"' not in msg
         assert '"fa"' not in msg
@@ -154,83 +173,93 @@ class TestBuildPhase1UserMessage:
 class TestParsePhase1Response:
     def test_normalizes_response(self):
         raw = {
-            "diacritized_text": "حَدَّثَنَا عَلِيٌّ",
-            "diacritics_status": "added",
-            "diacritics_changes": [],
-            "word_tags": [["حَدَّثَنَا", "V"], ["عَلِيٌّ", "N"]],
+            "has_chain": True,
+            "tags": ["theology", "ethics"],
+            "content_type": "theological",
+            "topics": ["tawhid", "imamate"],
             "chunks": [
                 {
                     "chunk_type": "isnad",
-                    "word_start": 0,
-                    "word_end": 2,
+                    "arabic_text": "حَدَّثَنَا عَلِيٌّ",
                     "translations": {"en": "Ali narrated to us"},
                 }
             ],
-            "translations": {"en": {"summary": "A short hadith.", "seo_question": "Who narrated?"}},
+            "translations": {
+                "en": {
+                    "summary": "A short hadith.",
+                    "seo_question": "Who narrated?",
+                    "key_terms": {"عَلِيٌّ": "Ali"},
+                }
+            },
             "related_quran": [{"ref": "2:255", "relationship": "thematic"}],
-            "isnad_matn": {"isnad_ar": "حدثنا علي", "matn_ar": "", "has_chain": True},
-            "topics": ["tawhid", "imamate"],
-            "tags": ["theology", "ethics"],
-            "content_type": "theological",
         }
         result = parse_phase1_response(raw)
-        assert result["diacritized_text"] == "حَدَّثَنَا عَلِيٌّ"
-        assert result["diacritics_status"] == "added"
-        assert len(result["word_tags"]) == 2
-        assert len(result["chunks"]) == 1
-        assert result["translations"]["en"]["summary"] == "A short hadith."
-        assert result["related_quran"][0]["ref"] == "2:255"
-        assert result["isnad_matn"]["has_chain"] is True
-        assert result["topics"] == ["tawhid", "imamate"]
+        assert result["has_chain"] is True
         assert result["tags"] == ["theology", "ethics"]
         assert result["content_type"] == "theological"
+        assert result["topics"] == ["tawhid", "imamate"]
+        assert len(result["chunks"]) == 1
+        assert result["chunks"][0]["arabic_text"] == "حَدَّثَنَا عَلِيٌّ"
+        assert result["translations"]["en"]["summary"] == "A short hadith."
+        assert result["translations"]["en"]["key_terms"] == {"عَلِيٌّ": "Ali"}
+        assert result["related_quran"][0]["ref"] == "2:255"
+
+    def test_strips_word_start_end_from_chunks(self):
+        raw = {
+            "chunks": [
+                {
+                    "chunk_type": "body",
+                    "arabic_text": "بِسْمِ اللَّهِ",
+                    "word_start": 0,
+                    "word_end": 2,
+                    "translations": {"en": "In the name of Allah"},
+                }
+            ],
+        }
+        result = parse_phase1_response(raw)
+        assert "word_start" not in result["chunks"][0]
+        assert "word_end" not in result["chunks"][0]
 
     def test_strips_non_en_translations(self):
         raw = {
             "translations": {
-                "en": {"summary": "English summary", "seo_question": "Q?"},
+                "en": {"summary": "English summary", "seo_question": "Q?", "key_terms": {}},
                 "ur": {"summary": "Urdu summary", "seo_question": "Q?"},
                 "tr": {"summary": "Turkish summary", "seo_question": "Q?"},
-                "fa": {"summary": "Farsi summary", "seo_question": "Q?"},
             },
         }
         result = parse_phase1_response(raw)
         assert "en" in result["translations"]
         assert "ur" not in result["translations"]
         assert "tr" not in result["translations"]
-        assert "fa" not in result["translations"]
 
-    def test_stubs_narrators(self):
+    def test_preserves_key_terms(self):
         raw = {
-            "isnad_matn": {
-                "isnad_ar": "حدثنا",
-                "matn_ar": "قال",
-                "has_chain": True,
-                "narrators": [
-                    {"name_ar": "علي", "name_en": "Ali", "role": "narrator", "position": 1}
-                ],
+            "translations": {
+                "en": {
+                    "summary": "S",
+                    "seo_question": "Q?",
+                    "key_terms": {"تَقْوَى": "God-consciousness"},
+                }
             },
         }
         result = parse_phase1_response(raw)
-        # narrators should always be empty — Phase 2 handles them
-        assert result["isnad_matn"]["narrators"] == []
-        # Other isnad_matn fields should be preserved
-        assert result["isnad_matn"]["has_chain"] is True
-        assert result["isnad_matn"]["isnad_ar"] == "حدثنا"
+        assert result["translations"]["en"]["key_terms"] == {"تَقْوَى": "God-consciousness"}
 
     def test_defaults_for_missing_fields(self):
         result = parse_phase1_response({})
-        assert result["diacritized_text"] == ""
-        assert result["diacritics_status"] == "added"
-        assert result["diacritics_changes"] == []
-        assert result["word_tags"] == []
-        assert result["chunks"] == []
-        assert result["translations"] == {"en": {"summary": "", "seo_question": ""}}
-        assert result["related_quran"] == []
-        assert result["isnad_matn"]["isnad_ar"] == ""
-        assert result["isnad_matn"]["matn_ar"] == ""
-        assert result["isnad_matn"]["has_chain"] is False
-        assert result["isnad_matn"]["narrators"] == []
-        assert result["topics"] == []
+        assert result["has_chain"] is False
         assert result["tags"] == []
         assert result["content_type"] == ""
+        assert result["topics"] == []
+        assert result["chunks"] == []
+        assert result["translations"] == {
+            "en": {"summary": "", "seo_question": "", "key_terms": {}}
+        }
+        assert result["related_quran"] == []
+        # Phase 1 should NOT contain these fields:
+        assert "diacritized_text" not in result
+        assert "word_tags" not in result
+        assert "isnad_matn" not in result
+        assert "diacritics_status" not in result
+        assert "diacritics_changes" not in result

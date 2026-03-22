@@ -1,10 +1,11 @@
 """Phase 1: Reduced AI prompt for core fields only.
 
-Asks the LLM for diacritization, POS tagging, chunking, EN translation,
-thematic Quran refs, basic isnad/matn separation, topics, tags, and
-content_type. Remaining fields (narrators, key_phrases, key_terms,
-10 non-EN translations) are handled by Phase 2 (programmatic) and
-Phase 4 (translation).
+Asks the LLM for chunked segmentation with diacritized Arabic text,
+EN translation, classification (topics/tags/content_type), thematic
+Quran refs, has_chain boolean, and key_terms. Remaining fields
+(narrators, key_phrases, word_tags, diacritized_text, isnad_matn,
+diacritics_status/changes, 10 non-EN translations) are derived by
+Phase 2 (programmatic) and Phase 4 (translation).
 """
 
 import json
@@ -26,7 +27,7 @@ def build_phase1_system_prompt(
 
     Includes topic taxonomy for topics/tags/content_type assignment.
     Omits: key phrases reference, 10-language translation instructions,
-    narrator linking instructions. ~50% smaller than monolithic.
+    narrator linking instructions, word-level POS tagging instructions.
     """
     if glossary is None:
         glossary = load_glossary()
@@ -47,8 +48,8 @@ def build_phase1_system_prompt(
         taxonomy_table = _format_topic_taxonomy(topic_taxonomy)
         taxonomy_section = f"""
 
-TOPIC TAXONOMY (for field #9 "topics"):
-Assign 1-3 Level 2 topic keys from this controlled vocabulary. Use ONLY the topic keys listed below.
+TOPIC TAXONOMY (for "topics" field):
+Assign 1-5 Level 2 topic keys from this CLOSED vocabulary. You MUST use ONLY the exact keys from the "Level 2 Topic Key" column below. Do NOT invent new keys, do NOT use dotted notation, do NOT paraphrase.
 {taxonomy_table}"""
 
     return f"""You are a specialist in Shia Islamic scholarly texts analyzing hadith from the Four Books and other primary Shia sources.
@@ -61,6 +62,7 @@ RULES:
 - Reproduce Quran quotes exactly — never paraphrase
 - Transliterate narrator names consistently (do not translate)
 - This text is classical Arabic (fusha qadima)
+- All Arabic text in the output must have COMPLETE tashkeel (diacritics) on every word
 - Output valid JSON only
 
 GLOSSARY:
@@ -68,18 +70,16 @@ GLOSSARY:
 
 
 def build_phase1_user_message(request: PipelineRequest) -> str:
-    """Build the user message for Phase 1 — core fields + classification.
+    """Build the user message for Phase 1 — 7 core fields.
 
-    Requests 9 fields instead of 12:
-    1. diacritized_text + diacritics_changes
-    2. word_tags
-    3. chunks (EN-only translations)
-    4. translations.en (summary + seo_question only)
-    5. related_quran (thematic refs only)
-    6. isnad_matn (isnad_ar, matn_ar, has_chain — no narrators)
-    7. tags
-    8. content_type
-    9. topics
+    Fields requested:
+    1. chunks (with arabic_text + EN translations)
+    2. tags
+    3. content_type
+    4. translations.en (summary + seo_question + key_terms)
+    5. related_quran
+    6. has_chain
+    7. topics
     """
     parts = [f"Arabic text: {request.arabic_text}"]
 
@@ -98,25 +98,28 @@ def build_phase1_user_message(request: PipelineRequest) -> str:
     parts.append("")
     parts.append("""Generate a JSON object with these fields:
 
-1. "diacritized_text": (string) Full Arabic text with complete tashkeel.
-2. "diacritics_status": (enum) "added"|"completed"|"validated"|"corrected"
-3. "diacritics_changes": (array) Corrections made. Empty [] if "added"/"validated".
-4. "word_tags": (array) Per word: [diacritized_word, POS_tag]
-   POS: N|V|ADJ|ADV|PREP|CONJ|PRON|DET|PART|INTJ|REL|DEM|NEG|COND|INTERR
-   Words must match diacritized_text exactly. Every word must have full tashkeel.
-5. "tags": (array of 2-5 enums) theology|ethics|jurisprudence|worship|quran_commentary|prophetic_tradition|family|social_relations|knowledge|dua|afterlife|history|economy|governance
-6. "content_type": (enum) legal_ruling|ethical_teaching|narrative|prophetic_tradition|quranic_commentary|supplication|creedal|eschatological|biographical|theological|exhortation|cosmological
-7. "chunks": (array) Paragraph-level segmentation with EN-only translations.
-   Each: {"chunk_type": "isnad"|"opening"|"body"|"quran_quote"|"closing",
-          "word_start": int, "word_end": int,
-          "translations": {"en": "..."}}
-   RULES: Sequential, non-overlapping, complete (0 to len(word_tags)). At least 1 chunk.
-8. "translations": {"en": {"summary": "2-3 sentences", "seo_question": "..."}}
-9. "related_quran": (array) [{"ref": "surah:ayah", "relationship": "thematic"}] or []
-   Only include thematic connections. Do not scan for explicit [S:V] refs.
-10. "isnad_matn": {"isnad_ar": "...", "matn_ar": "...", "has_chain": boolean}
-   Separate narrator chain from body text. No narrators array needed.
-11. "topics": (array of 1-5 strings) Level 2 topic keys from the TOPIC TAXONOMY in the system prompt.""")
+1. "has_chain": (boolean) Whether this text has a narrator chain (isnad).
+2. "tags": (array of 2-5 enums) theology|ethics|jurisprudence|worship|quran_commentary|prophetic_tradition|family|social_relations|knowledge|dua|afterlife|history|economy|governance
+3. "content_type": (enum) legal_ruling|ethical_teaching|narrative|prophetic_tradition|quranic_commentary|supplication|creedal|eschatological|biographical|theological|exhortation|cosmological
+4. "chunks": (array) Paragraph-level segmentation of the text.
+   Each chunk: {"chunk_type": "isnad"|"opening"|"body"|"quran_quote"|"closing",
+                "arabic_text": "fully diacritized Arabic text for this chunk",
+                "translations": {"en": "English translation of this chunk"}}
+   RULES:
+   - At least 1 chunk. Every word of the original text must appear in exactly one chunk.
+   - arabic_text must be the COMPLETE Arabic text for that segment with FULL tashkeel on every word.
+   - Segment at natural boundaries: isnad→matn transition, topic shifts, Quran quotes, opening/closing formulae.
+   - If has_chain is true, the narrator chain MUST be in one or more "isnad" chunks.
+5. "translations": {"en": {"summary": "2-3 sentences explaining the verse's meaning and significance",
+                           "seo_question": "A natural question this verse answers",
+                           "key_terms": {"Arabic term with diacritics": "English definition in context", ...}}}
+   key_terms: 3-8 important Arabic terms from the text with contextual English definitions.
+   Keys MUST be Arabic words with full diacritics taken from the text.
+6. "related_quran": (array) [{"ref": "surah:ayah", "relationship": "thematic"}] or []
+   Only include thematic connections to Quran verses. Do not scan for explicit [S:V] refs.
+7. "topics": (array of 1-5 strings) Pick ONLY from this closed set of valid topic keys:
+   abrogation, ahlulbayt_virtues, anger_control, backbiting, barzakh, charity, community, companions, consultation, death_dying, dhikr, divine_attributes, divine_decree, divine_justice, divine_knowledge, etiquette, etiquette_of_dua, events, fasting, fasting_rulings, financial_law, forbidding_evil, friendship, ghadir, gratitude, hadith_sciences, hajj, halal_haram, honesty, hospitality, humility, ignorance, imamate, imams_biography, inheritance, intercession, judicial_rulings, justice_system, karbala, kinship, leadership, marriage_family_law, miracles, mosque_etiquette, neighbors, night_prayer, occasions_of_revelation, oppression, orphans, paradise_hell, parenting, patience, poverty_wealth, prayer_rulings, prophethood, prophetic_character, prophets, quran_interpretation_method, quran_recitation, quran_virtues, reasoning, reckoning, religious_authority, repentance, resurrection, rights_of_others, rights_of_rulers, ritual_purity, salat, scholars_virtues, seeking_forgiveness, seeking_knowledge, seeking_refuge, signs_of_end, sincerity, specific_supplications, spousal_rights, sunnah, tafsir_specific_verse, tawhid, teaching, times_for_dua, trade_ethics, trust, usury, womens_rights, work_livelihood, zakat_khums
+   CRITICAL: Use ONLY keys from the list above. Do NOT use tag names (theology, ethics, etc.) as topics — those are different fields.""")
 
     return "\n".join(parts)
 
@@ -130,38 +133,39 @@ def parse_phase1_response(result_dict: dict) -> dict:
     """
     normalized = {}
 
-    # Copy Phase 1 fields with defaults
-    normalized["diacritized_text"] = result_dict.get("diacritized_text", "")
-    normalized["diacritics_status"] = result_dict.get("diacritics_status", "added")
-    normalized["diacritics_changes"] = result_dict.get("diacritics_changes", [])
-    normalized["word_tags"] = result_dict.get("word_tags", [])
+    # has_chain: top-level boolean
+    normalized["has_chain"] = bool(result_dict.get("has_chain", False))
 
-    # Chunks: ensure EN-only translations
+    # tags, content_type, topics
+    normalized["tags"] = result_dict.get("tags", [])
+    normalized["content_type"] = result_dict.get("content_type", "")
+    normalized["topics"] = result_dict.get("topics", [])
+
+    # Chunks: must have arabic_text and translations
     chunks = result_dict.get("chunks", [])
+    for chunk in chunks:
+        chunk.setdefault("arabic_text", "")
+        chunk.setdefault("translations", {})
+        # Strip word_start/word_end if LLM included them — Phase 2 adds correct ones
+        chunk.pop("word_start", None)
+        chunk.pop("word_end", None)
     normalized["chunks"] = chunks
 
-    # translations.en only
+    # translations.en with key_terms
     translations = result_dict.get("translations", {})
     if isinstance(translations, dict) and "en" in translations:
-        normalized["translations"] = {"en": translations["en"]}
+        en = translations["en"] if isinstance(translations["en"], dict) else {}
+        normalized["translations"] = {"en": {
+            "summary": en.get("summary", ""),
+            "seo_question": en.get("seo_question", ""),
+            "key_terms": en.get("key_terms", {}),
+        }}
     else:
-        normalized["translations"] = {"en": {"summary": "", "seo_question": ""}}
+        normalized["translations"] = {
+            "en": {"summary": "", "seo_question": "", "key_terms": {}}
+        }
 
     # related_quran (thematic only from Phase 1)
     normalized["related_quran"] = result_dict.get("related_quran", [])
-
-    # Topics, tags, content_type (LLM-generated in Phase 1)
-    normalized["topics"] = result_dict.get("topics", [])
-    normalized["tags"] = result_dict.get("tags", [])
-    normalized["content_type"] = result_dict.get("content_type", "")
-
-    # isnad_matn (basic, no narrators)
-    isnad = result_dict.get("isnad_matn", {})
-    normalized["isnad_matn"] = {
-        "isnad_ar": isnad.get("isnad_ar", ""),
-        "matn_ar": isnad.get("matn_ar", ""),
-        "has_chain": isnad.get("has_chain", False),
-        "narrators": [],  # Added by Phase 2
-    }
 
     return normalized

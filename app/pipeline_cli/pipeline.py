@@ -917,7 +917,7 @@ async def process_verse_phased(
                         verse_id, word_count, config.backend, config.phase1_model)
             cr = await call_llm(
                 system_prompt, user_message,
-                model=config.phase1_model, backend="openai",
+                model=config.phase1_model, backend=config.backend,
             )
 
         if "error" in cr:
@@ -940,6 +940,20 @@ async def process_verse_phased(
             cleaned = repair_json_quotes(cleaned)
             phase1_dict = json.loads(cleaned)
         except (json.JSONDecodeError, ValueError) as e:
+            # Persist raw LLM output so it can be repaired.
+            quarantine_dir = os.path.join(
+                os.path.dirname(responses_dir), "quarantine"
+            )
+            os.makedirs(quarantine_dir, exist_ok=True)
+            q_path = os.path.join(quarantine_dir, f"{verse_id}.json")
+            with open(q_path, "w", encoding="utf-8") as qf:
+                json.dump({
+                    "verse_path": verse_path,
+                    "phase1_raw": raw,
+                    "parse_error": str(e),
+                }, qf, ensure_ascii=False, indent=2)
+            logger.info("QUARANTINED raw P1 %s (parse error)", verse_id)
+
             stats.errors += 1
             logger.error("P1-GEN %s JSON parse failed: %s", verse_id, e)
             stats.completed += 1
@@ -998,6 +1012,30 @@ async def process_verse_phased(
         if errors:
             logger.warning("PHASED %s: %d validation errors: %s",
                            verse_id, len(errors), errors[:3])
+
+            # Persist errored result so it can be salvaged later.
+            from app.ai_pipeline import strip_redundant_fields as _strip, PIPELINE_VERSION as _PV
+            quarantine_dir = os.path.join(
+                os.path.dirname(responses_dir), "quarantine"
+            )
+            os.makedirs(quarantine_dir, exist_ok=True)
+            q_wrapper = {
+                "verse_path": verse_path,
+                "ai_attribution": {
+                    "model": f"phased_{config.phase1_model}+{config.phase4_model}",
+                    "generated_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                    "pipeline_version": _PV,
+                    "generation_method": "phased_pipeline",
+                },
+                "generation_attempts": 1,
+                "validation_errors": errors,
+                "result": full_result,
+            }
+            q_path = os.path.join(quarantine_dir, f"{verse_id}.json")
+            with open(q_path, "w", encoding="utf-8") as qf:
+                json.dump(q_wrapper, qf, ensure_ascii=False, indent=2)
+            logger.info("QUARANTINED %s (%d errors)", verse_id, len(errors))
+
             stats.errors += 1
             stats.completed += 1
             config.event_log.log("VERSE_DONE", verse_id=verse_id, status="error",
@@ -1364,10 +1402,106 @@ def _handle_word_dict(args):
         sys.exit(1)
 
 
+async def run_retranslate(config: PipelineConfig):
+    """Re-run Phase 4 translation on responses with missing non-EN translations.
+
+    Scans the responses directory for files where translations are missing
+    or empty for non-EN languages, then runs Phase 4 (OpenAI translation)
+    on each and re-saves.
+    """
+    from app.pipeline_cli.translation_phase import translate_chunks, NON_EN_LANGUAGES
+    from app.ai_pipeline import (
+        validate_result, strip_redundant_fields, reconstruct_fields,
+        PIPELINE_VERSION,
+    )
+
+    responses_dir = config.responses_dir or AI_RESPONSES_DIR
+    if not os.path.isdir(responses_dir):
+        print(f"No responses directory: {responses_dir}")
+        return
+
+    # Scan for responses needing translation
+    needs_translation = []
+    for fname in sorted(os.listdir(responses_dir)):
+        if not fname.endswith(".json"):
+            continue
+        fpath = os.path.join(responses_dir, fname)
+        with open(fpath, "r", encoding="utf-8") as f:
+            wrapper = json.load(f)
+        result = wrapper.get("result", {})
+        # Reconstruct stripped fields so we can check translations
+        reconstruct_fields(result)
+        translations = result.get("translations", {})
+        # Check if any non-EN language is missing or has empty summary
+        missing = False
+        for lang in NON_EN_LANGUAGES:
+            lang_data = translations.get(lang, {})
+            if not isinstance(lang_data, dict) or not lang_data.get("summary"):
+                missing = True
+                break
+        if missing:
+            needs_translation.append((fname, fpath, wrapper))
+
+    if not needs_translation:
+        print("All responses have complete translations — nothing to retranslate.")
+        return
+
+    if config.max_verses:
+        needs_translation = needs_translation[:config.max_verses]
+
+    print(f"Retranslate: {len(needs_translation)} responses need Phase 4 translation "
+          f"(model: {config.phase4_model})", flush=True)
+
+    semaphore = asyncio.Semaphore(config.workers)
+    total_cost = 0.0
+    success = 0
+    errors = 0
+
+    for fname, fpath, wrapper in needs_translation:
+        result = wrapper.get("result", {})
+        reconstruct_fields(result)
+        verse_id = fname.replace(".json", "")
+        verse_path = wrapper.get("verse_path", "")
+
+        # Get arabic_text for context
+        arabic_text = result.get("diacritized_text", "")
+
+        logger.info("P4-RETRANSLATE %s...", verse_id)
+        async with semaphore:
+            result = await translate_chunks(
+                result,
+                model=config.phase4_model,
+                arabic_text=arabic_text,
+            )
+
+        p4_cost = result.pop("_phase4_cost", 0)
+        result.pop("_phase4_tokens", 0)
+        total_cost += p4_cost
+
+        # Validate
+        errs = validate_result(result)
+        if errs:
+            logger.warning("RETRANSLATE %s: %d validation errors: %s",
+                           verse_id, len(errs), errs[:3])
+            errors += 1
+            continue
+
+        # Re-strip and save
+        stripped = strip_redundant_fields(result)
+        wrapper["result"] = stripped
+        with open(fpath, "w", encoding="utf-8") as f:
+            json.dump(wrapper, f, ensure_ascii=False, indent=2)
+        logger.info("OK %s [retranslate, $%.4f]", verse_id, p4_cost)
+        success += 1
+
+    print(f"\nRetranslate complete: {success} updated, {errors} errors, "
+          f"${total_cost:.2f} cost", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pipeline v4 — AI content generation orchestrator")
     parser.add_argument("command", nargs="?", default="run",
-                        help="Command: run (default), word-dict, batch")
+                        help="Command: run (default), retranslate, word-dict, batch")
     parser.add_argument("subcommand", nargs="?", default=None,
                         help="Subcommand for word-dict (extract, missing, stats) or batch (submit, status, download, submit-fixes, download-fixes)")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="Concurrent Claude calls")
@@ -1423,6 +1557,19 @@ def main():
     if args.command == "batch":
         from app.pipeline_cli.openai_batch import handle_batch_command
         handle_batch_command(args)
+        return
+
+    # Handle retranslate subcommand
+    if args.command == "retranslate":
+        os.environ.setdefault("SOURCE_DATA_DIR", "../ThaqalaynDataSources/")
+        setup_signal_handlers()
+        rt_config = PipelineConfig(
+            workers=args.workers,
+            phase4_model=args.phase4_model,
+            responses_dir=args.responses_dir,
+            max_verses=args.max_verses,
+        )
+        asyncio.run(run_retranslate(rt_config))
         return
 
     # Setup signal handlers

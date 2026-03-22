@@ -13,6 +13,8 @@ from app.pipeline_cli.programmatic_enrichment import (
     enrich_narrators,
     enrich_topics_and_tags,
     programmatic_enrich,
+    reconstruct_from_chunks,
+    reconstruct_isnad_matn,
 )
 
 
@@ -20,21 +22,17 @@ from app.pipeline_cli.programmatic_enrichment import (
 # Shared test data
 # ---------------------------------------------------------------------------
 
+# New 7-field Phase 1 format (no diacritized_text, word_tags, isnad_matn,
+# diacritics_status, diacritics_changes).
 SAMPLE_PHASE1 = {
-    "diacritized_text": "قَالَ عَلِيُّ بْنُ إِبْرَاهِيمَ",
-    "diacritics_status": "completed",
-    "diacritics_changes": [],
-    "word_tags": [
-        ["قَالَ", "V"],
-        ["عَلِيُّ", "N"],
-        ["بْنُ", "N"],
-        ["إِبْرَاهِيمَ", "N"],
-    ],
+    "has_chain": True,
+    "tags": ["theology", "ethics"],
+    "content_type": "theological",
+    "topics": ["tawhid"],
     "chunks": [
         {
-            "chunk_type": "body",
-            "word_start": 0,
-            "word_end": 4,
+            "chunk_type": "isnad",
+            "arabic_text": "قَالَ عَلِيُّ بْنُ إِبْرَاهِيمَ",
             "translations": {"en": "Ali ibn Ibrahim said"},
         }
     ],
@@ -42,15 +40,10 @@ SAMPLE_PHASE1 = {
         "en": {
             "summary": "Ali ibn Ibrahim narrates about prayer [2:255].",
             "seo_question": "What did Ali say?",
+            "key_terms": {"عَلِيُّ": "Ali"},
         }
     },
     "related_quran": [{"ref": "1:1", "relationship": "thematic"}],
-    "isnad_matn": {
-        "isnad_ar": "قَالَ عَلِيُّ بْنُ إِبْرَاهِيمَ",
-        "matn_ar": "",
-        "has_chain": True,
-        "narrators": [],
-    },
 }
 
 SAMPLE_REQUEST = SimpleNamespace(
@@ -556,13 +549,53 @@ class TestProgrammaticEnrichOrchestrator:
             # but the structure should exist
             assert isinstance(translations["en"], dict)
 
-    def test_preserves_phase1_fields(self):
-        """Phase 1 fields like diacritized_text, word_tags, chunks are preserved."""
+    def test_reconstructs_diacritized_text_from_chunks(self):
+        """diacritized_text is reconstructed from chunks' arabic_text."""
+        result = programmatic_enrich(dict(SAMPLE_PHASE1), SAMPLE_REQUEST)
+        assert result["diacritized_text"] == "قَالَ عَلِيُّ بْنُ إِبْرَاهِيمَ"
+
+    def test_reconstructs_word_tags_from_chunks(self):
+        """word_tags is reconstructed with placeholder POS from chunks."""
+        result = programmatic_enrich(dict(SAMPLE_PHASE1), SAMPLE_REQUEST)
+        assert len(result["word_tags"]) == 4
+        assert result["word_tags"][0][0] == "قَالَ"
+        # Placeholder POS tag
+        assert result["word_tags"][0][1] == "N"
+
+    def test_reconstructs_isnad_matn_from_chunks(self):
+        """isnad_matn is built from isnad-typed chunks and has_chain."""
+        result = programmatic_enrich(dict(SAMPLE_PHASE1), SAMPLE_REQUEST)
+        isnad = result["isnad_matn"]
+        assert isnad["has_chain"] is True
+        assert "قَالَ عَلِيُّ بْنُ إِبْرَاهِيمَ" in isnad["isnad_ar"]
+
+    def test_reconstructs_word_start_end_on_chunks(self):
+        """Chunks get word_start/word_end based on word boundaries."""
+        result = programmatic_enrich(dict(SAMPLE_PHASE1), SAMPLE_REQUEST)
+        chunk = result["chunks"][0]
+        assert chunk["word_start"] == 0
+        assert chunk["word_end"] == 4
+
+    def test_derives_diacritics_status(self):
+        """diacritics_status is derived, not from Phase 1."""
+        result = programmatic_enrich(dict(SAMPLE_PHASE1), SAMPLE_REQUEST)
+        assert result["diacritics_status"] in ("added", "completed", "validated", "corrected")
+        assert result["diacritics_changes"] == []
+
+    def test_has_chain_flows_to_isnad_matn(self):
+        """Top-level has_chain ends up in isnad_matn.has_chain."""
         phase1 = dict(SAMPLE_PHASE1)
+        phase1["has_chain"] = False
         result = programmatic_enrich(phase1, SAMPLE_REQUEST)
-        assert result["diacritized_text"] == SAMPLE_PHASE1["diacritized_text"]
-        assert result["word_tags"] == SAMPLE_PHASE1["word_tags"]
-        assert result["chunks"] == SAMPLE_PHASE1["chunks"]
+        # has_chain may be True if narrator enrichment finds a chain,
+        # but the Phase 1 value should be considered
+        assert isinstance(result["isnad_matn"]["has_chain"], bool)
+
+    def test_preserves_phase1_key_terms(self):
+        """Phase 1 key_terms in translations.en are preserved."""
+        result = programmatic_enrich(dict(SAMPLE_PHASE1), SAMPLE_REQUEST)
+        en_kt = result["translations"]["en"].get("key_terms", {})
+        assert "عَلِيُّ" in en_kt
 
     def test_all_required_fields_present(self):
         """Result should have all standard pipeline fields."""

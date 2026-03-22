@@ -500,6 +500,67 @@ def _default_content_type(book_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def reconstruct_from_chunks(chunks: List[dict]) -> Tuple[str, List[list]]:
+    """Reconstruct diacritized_text and word_tags from chunks' arabic_text.
+
+    Also adds ``word_start`` and ``word_end`` to each chunk in-place based
+    on word boundaries.
+
+    Args:
+        chunks: List of chunk dicts, each with ``arabic_text``.
+
+    Returns:
+        ``(diacritized_text, word_tags)`` where *word_tags* uses placeholder
+        POS tag ``"N"`` for each word (real POS can be added later via
+        CAMeL Tools or similar).
+    """
+    all_words: List[list] = []
+    offset = 0
+    for chunk in chunks:
+        arabic = chunk.get("arabic_text", "")
+        words = arabic.split() if arabic else []
+        chunk["word_start"] = offset
+        chunk["word_end"] = offset + len(words)
+        for w in words:
+            all_words.append([w, "N"])
+        offset += len(words)
+
+    diacritized_text = " ".join(wt[0] for wt in all_words) if all_words else ""
+    return diacritized_text, all_words
+
+
+def reconstruct_isnad_matn(
+    chunks: List[dict], has_chain: bool
+) -> dict:
+    """Reconstruct isnad_matn from isnad-typed chunks.
+
+    Args:
+        chunks: List of chunk dicts with ``chunk_type`` and ``arabic_text``.
+        has_chain: Whether a narrator chain is present.
+
+    Returns:
+        An ``isnad_matn`` dict with ``isnad_ar``, ``matn_ar``,
+        ``has_chain``, and empty ``narrators`` list.
+    """
+    isnad_parts: List[str] = []
+    matn_parts: List[str] = []
+    for chunk in chunks:
+        text = chunk.get("arabic_text", "")
+        if not text:
+            continue
+        if chunk.get("chunk_type") == "isnad":
+            isnad_parts.append(text)
+        else:
+            matn_parts.append(text)
+
+    return {
+        "isnad_ar": " ".join(isnad_parts).strip(),
+        "matn_ar": " ".join(matn_parts).strip(),
+        "has_chain": has_chain,
+        "narrators": [],
+    }
+
+
 def programmatic_enrich(
     phase1_result: dict,
     request: Any,
@@ -514,12 +575,18 @@ def programmatic_enrich(
     Takes the Phase 1 AI-generated result and enriches it with deterministic,
     data-driven fields that do not require further AI calls.
 
+    Phase 1 (7-field format) provides: ``chunks`` (with ``arabic_text``),
+    ``tags``, ``content_type``, ``translations.en`` (summary + seo_question
+    + key_terms), ``related_quran``, ``has_chain``, ``topics``.
+
+    Phase 2 reconstructs: ``diacritized_text``, ``word_tags``,
+    ``diacritics_status``, ``diacritics_changes``, ``isnad_matn`` (with
+    narrators), ``key_phrases``, and supplements ``key_terms``.
+
     Args:
-        phase1_result: Dict from Phase 1 containing at minimum
-            ``diacritized_text``, ``diacritics_changes``, ``word_tags``,
-            ``chunks``, ``translations`` (with ``en``), ``related_quran``
-            (thematic only), and ``isnad_matn`` (partial — ``isnad_ar``,
-            ``matn_ar``, ``has_chain`` but no ``narrators``).
+        phase1_result: Dict from Phase 1 containing the 7-field output.
+            Also supports legacy format with ``diacritized_text``,
+            ``word_tags``, ``isnad_matn`` etc. for backward compatibility.
         request: An object (or duck-typed namespace) with attributes
             ``arabic_text``, ``english_text``, ``book_name``,
             ``chapter_title``, and ``existing_narrator_chain``.
@@ -549,6 +616,33 @@ def programmatic_enrich(
     # Start with a copy of Phase 1 output.
     result = dict(phase1_result)
 
+    # --- Reconstruct fields from chunks (new 7-field format) ---
+    chunks = result.get("chunks", [])
+    has_chain = result.pop("has_chain", False)
+
+    # If Phase 1 didn't provide diacritized_text/word_tags (new format),
+    # reconstruct from chunks' arabic_text.
+    if "diacritized_text" not in result or "word_tags" not in result:
+        diacritized_text, word_tags = reconstruct_from_chunks(chunks)
+        result["diacritized_text"] = diacritized_text
+        result["word_tags"] = word_tags
+    else:
+        diacritized_text = result["diacritized_text"]
+        # Ensure chunks have word_start/word_end even in legacy format
+        if chunks and "word_start" not in chunks[0]:
+            reconstruct_from_chunks(chunks)
+
+    # If Phase 1 didn't provide isnad_matn (new format), reconstruct from chunks.
+    if "isnad_matn" not in result:
+        result["isnad_matn"] = reconstruct_isnad_matn(chunks, has_chain)
+
+    # Derive diacritics_status if not provided by Phase 1.
+    if "diacritics_status" not in result:
+        result["diacritics_status"] = enrich_diacritics_status(
+            arabic_text, diacritized_text
+        )
+    result.setdefault("diacritics_changes", [])
+
     # --- Narrators (merge into isnad_matn) ---
     narrator_enrichment = enrich_narrators(
         arabic_text, existing_chain, narrator_templates, registry
@@ -576,7 +670,7 @@ def programmatic_enrich(
             merged_quran.append(ref_obj)
     result["related_quran"] = merged_quran
 
-    # --- Topics, tags, content_type ---
+    # --- Topics, tags, content_type (fallback if Phase 1 didn't provide) ---
     topics, tags, content_type = enrich_topics_and_tags(
         english_text, chapter_title, book_name, taxonomy
     )
@@ -609,13 +703,6 @@ def programmatic_enrich(
                         if ar_term not in existing_kt:
                             existing_kt[ar_term] = trans
 
-    # --- Diacritics status ---
-    diacritized = result.get("diacritized_text", "")
-    if "diacritics_status" not in result or not result["diacritics_status"]:
-        result["diacritics_status"] = enrich_diacritics_status(
-            arabic_text, diacritized
-        )
-
     # Ensure all 12 fields are present with sensible defaults.
     result.setdefault("diacritized_text", arabic_text)
     result.setdefault("diacritics_status", "added")
@@ -632,12 +719,12 @@ def programmatic_enrich(
     result.setdefault("tags", [])
     result.setdefault("content_type", _default_content_type(book_name))
 
-    # Fix: ensure translations.*.key_terms exists (required by validate_result).
+    # Ensure translations.*.key_terms exists (required by validate_result).
     for lang_key, lang_data in result.get("translations", {}).items():
         if isinstance(lang_data, dict):
             lang_data.setdefault("key_terms", {})
 
-    # Fix: reconstruct chunks[].arabic_text from word_tags if missing.
+    # Ensure chunks[].arabic_text exists (reconstruct from word_tags if needed).
     word_tags = result.get("word_tags", [])
     for chunk in result.get("chunks", []):
         if "arabic_text" not in chunk and word_tags:
@@ -648,7 +735,7 @@ def programmatic_enrich(
                 for wt in word_tags[ws:we]
             )
 
-    # Fix: diacritics_status consistency — if changes exist, can't be "added".
+    # Diacritics_status consistency — if changes exist, can't be "added".
     status = result.get("diacritics_status", "")
     changes = result.get("diacritics_changes", [])
     if status == "added" and isinstance(changes, list) and len(changes) > 0:

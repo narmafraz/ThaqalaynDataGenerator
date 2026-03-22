@@ -159,52 +159,57 @@ def count_arabic_words(text: str) -> int:
 def simulate_phase1(ai_result: dict) -> dict:
     """Simulate Phase 1 output from an existing Claude baseline result.
 
-    Extracts only the fields that Phase 1 would produce:
-    - diacritized_text, diacritics_changes, diacritics_status
-    - word_tags (reconstructed from word_analysis if v3)
-    - chunks with EN-only translations
-    - translations.en (summary + seo_question only, no key_terms)
+    Produces the new 7-field Phase 1 format:
+    - chunks with arabic_text + EN-only translations (no word_start/word_end)
+    - tags, content_type, topics (LLM-generated)
+    - translations.en (summary + seo_question + key_terms)
     - related_quran filtered to thematic only
-    - isnad_matn with just isnad_ar, matn_ar, has_chain (no narrators)
-    - topics, tags, content_type (LLM-generated)
+    - has_chain (top-level boolean)
     """
     phase1 = {}
 
-    # Diacritized text and changes
-    phase1["diacritized_text"] = ai_result.get("diacritized_text", "")
-    phase1["diacritics_changes"] = ai_result.get("diacritics_changes", [])
+    # Reconstruct word_tags from source for arabic_text reconstruction
+    word_tags = ai_result.get("word_tags", [])
+    if not word_tags and "word_analysis" in ai_result:
+        word_tags = word_analysis_to_word_tags(ai_result["word_analysis"])
 
-    # Word tags: use word_tags if present, else reconstruct from word_analysis
-    if "word_tags" in ai_result:
-        phase1["word_tags"] = ai_result["word_tags"]
-    elif "word_analysis" in ai_result:
-        phase1["word_tags"] = word_analysis_to_word_tags(ai_result["word_analysis"])
-
-    # Chunks with EN-only translations
+    # Chunks with arabic_text + EN-only translations (no word_start/word_end)
     chunks = ai_result.get("chunks", [])
     phase1_chunks = []
     for chunk in chunks:
-        c = dict(chunk)
-        if "translations" in c and isinstance(c["translations"], dict):
-            en_only = {}
-            if "en" in c["translations"]:
-                en_only["en"] = c["translations"]["en"]
-            c["translations"] = en_only
+        c = {
+            "chunk_type": chunk.get("chunk_type", "body"),
+            "arabic_text": chunk.get("arabic_text", ""),
+            "translations": {},
+        }
+        # If arabic_text missing (stripped format), reconstruct from word_tags
+        if not c["arabic_text"] and word_tags:
+            ws = chunk.get("word_start", 0)
+            we = chunk.get("word_end", 0)
+            c["arabic_text"] = " ".join(
+                wt[0] if isinstance(wt, (list, tuple)) else str(wt)
+                for wt in word_tags[ws:we]
+            )
+        # EN-only translations
+        if "translations" in chunk and isinstance(chunk["translations"], dict):
+            if "en" in chunk["translations"]:
+                c["translations"]["en"] = chunk["translations"]["en"]
         phase1_chunks.append(c)
     phase1["chunks"] = phase1_chunks
 
-    # Translations: EN only (summary, seo_question -- not key_terms)
+    # Tags, content_type, topics
+    phase1["tags"] = ai_result.get("tags", [])
+    phase1["content_type"] = ai_result.get("content_type", "")
+    phase1["topics"] = ai_result.get("topics", [])
+
+    # Translations: EN with summary, seo_question, key_terms
     translations = ai_result.get("translations", {})
-    if "en" in translations:
-        en_data = translations["en"]
-        phase1_en = {}
-        if "summary" in en_data:
-            phase1_en["summary"] = en_data["summary"]
-        if "seo_question" in en_data:
-            phase1_en["seo_question"] = en_data["seo_question"]
-        phase1["translations"] = {"en": phase1_en}
-    else:
-        phase1["translations"] = {}
+    en_data = translations.get("en", {}) if isinstance(translations, dict) else {}
+    phase1["translations"] = {"en": {
+        "summary": en_data.get("summary", "") if isinstance(en_data, dict) else "",
+        "seo_question": en_data.get("seo_question", "") if isinstance(en_data, dict) else "",
+        "key_terms": en_data.get("key_terms", {}) if isinstance(en_data, dict) else {},
+    }}
 
     # Related Quran: thematic only
     related_quran = ai_result.get("related_quran", [])
@@ -213,19 +218,9 @@ def simulate_phase1(ai_result: dict) -> dict:
         if ref.get("relationship") == "thematic"
     ]
 
-    # isnad_matn: basic (no narrators)
+    # has_chain: top-level boolean
     isnad = ai_result.get("isnad_matn", {})
-    phase1["isnad_matn"] = {
-        "isnad_ar": isnad.get("isnad_ar", ""),
-        "matn_ar": isnad.get("matn_ar", ""),
-        "has_chain": isnad.get("has_chain", False),
-        "narrators": [],
-    }
-
-    # Topics, tags, content_type: LLM-generated in Phase 1
-    phase1["topics"] = ai_result.get("topics", [])
-    phase1["tags"] = ai_result.get("tags", [])
-    phase1["content_type"] = ai_result.get("content_type", "")
+    phase1["has_chain"] = isnad.get("has_chain", False)
 
     return phase1
 
