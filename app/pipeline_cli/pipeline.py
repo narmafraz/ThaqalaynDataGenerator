@@ -1580,6 +1580,8 @@ def main():
                         help="Model for Phase 1 core generation (with --phased, default: gpt-5.4)")
     parser.add_argument("--phase4-model", default="gpt-5.4-mini",
                         help="Model for Phase 4 translation (with --phased, default: gpt-5.4-mini)")
+    parser.add_argument("--skip-merge", action="store_true",
+                        help="Skip merging AI content into ThaqalaynData after run")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -1683,6 +1685,21 @@ def main():
     os.environ.setdefault("SOURCE_DATA_DIR", "../ThaqalaynDataSources/")
 
     asyncio.run(run_pipeline(config, verse_paths))
+
+    # Merge AI content into ThaqalaynData (unless --skip-merge)
+    if not args.skip_merge and not args.dry_run:
+        dest_dir = os.environ.get("DESTINATION_DIR")
+        if dest_dir and os.path.isdir(dest_dir):
+            print("\nMerging AI content into ThaqalaynData...", flush=True)
+            try:
+                from app.ai_content_merger import merge_ai_content
+                merge_ai_content()
+                print("AI content merge complete.", flush=True)
+            except Exception as e:
+                print(f"AI content merge failed: {e}", flush=True)
+                logger.error("AI content merge failed: %s", e)
+        else:
+            print("Skipping merge: DESTINATION_DIR not set or not found.", flush=True)
 
 
 if __name__ == "__main__":
