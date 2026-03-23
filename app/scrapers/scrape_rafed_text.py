@@ -87,6 +87,17 @@ VOLUMES = {
             {"vol": 4, "view_id": 1321},
         ],
     },
+    "man-la-yahduruhu-al-faqih": {
+        "title": "Man La Yahduruhu al-Faqih",
+        "title_ar": "\u0645\u0646 \u0644\u0627 \u064a\u062d\u0636\u0631\u0647 \u0627\u0644\u0641\u0642\u064a\u0647",
+        "author": "Sheikh al-Saduq",
+        "vols": [
+            {"vol": 1, "view_id": 1414},
+            {"vol": 2, "view_id": 1415},
+            {"vol": 3, "view_id": 1416},
+            {"vol": 4, "view_id": 1432},
+        ],
+    },
 }
 
 # Extra pages to scrape beyond the last TOC entry (content after last chapter heading)
@@ -430,6 +441,7 @@ def main():
     BOOK_FLAGS = {
         "--tahdhib": "tahdhib-al-ahkam",
         "--istibsar": "al-istibsar",
+        "--faqih": "man-la-yahduruhu-al-faqih",
     }
     for flag, key in BOOK_FLAGS.items():
         if flag in sys.argv:
