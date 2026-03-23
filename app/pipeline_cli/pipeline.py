@@ -1578,8 +1578,8 @@ def main():
                         help="Skip Phase 3 scholarly enrichment (with --phased)")
     parser.add_argument("--phase1-model", default="gpt-5.4",
                         help="Model for Phase 1 core generation (with --phased, default: gpt-5.4)")
-    parser.add_argument("--phase4-model", default="gpt-5-mini",
-                        help="Model for Phase 4 translation (with --phased, default: gpt-5-mini)")
+    parser.add_argument("--phase4-model", default="gpt-5.4-mini",
+                        help="Model for Phase 4 translation (with --phased, default: gpt-5.4-mini)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -1623,6 +1623,10 @@ def main():
 
     # Setup signal handlers
     setup_signal_handlers()
+
+    # Phased pipeline defaults to OpenAI backend unless explicitly set to claude
+    if args.phased and args.backend == "claude" and "--backend" not in sys.argv:
+        args.backend = "openai"
 
     # Determine model based on backend
     gen_model = args.model
