@@ -826,9 +826,14 @@ def strip_redundant_fields(result: dict) -> dict:
         A new dict with redundant fields removed.
     """
     result = json.loads(json.dumps(result))  # deep copy
-    result.pop("diacritized_text", None)
-    for chunk in result.get("chunks", []):
-        chunk.pop("arabic_text", None)
+    has_word_analysis = bool(result.get("word_analysis"))
+    # Only strip diacritized_text and chunks[].arabic_text when word_analysis
+    # is present (they can be reconstructed from word_analysis via word ranges).
+    # For v4 (word_tags only), preserve them since word_tags can't reconstruct.
+    if has_word_analysis:
+        result.pop("diacritized_text", None)
+        for chunk in result.get("chunks", []):
+            chunk.pop("arabic_text", None)
     for lang_obj in result.get("translations", {}).values():
         if isinstance(lang_obj, dict):
             lang_obj.pop("text", None)
