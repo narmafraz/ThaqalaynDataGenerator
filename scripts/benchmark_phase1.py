@@ -156,6 +156,8 @@ async def run_phase1(verse_path: str, backend: str, model: str,
         "has_chain": has_chain,
         "summary": summary[:200],
         "key_terms_sample": dict(list(key_terms.items())[:3]),
+        # Full results for manual inspection
+        "full_result": enriched,
     }
 
 
@@ -311,18 +313,35 @@ async def main():
     out_dir = PROJECT_ROOT / "benchmarks" / "phase1"
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    out_path = out_dir / f"benchmark_{timestamp}.json"
-    with open(out_path, "w", encoding="utf-8") as f:
+
+    # Save summary (without full_result to keep it small)
+    def strip_full(r):
+        return {k: v for k, v in r.items() if k != "full_result"}
+    summary_path = out_dir / f"benchmark_{timestamp}.json"
+    with open(summary_path, "w", encoding="utf-8") as f:
         json.dump({
             "timestamp": timestamp,
             "verses": len(verse_paths),
             "verse_paths": verse_paths,
-            "claude_results": claude_results,
-            "openai_results": openai_results,
+            "claude_results": [strip_full(r) for r in claude_results],
+            "openai_results": [strip_full(r) for r in openai_results],
             "claude_total_cost": claude_total_cost,
             "openai_total_cost": openai_total_cost,
         }, f, ensure_ascii=False, indent=2)
-    print(f"\n  Results saved: {out_path}")
+    print(f"\n  Summary saved: {summary_path}")
+
+    # Save per-verse full results for manual inspection
+    verses_dir = out_dir / f"responses_{timestamp}"
+    verses_dir.mkdir(exist_ok=True)
+    for results, backend_name in [(claude_results, "claude"), (openai_results, "openai")]:
+        for r in results:
+            if "full_result" not in r:
+                continue
+            vid = r["verse_path"].replace("/books/", "").replace(":", "_")
+            vpath = verses_dir / f"{vid}_{backend_name}.json"
+            with open(vpath, "w", encoding="utf-8") as f:
+                json.dump(r["full_result"], f, ensure_ascii=False, indent=2)
+    print(f"  Full responses: {verses_dir}/")
 
 
 if __name__ == "__main__":
