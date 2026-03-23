@@ -1031,7 +1031,7 @@ async def process_verse_phased(
                            verse_id, len(errors), errors[:3])
 
             # Persist errored result so it can be salvaged later.
-            from app.ai_pipeline import strip_redundant_fields as _strip, PIPELINE_VERSION as _PV
+            from app.ai_pipeline import PIPELINE_VERSION as _PV
             quarantine_dir = os.path.join(
                 os.path.dirname(responses_dir), "quarantine"
             )
@@ -1067,9 +1067,9 @@ async def process_verse_phased(
         w_high = len([w for w in warnings if w.severity == "high"])
         w_med = len([w for w in warnings if w.severity == "medium"])
 
-        # Save response
-        from app.ai_pipeline import strip_redundant_fields, PIPELINE_VERSION
-        stripped = strip_redundant_fields(full_result)
+        # Save full response (no stripping — ThaqalaynDataSources keeps complete data;
+        # stripping for size optimization happens in the merger when writing to ThaqalaynData)
+        from app.ai_pipeline import PIPELINE_VERSION
         wrapper = {
             "verse_path": verse_path,
             "ai_attribution": {
@@ -1079,7 +1079,7 @@ async def process_verse_phased(
                 "generation_method": "phased_pipeline",
             },
             "generation_attempts": 1,
-            "result": stripped,
+            "result": full_result,
         }
         os.makedirs(responses_dir, exist_ok=True)
         out_path = os.path.join(responses_dir, f"{verse_id}.json")
@@ -1535,9 +1535,8 @@ async def run_retranslate(config: PipelineConfig):
             errors += 1
             continue
 
-        # Re-strip and save
-        stripped = strip_redundant_fields(result)
-        wrapper["result"] = stripped
+        # Save full result (no stripping)
+        wrapper["result"] = result
         with open(fpath, "w", encoding="utf-8") as f:
             json.dump(wrapper, f, ensure_ascii=False, indent=2)
         logger.info("OK %s [retranslate, $%.4f]", verse_id, p4_cost)

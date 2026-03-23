@@ -869,9 +869,8 @@ def postprocess_verse(
                     message=err,
                     suggestion=f"Fix this validation error: {err}",
                 ))
-            # Strip and save for fix pass
-            stripped = strip_redundant_fields(result)
-            verse_result.result_dict = stripped
+            # Save full result for fix pass (no stripping — kept in ThaqalaynDataSources)
+            verse_result.result_dict = result
             _save_audit(plan, verse_result, word_overrides, narrator_overrides)
             return verse_result
 
@@ -886,12 +885,9 @@ def postprocess_verse(
     else:
         verse_result.status = "pass"
 
-    # Strip redundant fields for storage
-    stripped = strip_redundant_fields(result)
-    # v4: ensure word_tags is preserved in stripped output
-    if "word_tags" in result and "word_tags" not in stripped:
-        stripped["word_tags"] = result["word_tags"]
-    verse_result.result_dict = stripped
+    # Save full result (no stripping — kept in ThaqalaynDataSources;
+    # stripping happens in the merger when writing to ThaqalaynData)
+    verse_result.result_dict = result
 
     # Save response file
     if verse_result.status == "pass":
@@ -1070,8 +1066,8 @@ def apply_fix(plan: VersePlan, fix_response: str,
     verse_result.warnings = warnings
     high_medium = [w for w in warnings if w.severity in ("high", "medium")]
 
-    stripped = strip_redundant_fields(result)
-    verse_result.result_dict = stripped
+    # Save full result (no stripping)
+    verse_result.result_dict = result
 
     if high_medium:
         # If fix produced no actual changes, the fix model confirmed
@@ -1079,7 +1075,7 @@ def apply_fix(plan: VersePlan, fix_response: str,
         if is_partial and not fix_data:
             verse_result.status = "pass"
             verse_result.false_positive_accepted = True
-            _save_response(plan, stripped, responses_dir)
+            _save_response(plan, result, responses_dir)
         else:
             verse_result.status = "needs_fix"  # still broken after fix
     else:
