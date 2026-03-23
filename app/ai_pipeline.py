@@ -585,13 +585,6 @@ def extract_pipeline_request(verse_path: str,
     arabic_lines = target_verse.get("text", [])
     arabic_text = "\n".join(arabic_lines) if arabic_lines else ""
 
-    translations = target_verse.get("translations", {})
-    english_text = ""
-    for tid, lines in translations.items():
-        if tid.startswith("en."):
-            english_text = "\n".join(lines) if isinstance(lines, list) else str(lines)
-            break
-
     # Extract narrator chain if present
     narrator_chain = None
     nc = target_verse.get("narrator_chain")
@@ -601,6 +594,21 @@ def extract_pipeline_request(verse_path: str,
             narrator_chain = "".join(p.get("text", "") for p in chain_parts)
         elif nc.get("text"):
             narrator_chain = nc["text"]
+
+    # Prepend narrator chain to arabic_text so the LLM sees the full hadith.
+    # The parser may have split the chain prefix (e.g., al-Mufid→al-Tusi
+    # attribution) into narrator_chain.parts separately from the main text.
+    if narrator_chain:
+        chain_text = narrator_chain.strip()
+        if chain_text and not arabic_text.startswith(chain_text[:20]):
+            arabic_text = chain_text + " " + arabic_text
+
+    translations = target_verse.get("translations", {})
+    english_text = ""
+    for tid, lines in translations.items():
+        if tid.startswith("en."):
+            english_text = "\n".join(lines) if isinstance(lines, list) else str(lines)
+            break
 
     hadith_number = target_verse.get("local_index")
 

@@ -108,7 +108,7 @@ def build_phase1_user_message(request: PipelineRequest) -> str:
    RULES:
    - At least 1 chunk. Every word of the original text must appear in exactly one chunk.
    - arabic_text must be the COMPLETE Arabic text for that segment with FULL tashkeel on every word.
-   - CRITICAL: Do NOT add, invent, or hallucinate Arabic text. The chunks must contain ONLY the words from the provided Arabic text, diacritized. Do not add author attributions, book transmission chains, or any text not present in the input.
+   - The chunks must contain ONLY the words from the provided Arabic text, fully diacritized. Do not add text that is not present in the input.
    - Segment at natural boundaries: isnad→matn transition, topic shifts, Quran quotes, opening/closing formulae.
    - If has_chain is true, the narrator chain MUST be in one or more "isnad" chunks.
 5. "translations": {"en": {"summary": "2-3 sentences explaining the verse's meaning and significance",
