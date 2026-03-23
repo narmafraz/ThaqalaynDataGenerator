@@ -1684,7 +1684,24 @@ def main():
     # Set env vars
     os.environ.setdefault("SOURCE_DATA_DIR", "../ThaqalaynDataSources/")
 
-    asyncio.run(run_pipeline(config, verse_paths))
+    # Prevent Windows sleep during pipeline run
+    _sleep_prevented = False
+    try:
+        import ctypes
+        ES_CONTINUOUS = 0x80000000
+        ES_SYSTEM_REQUIRED = 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+        _sleep_prevented = True
+        logger.info("Windows sleep prevention enabled")
+    except (AttributeError, OSError):
+        pass  # Not Windows or API unavailable
+
+    try:
+        asyncio.run(run_pipeline(config, verse_paths))
+    finally:
+        if _sleep_prevented:
+            ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+            logger.info("Windows sleep prevention released")
 
     # Merge AI content into ThaqalaynData (unless --skip-merge)
     if not args.skip_merge and not args.dry_run:
