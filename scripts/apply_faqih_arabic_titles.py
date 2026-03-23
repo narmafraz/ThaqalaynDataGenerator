@@ -2,7 +2,8 @@
 
 Reads faqih_arabic_chapter_titles.json and patches:
 1. The modular chapter_list files (books/man-la-yahduruhu-al-faqih/{vol}.json)
-2. The index files (index/books.ar.json)
+2. The shell chapter files (books/man-la-yahduruhu-al-faqih/{vol}/{ch}.json)
+3. The index files (index/books.ar.json)
 """
 
 import json
@@ -56,14 +57,38 @@ def main():
             print(f"  Vol {vol}: patched {patched} chapters")
             patched_total += patched
 
-    # Also patch the top-level metadata file
-    meta_path = os.path.join(_DEST_DIR, "books", "man-la-yahduruhu-al-faqih.json")
-    if os.path.exists(meta_path):
-        with open(meta_path, "r", encoding="utf-8") as f:
+    # Patch shell chapter files (verse_list kind)
+    # These are at books/man-la-yahduruhu-al-faqih/{vol}/{ch}.json
+    # Map English titles to Arabic using the en index
+    en_index_path = os.path.join(_DEST_DIR, "index", "books.en.json")
+    with open(en_index_path, "r", encoding="utf-8") as f:
+        en_index = json.load(f)
+
+    patched_shell = 0
+    book_dir = os.path.join(_DEST_DIR, "books", "man-la-yahduruhu-al-faqih")
+    for path, entry in en_index.items():
+        if not path.startswith("/books/man-la-yahduruhu-al-faqih"):
+            continue
+        en_title = entry.get("title", "")
+        if en_title not in ar_titles:
+            continue
+        # Convert path to filesystem: /books/man-la-yahduruhu-al-faqih:1:5 -> books/man-la-yahduruhu-al-faqih/1/5.json
+        rel = path.replace(":", "/").lstrip("/") + ".json"
+        file_path = os.path.join(_DEST_DIR, rel)
+        if not os.path.exists(file_path):
+            continue
+        with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # This file has volumes, not chapters directly
-        # But the sub-chapters inside each volume might be listed
-        print(f"  Metadata file: {meta_path}")
+        titles = data.get("data", {}).get("titles", {})
+        if "ar" not in titles:
+            titles["ar"] = ar_titles[en_title]
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+            patched_shell += 1
+
+    if patched_shell > 0:
+        print(f"  Shell chapter files: patched {patched_shell}")
+        patched_total += patched_shell
 
     # Patch index/books.ar.json
     ar_index_path = os.path.join(_DEST_DIR, "index", "books.ar.json")
