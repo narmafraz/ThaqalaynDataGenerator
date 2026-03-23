@@ -161,69 +161,68 @@ async def run_phase1(verse_path: str, backend: str, model: str,
     }
 
 
-def print_result(r: dict):
-    """Print a single benchmark result."""
-    if "error" in r:
-        print(f"  ERROR: {r['error'][:100]}")
-        return
 
-    status = "PASS" if r["valid"] else f"FAIL ({len(r['validation_errors'])} errors)"
-    print(f"  Status: {status}")
-    print(f"  Cost: ${r['cost']:.4f} | Tokens: in={r['input_tokens']}, out={r['output_tokens']} | Time: {r['elapsed']}s")
-    if r.get("cache_creation_tokens"):
-        print(f"  Cache: create={r['cache_creation_tokens']}, read={r['cache_read_tokens']}")
-    print(f"  Words: {r['word_count']} | Chunks: {r['chunks']} | Chain: {r['has_chain']} | Narrators: {r['narrators']}")
-    print(f"  Topics: {r['topics']}", end="")
-    if r["invalid_topics"]:
-        print(f"  *** INVALID: {r['invalid_topics']}", end="")
-    print()
-    print(f"  Tags: {r['tags']} | Type: {r['content_type']}")
-    print(f"  Key terms: {r['key_terms_count']} | Quran refs: {r['quran_refs']}")
-    print(f"  Summary: {r['summary'][:120]}...")
-    if r["key_terms_sample"]:
-        for k, v in r["key_terms_sample"].items():
-            print(f"    {k}: {v[:60]}")
-    if not r["valid"]:
-        for e in r["validation_errors"]:
-            print(f"  ! {e}")
-
-
-def print_comparison(verse_path: str, claude_r: Optional[dict], openai_r: Optional[dict]):
-    """Print side-by-side comparison."""
-    vid = verse_path.replace("/books/", "").replace(":", "_")
+def print_summary(all_results: dict, verse_count: int):
+    """Print aggregate summary for all models."""
     print(f"\n{'='*70}")
-    print(f"  {vid}")
+    print(f"  SUMMARY ({verse_count} verses)")
     print(f"{'='*70}")
 
-    if claude_r:
-        print(f"\n  --- Claude Sonnet ---")
-        print_result(claude_r)
-    if openai_r:
-        print(f"\n  --- GPT-5.4 ---")
-        print_result(openai_r)
+    for label, results in all_results.items():
+        if not results:
+            continue
+        valid = sum(1 for r in results if r.get("valid"))
+        api_errors = sum(1 for r in results if "error" in r)
+        invalid_topics_count = sum(len(r.get("invalid_topics", [])) for r in results)
+        total_cost = sum(r.get("cost", 0) for r in results)
+        avg_cost = total_cost / len(results)
+        avg_time = sum(r.get("elapsed", 0) for r in results) / len(results)
+        avg_terms = sum(r.get("key_terms_count", 0) for r in results) / len(results)
+        avg_refs = sum(r.get("quran_refs", 0) for r in results) / len(results)
+        avg_summary_len = sum(r.get("summary_len", 0) for r in results) / len(results)
 
-    if claude_r and openai_r and "error" not in claude_r and "error" not in openai_r:
-        print(f"\n  --- Comparison ---")
-        cost_ratio = openai_r["cost"] / claude_r["cost"] if claude_r["cost"] > 0 else 0
-        print(f"  Cost: Claude ${claude_r['cost']:.4f} vs GPT ${openai_r['cost']:.4f} ({cost_ratio:.1%} of Claude)")
-        print(f"  Time: Claude {claude_r['elapsed']}s vs GPT {openai_r['elapsed']}s")
-        print(f"  Valid: Claude {'PASS' if claude_r['valid'] else 'FAIL'} vs GPT {'PASS' if openai_r['valid'] else 'FAIL'}")
-        print(f"  Topics match: {set(claude_r['topics']) == set(openai_r['topics'])}")
-        print(f"  Content type match: {claude_r['content_type'] == openai_r['content_type']}")
+        print(f"\n  {label}:")
+        print(f"    Pass: {valid}/{len(results)} | API Errors: {api_errors}")
+        print(f"    Cost: ${total_cost:.4f} total, ${avg_cost:.4f}/verse")
+        print(f"    Time: {avg_time:.1f}s avg/verse")
+        print(f"    Invalid topics: {invalid_topics_count}")
+        print(f"    Avg key terms: {avg_terms:.1f} | Avg Quran refs: {avg_refs:.1f}")
+        print(f"    Avg summary length: {avg_summary_len:.0f} chars")
+        print(f"    Projected 58K: ${avg_cost * 58000:.0f}")
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Benchmark Phase 1: Claude vs GPT-5.4")
+    parser = argparse.ArgumentParser(
+        description="Benchmark Phase 1 across multiple models",
+        epilog="Default: tests Claude Sonnet, GPT-5.4, and GPT-5.4-mini on 5 verses",
+    )
     parser.add_argument("--verses", type=int, default=5, help="Number of verses to test")
-    parser.add_argument("--backend", choices=["both", "claude", "openai"], default="both")
-    parser.add_argument("--claude-model", default="sonnet")
-    parser.add_argument("--openai-model", default="gpt-5.4")
+    parser.add_argument("--models", nargs="+", default=None,
+                        help="Models to test as backend:model pairs (e.g., claude:sonnet openai:gpt-5.4 openai:gpt-5.4-mini)")
     parser.add_argument("--single", nargs="+", help="Specific verse paths")
     parser.add_argument("--book", default="al-kafi")
     parser.add_argument("--volume", type=int, default=2)
     args = parser.parse_args()
 
     os.environ.setdefault("SOURCE_DATA_DIR", "../ThaqalaynDataSources/")
+
+    # Default model set: all three
+    if args.models:
+        models = []
+        for m in args.models:
+            if ":" in m:
+                backend, model = m.split(":", 1)
+            else:
+                # Assume openai for gpt-*, claude for others
+                backend = "openai" if m.startswith("gpt-") else "claude"
+                model = m
+            models.append((backend, model))
+    else:
+        models = [
+            ("claude", "sonnet"),
+            ("openai", "gpt-5.4"),
+            ("openai", "gpt-5.4-mini"),
+        ]
 
     # Build system prompt once
     system_prompt = build_phase1_system_prompt()
@@ -239,106 +238,104 @@ async def main():
         print("No unprocessed verses found. Use --single to specify verses.")
         return
 
-    print(f"Benchmarking Phase 1: {len(verse_paths)} verses")
-    print(f"Backends: {args.backend}")
-    if args.backend in ("both", "claude"):
-        print(f"Claude model: {args.claude_model}")
-    if args.backend in ("both", "openai"):
-        print(f"OpenAI model: {args.openai_model}")
+    model_labels = [f"{b}:{m}" for b, m in models]
+    print(f"Benchmarking Phase 1: {len(verse_paths)} verses x {len(models)} models")
+    for b, m in models:
+        print(f"  - {b}:{m}")
     print()
 
-    claude_results = []
-    openai_results = []
-    claude_total_cost = 0.0
-    openai_total_cost = 0.0
+    # Results keyed by model label
+    all_results = {label: [] for label in model_labels}
 
     for vp in verse_paths:
         vid = vp.replace("/books/", "").replace(":", "_")
         print(f"Processing {vid}...")
 
-        claude_r = None
-        openai_r = None
+        verse_results = {}
+        for backend, model in models:
+            label = f"{backend}:{model}"
+            print(f"  {label}...", end="", flush=True)
+            r = await run_phase1(vp, backend, model, system_prompt, registry)
+            cost = r.get("cost", 0)
+            if "error" in r:
+                print(f" FAIL ${cost:.4f} — {r['error'][:60]}")
+            else:
+                status = "PASS" if r.get("valid") else "ERR"
+                print(f" {status} ${cost:.4f} {r.get('elapsed', 0)}s")
+            all_results[label].append(r)
+            verse_results[label] = r
 
-        if args.backend in ("both", "claude"):
-            print(f"  Running Claude {args.claude_model}...", end="", flush=True)
-            claude_r = await run_phase1(vp, "claude", args.claude_model, system_prompt, registry)
-            cost = claude_r.get("cost", 0)
-            claude_total_cost += cost
-            status = "OK" if claude_r.get("valid") else "ERR" if "error" not in claude_r else "FAIL"
-            print(f" {status} ${cost:.4f} {claude_r.get('elapsed', 0)}s")
+        # Per-verse comparison
+        print(f"\n  {'':30s}", end="")
+        for label in model_labels:
+            print(f" {label:>20s}", end="")
+        print()
 
-        if args.backend in ("both", "openai"):
-            print(f"  Running GPT {args.openai_model}...", end="", flush=True)
-            openai_r = await run_phase1(vp, "openai", args.openai_model, system_prompt, registry)
-            cost = openai_r.get("cost", 0)
-            openai_total_cost += cost
-            status = "OK" if openai_r.get("valid") else "ERR" if "error" not in openai_r else "FAIL"
-            print(f" {status} ${cost:.4f} {openai_r.get('elapsed', 0)}s")
+        for field, fmt in [
+            ("cost", "${:.4f}"),
+            ("elapsed", "{:.0f}s"),
+            ("word_count", "{}"),
+            ("chunks", "{}"),
+            ("key_terms_count", "{}"),
+            ("quran_refs", "{}"),
+            ("summary_len", "{} chars"),
+            ("content_type", "{}"),
+        ]:
+            print(f"  {field:30s}", end="")
+            for label in model_labels:
+                r = verse_results.get(label, {})
+                val = r.get(field, "—")
+                if "error" in r:
+                    print(f" {'—':>20s}", end="")
+                else:
+                    print(f" {fmt.format(val):>20s}", end="")
+            print()
 
-        if claude_r:
-            claude_results.append(claude_r)
-        if openai_r:
-            openai_results.append(openai_r)
+        # Topics row (special — show the actual list)
+        print(f"  {'topics':30s}", end="")
+        for label in model_labels:
+            r = verse_results.get(label, {})
+            topics = r.get("topics", [])
+            t_str = ",".join(t[:12] for t in topics[:3])
+            if len(topics) > 3:
+                t_str += f"+{len(topics)-3}"
+            print(f" {t_str:>20s}", end="")
+        print()
+        print()
 
-        print_comparison(vp, claude_r, openai_r)
-
-    # Summary
-    print(f"\n{'='*70}")
-    print(f"  SUMMARY ({len(verse_paths)} verses)")
-    print(f"{'='*70}")
-
-    for label, results, total_cost in [
-        ("Claude Sonnet", claude_results, claude_total_cost),
-        ("GPT-5.4", openai_results, openai_total_cost),
-    ]:
-        if not results:
-            continue
-        valid = sum(1 for r in results if r.get("valid"))
-        errors = sum(1 for r in results if "error" in r)
-        invalid_topics_count = sum(len(r.get("invalid_topics", [])) for r in results)
-        avg_cost = total_cost / len(results) if results else 0
-        avg_time = sum(r.get("elapsed", 0) for r in results) / len(results)
-        avg_terms = sum(r.get("key_terms_count", 0) for r in results) / len(results)
-        avg_refs = sum(r.get("quran_refs", 0) for r in results) / len(results)
-
-        print(f"\n  {label}:")
-        print(f"    Pass: {valid}/{len(results)} | Errors: {errors}")
-        print(f"    Cost: ${total_cost:.4f} total, ${avg_cost:.4f}/verse")
-        print(f"    Time: {avg_time:.1f}s avg/verse")
-        print(f"    Invalid topics: {invalid_topics_count}")
-        print(f"    Avg key terms: {avg_terms:.1f} | Avg Quran refs: {avg_refs:.1f}")
-        print(f"    Projected 58K: ${avg_cost * 58000:.0f}")
+    # Aggregate summary
+    print_summary(all_results, len(verse_paths))
 
     # Save results
     out_dir = PROJECT_ROOT / "benchmarks" / "phase1"
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
-    # Save summary (without full_result to keep it small)
     def strip_full(r):
         return {k: v for k, v in r.items() if k != "full_result"}
+
     summary_path = out_dir / f"benchmark_{timestamp}.json"
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump({
             "timestamp": timestamp,
             "verses": len(verse_paths),
             "verse_paths": verse_paths,
-            "claude_results": [strip_full(r) for r in claude_results],
-            "openai_results": [strip_full(r) for r in openai_results],
-            "claude_total_cost": claude_total_cost,
-            "openai_total_cost": openai_total_cost,
+            "models": model_labels,
+            "results": {label: [strip_full(r) for r in results]
+                        for label, results in all_results.items()},
         }, f, ensure_ascii=False, indent=2)
     print(f"\n  Summary saved: {summary_path}")
 
     # Save per-verse full results for manual inspection
     verses_dir = out_dir / f"responses_{timestamp}"
     verses_dir.mkdir(exist_ok=True)
-    for results, backend_name in [(claude_results, "claude"), (openai_results, "openai")]:
+    for label, results in all_results.items():
+        safe_label = label.replace(":", "_").replace(".", "_")
         for r in results:
             if "full_result" not in r:
                 continue
             vid = r["verse_path"].replace("/books/", "").replace(":", "_")
-            vpath = verses_dir / f"{vid}_{backend_name}.json"
+            vpath = verses_dir / f"{vid}__{safe_label}.json"
             with open(vpath, "w", encoding="utf-8") as f:
                 json.dump(r["full_result"], f, ensure_ascii=False, indent=2)
     print(f"  Full responses: {verses_dir}/")
