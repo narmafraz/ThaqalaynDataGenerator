@@ -53,8 +53,11 @@ def md_to_html(text: str) -> str:
     return html.strip()
 
 TAFSIR_SOURCE_DIR = os.path.join(SOURCE_DATA_DIR, "tafsir", "app-furqan")
+# DESTINATION_DIR is the tafsir repo root (ThaqalaynTafsirData/). Files go:
+#   {DESTINATION_DIR}/editions.json
+#   {DESTINATION_DIR}/{edition_id}/{surah}.json
 DESTINATION_DIR = os.environ.get("DESTINATION_DIR", DEFAULT_DESTINATION_DIR)
-TAFSIR_OUTPUT_DIR = os.path.join(DESTINATION_DIR, "tafsir")
+TAFSIR_OUTPUT_DIR = DESTINATION_DIR
 
 # Edition definitions: maps edition_id to DB info
 # Each entry: (db_filename, content_column, metadata)
