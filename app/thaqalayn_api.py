@@ -18,6 +18,7 @@ import fastapi
 
 from app import config
 from app.book_registry import BOOK_REGISTRY, BookConfig, get_book_config
+from app.chapter_translations import inject_translations, load_translations
 from app.lib_db import insert_chapter, write_file
 from app.lib_index import add_translation, collect_indexes, update_index_files
 from app.lib_model import set_index
@@ -303,6 +304,13 @@ def init_thaqalayn_api_book(
         book_config, source_folder, translator_name, translator_lang,
         fr_translator_name, hadiths=hadiths,
     )
+    translations = load_translations(book_config.slug)
+    if translations:
+        added = inject_translations(book, translations)
+        logger.info(
+            "Injected %d chapter title translations for %s",
+            added, book_config.slug,
+        )
     insert_chapter(book)
     write_file(
         f"/books/complete/{book_config.slug}",
