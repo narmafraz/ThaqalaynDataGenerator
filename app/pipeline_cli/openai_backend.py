@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Batch API pricing is 50% of standard
 BATCH_DISCOUNT = 0.5
 
-# Pricing per 1M tokens (input, output) — updated 2026-03
+# Pricing per 1M tokens (input, output) — verified 2026-05-03
 # Source: https://openai.com/api/pricing/
 OPENAI_PRICING = {
     "gpt-4.1": (2.00, 8.00),
@@ -43,6 +43,9 @@ OPENAI_PRICING = {
     "gpt-5.4-mini": (0.75, 4.50),
     "gpt-5.4-nano": (0.20, 1.25),
     "gpt-5.4-pro": (30.00, 180.00),
+    # Released 2026-04-24
+    "gpt-5.5": (5.00, 30.00),
+    "gpt-5.5-pro": (30.00, 180.00),
 }
 
 
