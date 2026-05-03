@@ -1106,7 +1106,7 @@ async def process_verse_phased(
         return VerseResult(
             verse_id=verse_id, status="pass",
             warnings=warnings,
-            result_dict=stripped,
+            result_dict=full_result,
         )
 
     except Exception as e:
