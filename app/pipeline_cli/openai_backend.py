@@ -35,8 +35,13 @@ OPENAI_PRICING = {
     "gpt-5": (1.25, 10.00),
     "gpt-5-mini": (0.25, 2.00),
     "gpt-5-nano": (0.05, 0.40),
+    "gpt-5-pro": (15.00, 120.00),
     "gpt-5.1": (1.25, 10.00),
     "gpt-5.2": (1.75, 14.00),
+    "gpt-5.2-pro": (21.00, 168.00),
+    # gpt-5.3 / gpt-5.3-codex are not on openai.com/api/pricing as of 2026-05-03
+    # — likely deprecated or codex-channel-only. Pricing kept here for legacy
+    # callers; verify against current API before relying on these values.
     "gpt-5.3": (1.75, 14.00),
     "gpt-5.3-codex": (1.75, 14.00),
     "gpt-5.4": (2.50, 15.00),
