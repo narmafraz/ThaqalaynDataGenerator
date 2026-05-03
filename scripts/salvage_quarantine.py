@@ -30,7 +30,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "app"))
 
 os.environ.setdefault("SOURCE_DATA_DIR", "../ThaqalaynDataSources/")
 
-from app.ai_pipeline import validate_result, strip_redundant_fields, VALID_TOPICS
+from app.ai_pipeline import validate_result, VALID_TAGS, VALID_TOPICS
 from app.config import AI_RESPONSES_DIR, AI_QUARANTINE_DIR
 
 # Common undiacritized phrases and their diacritized forms
@@ -53,6 +53,14 @@ TOPIC_MAP = {
     "ethics": "sincerity",
     "knowledge": "seeking_knowledge",
     "social_relations": "rights_of_others",
+}
+
+TAG_MAP = {
+    "community": "social_relations",
+    "ritual_purity": "worship",
+    "hajj": "worship",
+    "halal_haram": "jurisprudence",
+    "justice_system": "governance",
 }
 
 
@@ -149,6 +157,29 @@ def fix_topics(result: dict) -> int:
     return fixes
 
 
+def fix_tags(result: dict) -> int:
+    """Map invalid tags to valid ones (or drop). Returns count of fixes."""
+    tags = result.get("tags", [])
+    fixes = 0
+    new_tags = []
+    seen = set()
+    for t in tags:
+        if t in VALID_TAGS:
+            if t not in seen:
+                new_tags.append(t)
+                seen.add(t)
+        elif t in TAG_MAP:
+            mapped = TAG_MAP[t]
+            if mapped not in seen:
+                new_tags.append(mapped)
+                seen.add(mapped)
+                fixes += 1
+        else:
+            fixes += 1  # dropped
+    result["tags"] = new_tags
+    return fixes
+
+
 def fix_has_chain(result: dict) -> bool:
     """Set has_chain=False if narrators is empty. Returns True if fixed."""
     isnad = result.get("isnad_matn", {})
@@ -226,6 +257,7 @@ def main():
         q_fixes = fix_quran_letters(result)
         kp_fixed = fix_key_phrases(result)
         t_fixes = fix_topics(result)
+        tag_fixes = fix_tags(result)
         hc_fixed = fix_has_chain(result)
 
         fix_desc = []
@@ -237,6 +269,8 @@ def main():
             fix_desc.append("key_phrases")
         if t_fixes:
             fix_desc.append(f"topics:{t_fixes}")
+        if tag_fixes:
+            fix_desc.append(f"tags:{tag_fixes}")
         if hc_fixed:
             fix_desc.append("has_chain")
 
@@ -262,9 +296,9 @@ def main():
         print(f"  {action} {vid} [{', '.join(fix_desc) or 'no fixes needed'}]")
 
         if args.apply:
-            # Strip and save to responses
-            stripped = strip_redundant_fields(result)
-            wrapper["result"] = stripped
+            # Save full result (no stripping — ThaqalaynDataSources keeps complete data;
+            # stripping for size optimization happens in the merger when writing to ThaqalaynData)
+            wrapper["result"] = result
             wrapper.pop("validation_errors", None)
             os.makedirs(rdir, exist_ok=True)
             out_path = os.path.join(rdir, fname)
