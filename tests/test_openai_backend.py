@@ -368,6 +368,34 @@ class TestOpenAIPricing:
         assert mini_input < full_input
 
 
+class TestCapOutputTokens:
+    """Per-model max-output cap, to avoid 400 errors from old gpt-4.1 family
+    where max_tokens > 32768 is rejected even though our default is 40000."""
+
+    def test_clamps_gpt_4_1_mini_to_32768(self):
+        from app.pipeline_cli.openai_backend import _cap_output_tokens
+        assert _cap_output_tokens("gpt-4.1-mini", 40000) == 32768
+
+    def test_no_clamp_when_under_cap(self):
+        from app.pipeline_cli.openai_backend import _cap_output_tokens
+        assert _cap_output_tokens("gpt-4.1-mini", 10000) == 10000
+
+    def test_gpt_5_family_unclamped(self):
+        from app.pipeline_cli.openai_backend import _cap_output_tokens
+        # gpt-5/5.4 use max_completion_tokens which accepts higher values
+        assert _cap_output_tokens("gpt-5.4", 40000) == 40000
+        assert _cap_output_tokens("gpt-5.4-mini", 40000) == 40000
+
+    def test_dated_suffix_resolves_via_prefix(self):
+        from app.pipeline_cli.openai_backend import _cap_output_tokens
+        # OpenAI returns dated model names like gpt-4.1-mini-2025-04-14
+        assert _cap_output_tokens("gpt-4.1-mini-2025-04-14", 40000) == 32768
+
+    def test_unknown_model_passes_through(self):
+        from app.pipeline_cli.openai_backend import _cap_output_tokens
+        assert _cap_output_tokens("some-unknown-model", 40000) == 40000
+
+
 class TestComputeCostCachedTokens:
     """Cost arithmetic with prompt_tokens_details.cached_tokens."""
 

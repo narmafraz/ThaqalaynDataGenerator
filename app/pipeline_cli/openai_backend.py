@@ -24,6 +24,37 @@ logger = logging.getLogger(__name__)
 # Batch API pricing is 50% of standard
 BATCH_DISCOUNT = 0.5
 
+# Per-model max output token cap. The default `max_output_tokens=40000` we
+# pass exceeds the gpt-4.1 family's 32,768 ceiling on `max_tokens`, causing a
+# 400 BadRequestError ("max_tokens is too large"). gpt-5 family uses
+# `max_completion_tokens` and accepts higher values, so we never hit it there.
+# Lookup falls back to 40000 (no clamp) for unknown models.
+MODEL_MAX_OUTPUT_TOKENS = {
+    "gpt-4.1": 32768,
+    "gpt-4.1-mini": 32768,
+    "gpt-4.1-nano": 32768,
+    "gpt-4o": 16384,
+    "gpt-4o-mini": 16384,
+    # gpt-5 family + o-series accept up to 128K via max_completion_tokens
+    # (no clamp needed for our 40K default).
+}
+
+
+def _cap_output_tokens(model: str, requested: int) -> int:
+    """Clamp `requested` to the smallest known cap for this model.
+
+    Tries exact key, then longest-prefix match (for dated suffixes like
+    'gpt-4.1-mini-2025-04-14'). No clamp if model is unknown.
+    """
+    cap = MODEL_MAX_OUTPUT_TOKENS.get(model)
+    if cap is None:
+        for key in sorted(MODEL_MAX_OUTPUT_TOKENS.keys(), key=len, reverse=True):
+            if model.startswith(key):
+                cap = MODEL_MAX_OUTPUT_TOKENS[key]
+                break
+    return min(requested, cap) if cap else requested
+
+
 # Pricing per 1M tokens (input, cached_input, output) — verified 2026-05-03
 # Source: https://openai.com/api/pricing/
 #
@@ -190,10 +221,11 @@ async def call_openai(
         "messages": messages,
     }
 
+    capped_output_tokens = _cap_output_tokens(model, max_output_tokens)
     if uses_new_token_param:
-        kwargs["max_completion_tokens"] = max_output_tokens
+        kwargs["max_completion_tokens"] = capped_output_tokens
     else:
-        kwargs["max_tokens"] = max_output_tokens
+        kwargs["max_tokens"] = capped_output_tokens
 
     if not is_reasoning:
         kwargs["temperature"] = temperature
