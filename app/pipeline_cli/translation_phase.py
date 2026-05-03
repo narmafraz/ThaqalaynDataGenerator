@@ -253,6 +253,8 @@ async def translate_chunks(
 
     total_cost = 0.0
     total_tokens = 0
+    total_input_tokens = 0
+    total_cache_read_tokens = 0
 
     # Split chunks into batches
     batches = []
@@ -282,6 +284,8 @@ async def translate_chunks(
 
         total_cost += cr.get("cost", 0)
         total_tokens += cr.get("output_tokens", 0)
+        total_input_tokens += cr.get("input_tokens", 0)
+        total_cache_read_tokens += cr.get("cache_read_tokens", 0)
 
         # Parse response
         try:
@@ -327,5 +331,7 @@ async def translate_chunks(
     # Attach cost metadata
     result["_phase4_cost"] = total_cost
     result["_phase4_tokens"] = total_tokens
+    result["_phase4_input_tokens"] = total_input_tokens
+    result["_phase4_cache_read_tokens"] = total_cache_read_tokens
 
     return result

@@ -24,38 +24,58 @@ logger = logging.getLogger(__name__)
 # Batch API pricing is 50% of standard
 BATCH_DISCOUNT = 0.5
 
-# Pricing per 1M tokens (input, output) — verified 2026-05-03
+# Pricing per 1M tokens (input, cached_input, output) — verified 2026-05-03
 # Source: https://openai.com/api/pricing/
+#
+# cached_input is the discounted rate for tokens served from OpenAI's automatic
+# prompt cache (prompt_tokens_details.cached_tokens in the response). For "pro"
+# models OpenAI does not list a cached rate — we set cached_input = input so
+# they fall back to full price (no benefit, no breakage).
 OPENAI_PRICING = {
-    "gpt-4.1": (2.00, 8.00),
-    "gpt-4.1-mini": (0.40, 1.60),
-    "gpt-4.1-nano": (0.10, 0.40),
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-5": (1.25, 10.00),
-    "gpt-5-mini": (0.25, 2.00),
-    "gpt-5-nano": (0.05, 0.40),
-    "gpt-5-pro": (15.00, 120.00),
-    "gpt-5.1": (1.25, 10.00),
-    "gpt-5.2": (1.75, 14.00),
-    "gpt-5.2-pro": (21.00, 168.00),
+    # (input,  cached_input, output)
+    "gpt-4.1":      (2.00,  0.50,   8.00),
+    "gpt-4.1-mini": (0.40,  0.10,   1.60),
+    "gpt-4.1-nano": (0.10,  0.025,  0.40),
+    "gpt-4o":       (2.50,  1.25,  10.00),
+    "gpt-4o-mini":  (0.15,  0.075,  0.60),
+    "gpt-5":        (1.25,  0.125, 10.00),
+    "gpt-5-mini":   (0.25,  0.025,  2.00),
+    "gpt-5-nano":   (0.05,  0.005,  0.40),
+    "gpt-5-pro":    (15.00, 15.00, 120.00),    # no cached rate listed
+    "gpt-5.1":      (1.25,  0.125, 10.00),
+    "gpt-5.2":      (1.75,  0.175, 14.00),
+    "gpt-5.2-pro":  (21.00, 21.00, 168.00),    # no cached rate listed
     # gpt-5.3 / gpt-5.3-codex are not on openai.com/api/pricing as of 2026-05-03
     # — likely deprecated or codex-channel-only. Pricing kept here for legacy
     # callers; verify against current API before relying on these values.
-    "gpt-5.3": (1.75, 14.00),
-    "gpt-5.3-codex": (1.75, 14.00),
-    "gpt-5.4": (2.50, 15.00),
-    "gpt-5.4-mini": (0.75, 4.50),
-    "gpt-5.4-nano": (0.20, 1.25),
-    "gpt-5.4-pro": (30.00, 180.00),
+    "gpt-5.3":       (1.75, 0.175, 14.00),
+    "gpt-5.3-codex": (1.75, 0.175, 14.00),
+    "gpt-5.4":      (2.50,  0.25,  15.00),
+    "gpt-5.4-mini": (0.75,  0.075,  4.50),
+    "gpt-5.4-nano": (0.20,  0.02,   1.25),
+    "gpt-5.4-pro":  (30.00, 30.00, 180.00),    # no cached rate listed
     # Released 2026-04-24
-    "gpt-5.5": (5.00, 30.00),
-    "gpt-5.5-pro": (30.00, 180.00),
+    "gpt-5.5":      (5.00,  0.50,  30.00),
+    "gpt-5.5-pro":  (30.00, 30.00, 180.00),    # no cached rate listed
 }
 
 
-def compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Compute cost in USD from token counts and known pricing."""
+def compute_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cached_tokens: int = 0,
+) -> float:
+    """Compute cost in USD from token counts and known pricing.
+
+    `input_tokens` is the API's `prompt_tokens` field — which in the OpenAI
+    response is the SUPERSET of cached + non-cached. `cached_tokens` (from
+    `prompt_tokens_details.cached_tokens`) is billed at the discounted rate;
+    the remainder pays the full input rate.
+
+    See https://github.com/BerriAI/litellm/issues/6215 for the recurring
+    "double-charge cached tokens" bug we are explicitly avoiding here.
+    """
     pricing = OPENAI_PRICING.get(model)
     if not pricing:
         # Unknown model — try prefix match (e.g. gpt-4.1-mini-2025-04-14)
@@ -68,9 +88,17 @@ def compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
         logger.warning("Unknown OpenAI model %r — cannot compute cost, using gpt-4.1-mini pricing", model)
         pricing = OPENAI_PRICING["gpt-4.1-mini"]
 
-    input_cost = (input_tokens / 1_000_000) * pricing[0]
-    output_cost = (output_tokens / 1_000_000) * pricing[1]
-    return round(input_cost + output_cost, 6)
+    input_rate, cached_rate, output_rate = pricing
+
+    # Clamp cached_tokens to [0, input_tokens] to handle reporting anomalies.
+    # (See LiteLLM #14874 — providers occasionally return cached > prompt.)
+    cached = max(0, min(cached_tokens, input_tokens))
+    non_cached = input_tokens - cached
+
+    input_cost = (non_cached / 1_000_000) * input_rate
+    cached_cost = (cached / 1_000_000) * cached_rate
+    output_cost = (output_tokens / 1_000_000) * output_rate
+    return round(input_cost + cached_cost + output_cost, 6)
 
 
 def _get_client():
@@ -186,10 +214,18 @@ async def call_openai(
             usage = response.usage
             input_tokens = usage.prompt_tokens if usage else 0
             output_tokens = usage.completion_tokens if usage else 0
+            # Defensively read cached_tokens — older models, mocked responses,
+            # or providers in OpenAI-compatible mode may not populate this
+            # nested field (see LiteLLM #1896 / cline issue).
+            cached_tokens = 0
+            if usage is not None:
+                details = getattr(usage, "prompt_tokens_details", None)
+                if details is not None:
+                    cached_tokens = getattr(details, "cached_tokens", 0) or 0
 
-            # Compute cost
+            # Compute cost (subtracts cached from input internally)
             actual_model = response.model or model
-            cost = compute_cost(actual_model, input_tokens, output_tokens)
+            cost = compute_cost(actual_model, input_tokens, output_tokens, cached_tokens)
 
             # Map finish_reason to our format
             stop_reason = choice.finish_reason  # "stop", "length", "content_filter"
@@ -199,6 +235,11 @@ async def call_openai(
                 "cost": cost,
                 "output_tokens": output_tokens,
                 "input_tokens": input_tokens,
+                "cached_tokens": cached_tokens,
+                # Alias matching the Anthropic field name pipeline.py already
+                # aggregates (cache_read_input_tokens) so the existing stats
+                # plumbing picks up OpenAI cache hits with no further changes.
+                "cache_read_tokens": cached_tokens,
                 "elapsed": elapsed,
                 "model": actual_model,
                 "stop_reason": stop_reason,

@@ -1005,7 +1005,9 @@ async def process_verse_phased(
                     model="sonnet",
                 )
             p3_cost = full_result.pop("_phase3_cost", 0)
-            full_result.pop("_phase3_tokens", 0)
+            stats.total_output_tokens += full_result.pop("_phase3_tokens", 0)
+            stats.total_input_tokens += full_result.pop("_phase3_input_tokens", 0)
+            stats.total_cache_read_tokens += full_result.pop("_phase3_cache_read_tokens", 0)
             stats.total_cost += p3_cost
             stats.phase3_cost += p3_cost
 
@@ -1020,7 +1022,9 @@ async def process_verse_phased(
                 arabic_text=request.arabic_text,
             )
         p4_cost = full_result.pop("_phase4_cost", 0)
-        full_result.pop("_phase4_tokens", 0)
+        stats.total_output_tokens += full_result.pop("_phase4_tokens", 0)
+        stats.total_input_tokens += full_result.pop("_phase4_input_tokens", 0)
+        stats.total_cache_read_tokens += full_result.pop("_phase4_cache_read_tokens", 0)
         stats.total_cost += p4_cost
         stats.phase4_cost += p4_cost
 
@@ -1327,6 +1331,19 @@ async def run_pipeline(config: PipelineConfig, verse_paths: List[str]):
         token_parts.append(f"Cache-read: {stats.total_cache_read_tokens:,}")
     token_parts.append(f"Out: {stats.total_output_tokens:,}")
     print(f"  Tokens: {' | '.join(token_parts)}", flush=True)
+    # Cache effectiveness — only surface for OpenAI runs where cache_read populates
+    if stats.total_cache_read_tokens and stats.total_input_tokens:
+        hit_rate = stats.total_cache_read_tokens / stats.total_input_tokens
+        # Savings = cached × (full_input_rate - cached_rate). We don't know per-call
+        # rates here; estimate using the configured Phase 1 model as a representative.
+        try:
+            from app.pipeline_cli.openai_backend import OPENAI_PRICING
+            rates = OPENAI_PRICING.get(config.phase1_model) or OPENAI_PRICING["gpt-4.1-mini"]
+            input_rate, cached_rate, _ = rates
+            saved = (stats.total_cache_read_tokens / 1_000_000) * (input_rate - cached_rate)
+            print(f"  Cache: {hit_rate:.0%} hit rate (saved ~${saved:.2f} vs full input rate)", flush=True)
+        except (ImportError, KeyError, ValueError):
+            print(f"  Cache: {hit_rate:.0%} hit rate", flush=True)
     # 58K projection
     if stats.completed and avg_cost > 0:
         print(f"  Projected 58K corpus: ${avg_cost * 58000:.0f}", flush=True)

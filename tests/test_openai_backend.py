@@ -136,6 +136,7 @@ class TestCallOpenAI:
         mock_usage = MagicMock()
         mock_usage.prompt_tokens = 5000
         mock_usage.completion_tokens = 10000
+        mock_usage.prompt_tokens_details = None  # no cache hit info
 
         mock_choice = MagicMock()
         mock_choice.message.content = '{"content_type": "hadith"}'
@@ -169,6 +170,7 @@ class TestCallOpenAI:
         mock_usage = MagicMock()
         mock_usage.prompt_tokens = 15000
         mock_usage.completion_tokens = 33000
+        mock_usage.prompt_tokens_details = None
 
         mock_choice = MagicMock()
         mock_choice.message.content = '{"test": true}'
@@ -195,6 +197,7 @@ class TestCallOpenAI:
         mock_usage = MagicMock()
         mock_usage.prompt_tokens = 100
         mock_usage.completion_tokens = 0
+        mock_usage.prompt_tokens_details = None
 
         mock_choice = MagicMock()
         mock_choice.message.content = None
@@ -213,6 +216,42 @@ class TestCallOpenAI:
 
         assert result["result"] == ""
         assert result["output_tokens"] == 0
+
+    def test_extracts_cached_tokens_from_prompt_tokens_details(self):
+        """Verify call_openai reads usage.prompt_tokens_details.cached_tokens
+        and exposes it as both `cached_tokens` and `cache_read_tokens`."""
+        from app.pipeline_cli.openai_backend import call_openai, compute_cost
+
+        mock_details = MagicMock()
+        mock_details.cached_tokens = 800
+
+        mock_usage = MagicMock()
+        mock_usage.prompt_tokens = 1000
+        mock_usage.completion_tokens = 500
+        mock_usage.prompt_tokens_details = mock_details
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = '{"ok": true}'
+        mock_choice.finish_reason = "stop"
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.usage = mock_usage
+        mock_response.model = "gpt-5.4-mini"
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch("app.pipeline_cli.openai_backend._get_client", return_value=mock_client):
+            result = asyncio.run(call_openai("sys", "usr", model="gpt-5.4-mini"))
+
+        assert result["cached_tokens"] == 800
+        assert result["cache_read_tokens"] == 800  # alias for pipeline.py
+        # Cost should reflect the cache discount, not full input rate
+        expected = compute_cost("gpt-5.4-mini", 1000, 500, cached_tokens=800)
+        assert result["cost"] == expected
+        no_cache_cost = compute_cost("gpt-5.4-mini", 1000, 500, cached_tokens=0)
+        assert result["cost"] < no_cache_cost
 
 
 class TestCallLLMDispatcher:
@@ -304,16 +343,21 @@ class TestOpenAIPricing:
 
     def test_all_models_have_positive_prices(self):
         from app.pipeline_cli.openai_backend import OPENAI_PRICING
-        for model_id, (input_price, output_price) in OPENAI_PRICING.items():
+        for model_id, (input_price, cached_price, output_price) in OPENAI_PRICING.items():
             assert input_price > 0, f"{model_id} has zero input price"
+            assert cached_price > 0, f"{model_id} has zero cached_input price"
             assert output_price > 0, f"{model_id} has zero output price"
+            # Cached must never exceed input (otherwise caching makes things more expensive)
+            assert cached_price <= input_price, (
+                f"{model_id}: cached ({cached_price}) > input ({input_price})"
+            )
             # Output should be >= input for all models
             assert output_price >= input_price, f"{model_id}: output ({output_price}) < input ({input_price})"
 
     def test_nano_cheapest(self):
         from app.pipeline_cli.openai_backend import OPENAI_PRICING
         nano_input = OPENAI_PRICING["gpt-5-nano"][0]
-        for model_id, (input_price, _) in OPENAI_PRICING.items():
+        for model_id, (input_price, _, _) in OPENAI_PRICING.items():
             assert input_price >= nano_input, f"{model_id} cheaper than gpt-5-nano"
 
     def test_relative_pricing(self):
@@ -322,6 +366,69 @@ class TestOpenAIPricing:
         mini_input = OPENAI_PRICING["gpt-4.1-mini"][0]
         full_input = OPENAI_PRICING["gpt-4.1"][0]
         assert mini_input < full_input
+
+
+class TestComputeCostCachedTokens:
+    """Cost arithmetic with prompt_tokens_details.cached_tokens."""
+
+    def test_cached_zero_matches_legacy_formula(self):
+        """cached_tokens=0 (the default) reproduces the old (input,output) cost."""
+        from app.pipeline_cli.openai_backend import compute_cost, OPENAI_PRICING
+        i, _, o = OPENAI_PRICING["gpt-5.4-mini"]
+        expected = (1000 * i + 2000 * o) / 1_000_000
+        cost = compute_cost("gpt-5.4-mini", 1000, 2000, cached_tokens=0)
+        assert abs(cost - expected) < 1e-9
+
+    def test_cached_subtracts_from_input_no_double_charge(self):
+        """The cached portion is billed at the cached rate, NOT both rates.
+
+        This is the LiteLLM #6215 / #19680 bug we explicitly avoid.
+        """
+        from app.pipeline_cli.openai_backend import compute_cost, OPENAI_PRICING
+        i, c, o = OPENAI_PRICING["gpt-5.4-mini"]
+        # 1000 prompt = 800 cached + 200 fresh; 500 output
+        cost = compute_cost("gpt-5.4-mini", 1000, 500, cached_tokens=800)
+        expected = (200 * i + 800 * c + 500 * o) / 1_000_000
+        assert abs(cost - expected) < 1e-9
+        # And cost must be lower than billing all 1000 at full input rate
+        no_cache = compute_cost("gpt-5.4-mini", 1000, 500, cached_tokens=0)
+        assert cost < no_cache
+
+    def test_cached_equals_input_full_cache_hit(self):
+        """100% cache hit: pay only cached + output rates."""
+        from app.pipeline_cli.openai_backend import compute_cost, OPENAI_PRICING
+        i, c, o = OPENAI_PRICING["gpt-5.4"]
+        cost = compute_cost("gpt-5.4", 5000, 1000, cached_tokens=5000)
+        expected = (5000 * c + 1000 * o) / 1_000_000
+        assert abs(cost - expected) < 1e-9
+
+    def test_cached_exceeds_input_clamps(self):
+        """Reporting anomaly (cached > prompt): clamp to prompt, no negative cost."""
+        from app.pipeline_cli.openai_backend import compute_cost, OPENAI_PRICING
+        _, c, o = OPENAI_PRICING["gpt-5.4-mini"]
+        cost = compute_cost("gpt-5.4-mini", 1000, 500, cached_tokens=99999)
+        # Should bill as if cached=1000, no negative non-cached portion
+        expected = (1000 * c + 500 * o) / 1_000_000
+        assert abs(cost - expected) < 1e-9
+
+    def test_pro_model_no_cache_discount(self):
+        """Pro models have cached_input == input — caching gives no benefit."""
+        from app.pipeline_cli.openai_backend import compute_cost
+        # gpt-5.4-pro is configured with cached==input
+        with_cache = compute_cost("gpt-5.4-pro", 1000, 500, cached_tokens=800)
+        without_cache = compute_cost("gpt-5.4-pro", 1000, 500, cached_tokens=0)
+        assert abs(with_cache - without_cache) < 1e-9
+
+    def test_savings_match_published_discount(self):
+        """gpt-5.4-mini cached discount is documented as 90% off ($0.075/$0.75)."""
+        from app.pipeline_cli.openai_backend import compute_cost, OPENAI_PRICING
+        i, c, _ = OPENAI_PRICING["gpt-5.4-mini"]
+        # Sanity: ratio should be 10% (cached is 1/10 of input)
+        assert abs(c / i - 0.10) < 0.001
+        # Full cache hit on input-only (output=0): cost should be 10% of uncached
+        full_input = compute_cost("gpt-5.4-mini", 1_000_000, 0, cached_tokens=0)
+        full_cached = compute_cost("gpt-5.4-mini", 1_000_000, 0, cached_tokens=1_000_000)
+        assert abs(full_cached / full_input - 0.10) < 0.001
 
 
 class TestValidationErrorToField:

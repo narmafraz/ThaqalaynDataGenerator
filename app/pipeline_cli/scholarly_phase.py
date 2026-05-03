@@ -184,5 +184,7 @@ async def enrich_scholarly(
     # Attach cost metadata for pipeline accounting
     result["_phase3_cost"] = cr.get("cost", 0)
     result["_phase3_tokens"] = cr.get("output_tokens", 0)
+    result["_phase3_input_tokens"] = cr.get("input_tokens", 0)
+    result["_phase3_cache_read_tokens"] = cr.get("cache_read_tokens", 0)
 
     return result
