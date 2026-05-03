@@ -368,6 +368,46 @@ class TestOpenAIPricing:
         assert mini_input < full_input
 
 
+class TestArchiveRawResponse:
+    """Helper that persists raw API output on parse-failure paths so paid-for
+    LLM responses aren't lost when the parser raises."""
+
+    def test_writes_raw_text_to_expected_path(self, tmp_path):
+        from app.pipeline_cli.openai_backend import archive_raw_response
+        archive_raw_response(str(tmp_path), "al-kafi_1_2_3", "phase3", "raw output")
+        out = tmp_path / "al-kafi_1_2_3.phase3.raw.txt"
+        assert out.exists()
+        assert out.read_text(encoding="utf-8") == "raw output"
+
+    def test_creates_dir_if_missing(self, tmp_path):
+        from app.pipeline_cli.openai_backend import archive_raw_response
+        nested = tmp_path / "does_not_exist_yet"
+        archive_raw_response(str(nested), "v1", "phase4.batch0", "x")
+        assert (nested / "v1.phase4.batch0.raw.txt").exists()
+
+    def test_no_op_if_dir_or_id_missing(self, tmp_path):
+        from app.pipeline_cli.openai_backend import archive_raw_response
+        # None dir → no write, no error
+        archive_raw_response(None, "v1", "phase3", "x")
+        # None verse_id → no write, no error
+        archive_raw_response(str(tmp_path), None, "phase3", "x")
+        assert list(tmp_path.iterdir()) == []
+
+    def test_no_op_on_empty_text(self, tmp_path):
+        from app.pipeline_cli.openai_backend import archive_raw_response
+        archive_raw_response(str(tmp_path), "v1", "phase3", "")
+        assert list(tmp_path.iterdir()) == []
+
+    def test_swallows_oserror(self, tmp_path):
+        """If disk write fails, archiving must not mask the original parse
+        failure that the caller is already handling."""
+        from unittest.mock import patch
+        from app.pipeline_cli.openai_backend import archive_raw_response
+        with patch("os.makedirs", side_effect=OSError("disk full")):
+            # Should not raise
+            archive_raw_response(str(tmp_path), "v1", "phase3", "x")
+
+
 class TestCapOutputTokens:
     """Per-model max-output cap, to avoid 400 errors from old gpt-4.1 family
     where max_tokens > 32768 is rejected even though our default is 40000."""

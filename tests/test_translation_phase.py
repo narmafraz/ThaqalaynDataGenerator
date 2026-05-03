@@ -205,3 +205,69 @@ class TestTranslateChunks:
             assert updated["translations"][lang]["summary"] == ""
             assert updated["translations"][lang]["seo_question"] == ""
             assert lang in updated["chunks"][0]["translations"]
+
+    def test_archives_raw_on_parse_failure(self, tmp_path):
+        """When the API returns malformed JSON, the raw text is persisted to
+        the raw_responses archive so it can be salvaged offline rather than
+        discarded with the failed parse."""
+        bad_raw = '{"chunks": [{"translations": INVALID JSON HERE...'
+        mock_call = AsyncMock(return_value={
+            "result": bad_raw,
+            "cost": 0.001,
+            "output_tokens": 500,
+            "input_tokens": 200,
+            "cache_read_tokens": 0,
+        })
+        archive_dir = tmp_path / "raw_responses"
+        with patch("app.pipeline_cli.openai_backend.call_openai", mock_call):
+            asyncio.run(translate_chunks(
+                copy.deepcopy(SAMPLE_RESULT),
+                model="gpt-4.1-mini",
+                verse_id="al-kafi_1_2_3",
+                raw_archive_dir=str(archive_dir),
+            ))
+
+        archived = list(archive_dir.glob("al-kafi_1_2_3.phase4.batch*.raw.txt"))
+        assert len(archived) == 1, f"Expected 1 archive file, got {archived}"
+        assert archived[0].read_text(encoding="utf-8") == bad_raw
+
+    def test_no_archive_on_parse_success(self, tmp_path):
+        """Successful parses don't write to the archive (we'd otherwise dump
+        every successful API call to disk and bloat the corpus)."""
+        mock_call = AsyncMock(return_value={
+            "result": json.dumps(SAMPLE_TRANSLATION_RESPONSE),
+            "cost": 0.001,
+            "output_tokens": 500,
+            "input_tokens": 200,
+            "cache_read_tokens": 0,
+        })
+        archive_dir = tmp_path / "raw_responses"
+        with patch("app.pipeline_cli.openai_backend.call_openai", mock_call):
+            asyncio.run(translate_chunks(
+                copy.deepcopy(SAMPLE_RESULT),
+                model="gpt-4.1-mini",
+                verse_id="al-kafi_1_2_3",
+                raw_archive_dir=str(archive_dir),
+            ))
+
+        # Archive directory shouldn't even exist (no failures, nothing to write)
+        assert not archive_dir.exists() or list(archive_dir.iterdir()) == []
+
+    def test_no_archive_when_dir_not_provided(self, tmp_path):
+        """If raw_archive_dir is None (legacy callers), archiving is silently
+        skipped — no crash on a parse failure."""
+        bad_raw = "not json at all"
+        mock_call = AsyncMock(return_value={
+            "result": bad_raw,
+            "cost": 0.001,
+            "output_tokens": 500,
+            "input_tokens": 200,
+            "cache_read_tokens": 0,
+        })
+        with patch("app.pipeline_cli.openai_backend.call_openai", mock_call):
+            # Should not raise
+            asyncio.run(translate_chunks(
+                copy.deepcopy(SAMPLE_RESULT),
+                model="gpt-4.1-mini",
+                # no verse_id, no raw_archive_dir
+            ))

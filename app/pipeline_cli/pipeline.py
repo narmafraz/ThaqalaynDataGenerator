@@ -1003,6 +1003,10 @@ async def process_verse_phased(
                     chapter_title=request.chapter_title,
                     backend="claude",
                     model="sonnet",
+                    verse_id=verse_id,
+                    raw_archive_dir=os.path.join(
+                        os.path.dirname(responses_dir), "raw_responses"
+                    ),
                 )
             p3_cost = full_result.pop("_phase3_cost", 0)
             stats.total_output_tokens += full_result.pop("_phase3_tokens", 0)
@@ -1020,6 +1024,10 @@ async def process_verse_phased(
                 full_result,
                 model=config.phase4_model,
                 arabic_text=request.arabic_text,
+                verse_id=verse_id,
+                raw_archive_dir=os.path.join(
+                    os.path.dirname(responses_dir), "raw_responses"
+                ),
             )
         p4_cost = full_result.pop("_phase4_cost", 0)
         stats.total_output_tokens += full_result.pop("_phase4_tokens", 0)
@@ -1538,6 +1546,10 @@ async def run_retranslate(config: PipelineConfig):
                 result,
                 model=config.phase4_model,
                 arabic_text=arabic_text,
+                verse_id=verse_id,
+                raw_archive_dir=os.path.join(
+                    os.path.dirname(responses_dir), "raw_responses"
+                ),
             )
 
         p4_cost = result.pop("_phase4_cost", 0)

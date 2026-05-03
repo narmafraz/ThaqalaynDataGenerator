@@ -112,6 +112,8 @@ async def enrich_scholarly(
     chapter_title: str = "",
     backend: str = "claude",
     model: str = "sonnet",
+    verse_id: Optional[str] = None,
+    raw_archive_dir: Optional[str] = None,
 ) -> dict:
     """Run Phase 3 scholarly enrichment.
 
@@ -125,6 +127,11 @@ async def enrich_scholarly(
         chapter_title: Chapter title
         backend: LLM backend ("claude" or "openai")
         model: Model name
+        verse_id: Verse ID used for raw-archive filenames. Required if
+            raw_archive_dir is set, ignored otherwise.
+        raw_archive_dir: Optional directory to persist the raw API response
+            text on JSON parse failure (so it can be salvaged offline rather
+            than re-paying for the call).
 
     Returns:
         Updated result dict with enriched summary and possibly more Quran refs.
@@ -160,6 +167,11 @@ async def enrich_scholarly(
     try:
         data = _extract_json(cr.get("result", ""))
     except (json.JSONDecodeError, ValueError) as e:
+        # Persist the raw API output we already paid for so it can be
+        # repaired offline. Without this we lose the response entirely.
+        from app.pipeline_cli.openai_backend import archive_raw_response
+        archive_raw_response(raw_archive_dir, verse_id, "phase3",
+                             cr.get("result", ""))
         logger.warning("Phase 3 JSON parse failed: %s", e)
         return result
 

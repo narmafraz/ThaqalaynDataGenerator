@@ -91,6 +91,38 @@ OPENAI_PRICING = {
 }
 
 
+def archive_raw_response(
+    raw_archive_dir: Optional[str],
+    verse_id: Optional[str],
+    suffix: str,
+    raw_text: str,
+) -> None:
+    """Persist a raw API response to disk so it can be salvaged offline.
+
+    Used on parse failure paths to preserve the (paid-for) LLM output that
+    would otherwise be lost when the parser raises. Silently no-ops if either
+    `raw_archive_dir` or `verse_id` is None — call sites can pass through
+    optional config without conditional wrapping.
+
+    Filename: {raw_archive_dir}/{verse_id}.{suffix}.raw.txt
+    """
+    if not raw_archive_dir or not verse_id:
+        return
+    if not raw_text:
+        return
+    try:
+        os.makedirs(raw_archive_dir, exist_ok=True)
+        path = os.path.join(raw_archive_dir, f"{verse_id}.{suffix}.raw.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(raw_text)
+        logger.info("Archived raw response: %s", path)
+    except OSError as e:
+        # Never let archiving failure cascade — the caller is already on an
+        # error path and we don't want to mask the original failure.
+        logger.warning("Failed to archive raw response for %s.%s: %s",
+                       verse_id, suffix, e)
+
+
 def compute_cost(
     model: str,
     input_tokens: int,

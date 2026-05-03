@@ -229,6 +229,8 @@ async def translate_chunks(
     result: dict,
     model: str = "gpt-5-mini",
     arabic_text: str = "",
+    verse_id: Optional[str] = None,
+    raw_archive_dir: Optional[str] = None,
 ) -> dict:
     """Run Phase 4 translation on a pipeline result.
 
@@ -292,6 +294,13 @@ async def translate_chunks(
             raw = _strip_code_fences(cr.get("result", ""))
             trans_data = json.loads(raw)
         except (json.JSONDecodeError, ValueError) as e:
+            # Persist the raw text we already paid for so it can be salvaged
+            # offline. The other batches still run; missing translations get
+            # caught by validate_result's empty-string check (commit e84f106).
+            from app.pipeline_cli.openai_backend import archive_raw_response
+            archive_raw_response(raw_archive_dir, verse_id,
+                                 f"phase4.batch{batch_idx}",
+                                 cr.get("result", ""))
             logger.error("Phase 4 translation batch %d JSON parse failed: %s",
                          batch_idx, e)
             continue
