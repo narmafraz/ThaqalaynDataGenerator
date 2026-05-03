@@ -1208,6 +1208,11 @@ def validate_result(result: dict) -> List[str]:
                 for tf in required_trans_fields:
                     if tf not in lang_data:
                         errors.append(f"translations.{lang_key} missing field: {tf}")
+                # Catch silently-swallowed Phase 4 batch failures: empty string values
+                # for fields that should be non-empty translated text.
+                for tf in ("text", "summary", "seo_question"):
+                    if tf in lang_data and isinstance(lang_data[tf], str) and not lang_data[tf].strip():
+                        errors.append(f"translations.{lang_key}.{tf} is empty string (likely Phase 4 batch failure)")
                 # Validate key_terms is a dict with Arabic keys
                 kt = lang_data.get("key_terms")
                 if kt is not None:
@@ -1260,8 +1265,11 @@ def validate_result(result: dict) -> List[str]:
                         if missing_chunk_langs:
                             errors.append(f"chunks[{i}] translations missing languages: {sorted(missing_chunk_langs)}")
                         for lang_key, lang_val in chunk["translations"].items():
-                            if lang_key in VALID_LANGUAGE_KEYS and not isinstance(lang_val, str):
-                                errors.append(f"chunks[{i}] translations.{lang_key} must be string, got {type(lang_val).__name__}")
+                            if lang_key in VALID_LANGUAGE_KEYS:
+                                if not isinstance(lang_val, str):
+                                    errors.append(f"chunks[{i}] translations.{lang_key} must be string, got {type(lang_val).__name__}")
+                                elif not lang_val.strip():
+                                    errors.append(f"chunks[{i}] translations.{lang_key} is empty string (likely Phase 4 batch failure)")
             # Sequential coverage checks
             first_chunk = result["chunks"][0]
             if isinstance(first_chunk.get("word_start"), int) and first_chunk["word_start"] != 0:

@@ -547,6 +547,14 @@ class TestValidateResultMissingFields:
         errors = validate_result(result)
         assert any("translations.ur" in e and "summary" in e for e in errors)
 
+    def test_empty_translation_summary(self):
+        # Catches Phase 4 silent-swallow where batch parse failure leaves
+        # translation fields as empty strings instead of being absent.
+        result = _make_valid_result()
+        result["translations"]["fa"]["summary"] = ""
+        errors = validate_result(result)
+        assert any("translations.fa.summary is empty string" in e for e in errors)
+
     def test_has_chain_true_but_empty_isnad(self):
         result = _make_valid_result()
         result["isnad_matn"]["has_chain"] = True
@@ -928,6 +936,15 @@ class TestValidateChunks:
         result["chunks"][0]["translations"]["en"] = {"text": "not a plain string"}
         errors = validate_result(result)
         assert any("chunks[0] translations.en must be string" in e for e in errors)
+
+    def test_chunk_translation_empty_string(self):
+        # Concrete Phase 4 batch-failure footprint: a verse that saved with
+        # English present but other-language chunk translations as empty
+        # strings (tahdhib-al-ahkam_10_14_20 in May 3 2026 retry).
+        result = _make_valid_result()
+        result["chunks"][0]["translations"]["fa"] = ""
+        errors = validate_result(result)
+        assert any("chunks[0] translations.fa is empty string" in e for e in errors)
 
 
 # ===================================================================
