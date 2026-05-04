@@ -1136,6 +1136,12 @@ async def process_verse_phased(
             json.dump(wrapper, f, ensure_ascii=False, indent=2)
         logger.info("WROTE %s", out_path)
 
+        # Clear stale quarantine entry from a prior failed attempt so the
+        # retry's success isn't shadowed by the old quarantine file. See
+        # _clear_stale_quarantine() in verse_processor.py for rationale.
+        from app.pipeline_cli.verse_processor import _clear_stale_quarantine
+        _clear_stale_quarantine(verse_id, responses_dir)
+
         stats.passed += 1
         stats.completed += 1
 

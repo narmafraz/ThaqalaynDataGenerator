@@ -216,5 +216,44 @@ class TestIsAmbiguousName(unittest.TestCase):
         assert not _is_ambiguous_name("عَلِيّ", templates)
 
 
+class TestClearStaleQuarantine(unittest.TestCase):
+    """Verify successful response writes clear any prior quarantine entry.
+
+    Without this, retried verses leave their failed-attempt quarantine
+    file behind, inflating the quarantine count and confusing
+    --quarantined-only retry logic.
+    """
+
+    def test_removes_existing_quarantine(self):
+        import tempfile
+        from app.pipeline_cli.verse_processor import _clear_stale_quarantine
+        with tempfile.TemporaryDirectory() as tmp:
+            responses_dir = os.path.join(tmp, "responses")
+            quarantine_dir = os.path.join(tmp, "quarantine")
+            os.makedirs(quarantine_dir)
+            stale = os.path.join(quarantine_dir, "v1.json")
+            with open(stale, "w") as f:
+                f.write("{}")
+            _clear_stale_quarantine("v1", responses_dir)
+            assert not os.path.exists(stale)
+
+    def test_no_op_when_no_quarantine_entry(self):
+        import tempfile
+        from app.pipeline_cli.verse_processor import _clear_stale_quarantine
+        with tempfile.TemporaryDirectory() as tmp:
+            responses_dir = os.path.join(tmp, "responses")
+            # Should not raise even when quarantine dir doesn't exist
+            _clear_stale_quarantine("v1", responses_dir)
+
+    def test_swallows_oserror(self):
+        """OSError during cleanup must not mask the successful save."""
+        from unittest.mock import patch
+        from app.pipeline_cli.verse_processor import _clear_stale_quarantine
+        with patch("os.path.exists", return_value=True), \
+             patch("os.remove", side_effect=OSError("locked")):
+            # Should not raise
+            _clear_stale_quarantine("v1", "/tmp/responses")
+
+
 if __name__ == "__main__":
     unittest.main()

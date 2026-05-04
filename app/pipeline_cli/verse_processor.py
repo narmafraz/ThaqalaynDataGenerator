@@ -900,7 +900,12 @@ def postprocess_verse(
 
 
 def _save_response(plan: VersePlan, stripped_result: dict, responses_dir: str) -> None:
-    """Save the final response wrapper to the responses directory."""
+    """Save the final response wrapper to the responses directory.
+
+    Also clears any stale quarantine entry for this verse — without this,
+    retried verses leave their old quarantine file behind, inflating the
+    quarantine count and confusing --quarantined-only retry logic.
+    """
     os.makedirs(responses_dir, exist_ok=True)
     generation_method = "openai_api" if plan.backend == "openai" else "claude_cli_p"
     model_label = plan.model or "pipeline_v4"
@@ -919,6 +924,24 @@ def _save_response(plan: VersePlan, stripped_result: dict, responses_dir: str) -
     with open(path, "w", encoding="utf-8") as f:
         json.dump(wrapper, f, ensure_ascii=False, indent=2)
     logger.info("WROTE %s", path)
+    _clear_stale_quarantine(plan.verse_id, responses_dir)
+
+
+def _clear_stale_quarantine(verse_id: str, responses_dir: str) -> None:
+    """Delete a quarantine entry for verse_id if one exists.
+
+    Called after a successful response write so that retried verses don't
+    leave their old failed-attempt artifact behind. Errors are swallowed —
+    we never want quarantine cleanup to mask the real outcome.
+    """
+    try:
+        quarantine_dir = os.path.join(os.path.dirname(responses_dir), "quarantine")
+        stale = os.path.join(quarantine_dir, f"{verse_id}.json")
+        if os.path.exists(stale):
+            os.remove(stale)
+            logger.info("Removed stale quarantine entry: %s", verse_id)
+    except OSError as e:
+        logger.warning("Failed to remove stale quarantine for %s: %s", verse_id, e)
 
 
 def _save_audit(plan: VersePlan, verse_result: VerseResult,
