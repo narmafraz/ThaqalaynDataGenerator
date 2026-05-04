@@ -298,6 +298,42 @@ def load_corpus_manifest() -> List[str]:
     return [v["path"] if isinstance(v, dict) else v for v in verses]
 
 
+def load_quarantine_paths(responses_dir: Optional[str] = None) -> List[str]:
+    """Load verse paths from the quarantine directory.
+
+    For each *.json in quarantine/, extract verse_path (when present) or
+    derive it from the filename. Used by --quarantined-only to focus the
+    queue on failed verses without dragging in unprocessed corpus items.
+    """
+    rdir = responses_dir or AI_RESPONSES_DIR
+    quarantine_dir = os.path.join(os.path.dirname(rdir), "quarantine")
+    if not os.path.isdir(quarantine_dir):
+        logger.warning("Quarantine directory not found: %s", quarantine_dir)
+        return []
+    paths = []
+    for fname in sorted(os.listdir(quarantine_dir)):
+        if not fname.endswith(".json"):
+            continue
+        fpath = os.path.join(quarantine_dir, fname)
+        vp = None
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            vp = d.get("verse_path")
+        except (json.JSONDecodeError, OSError):
+            pass  # Fall through to filename-derived path
+        if not vp:
+            # Derive from filename: {book}_{seg1}_{seg2}_..._{segN}.json
+            # → /books/{book}:{seg1}:{seg2}:...:{segN}
+            vid = fname.replace(".json", "")
+            parts = vid.split("_")
+            book = parts[0]
+            nums = parts[1:]
+            vp = f"/books/{book}:" + ":".join(nums)
+        paths.append(vp)
+    return paths
+
+
 def is_quarantined(verse_id: str, responses_dir: str) -> bool:
     """Check if a verse is quarantined (too many failures)."""
     quarantine_dir = os.path.join(os.path.dirname(responses_dir), "quarantine")
@@ -1595,6 +1631,7 @@ def main():
     parser.add_argument("--max-words", type=int, help="Skip verses with more than N Arabic words (filters out long hadiths)")
     parser.add_argument("--max-failures", type=int, default=3, help="Quarantine verse after N cumulative failures (default: 3)")
     parser.add_argument("--attempt-quarantined", action="store_true", help="Include quarantined verses in queue (default: skip them)")
+    parser.add_argument("--quarantined-only", action="store_true", help="Build queue from quarantine/ directory only (excludes unprocessed corpus items). Implies --attempt-quarantined.")
     parser.add_argument("--v3", action="store_true", help="Use v3 format (compact word_analysis with translations) instead of v4 word_tags")
     parser.add_argument("--backend", default="claude", choices=["claude", "openai"],
                         help="LLM backend: 'claude' (claude -p, default) or 'openai' (OpenAI API)")
@@ -1680,7 +1717,7 @@ def main():
         max_words=args.max_words,
         max_verses=args.max_verses,
         max_failures=args.max_failures,
-        attempt_quarantined=args.attempt_quarantined,
+        attempt_quarantined=args.attempt_quarantined or args.quarantined_only,
         use_v3=args.v3,
         phased=args.phased,
         skip_scholarly=args.skip_scholarly,
@@ -1691,6 +1728,11 @@ def main():
     # Load verse paths
     if args.single:
         verse_paths = list(args.single)
+    elif args.quarantined_only:
+        verse_paths = load_quarantine_paths(args.responses_dir)
+        if not verse_paths:
+            print("No quarantined verses found — nothing to do.", flush=True)
+            sys.exit(0)
     else:
         verse_paths = load_corpus_manifest()
         if not verse_paths:
