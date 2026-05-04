@@ -184,7 +184,12 @@ def _get_client():
     return AsyncOpenAI(
         api_key=api_key,
         max_retries=3,
-        timeout=3600.0,  # 1 hour timeout (long chunked verses with reasoning models)
+        # 10-min per-request timeout. Was 3600s but that meant a dead TCP
+        # connection (e.g. machine slept then woke) sat for an hour before
+        # the SDK gave up — losing 1-3 hours per stuck call across retries.
+        # 600s still leaves ample headroom for legitimate long-reasoning
+        # calls (typical Phase 1 finishes 10-30s, worst-case under 5 min).
+        timeout=600.0,
     )
 
 

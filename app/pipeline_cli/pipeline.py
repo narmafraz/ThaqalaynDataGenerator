@@ -1712,15 +1712,22 @@ def main():
     # Set env vars
     os.environ.setdefault("SOURCE_DATA_DIR", "../ThaqalaynDataSources/")
 
-    # Prevent Windows sleep during pipeline run
+    # Prevent Windows sleep during pipeline run.
+    # ES_SYSTEM_REQUIRED alone doesn't block Modern Standby (S0 low-power) on
+    # newer laptops — observed: machine slept mid-run despite "sleep prevention
+    # enabled". Adding ES_AWAYMODE_REQUIRED keeps the system in a deeper
+    # working state, which Modern Standby honors.
     _sleep_prevented = False
     try:
         import ctypes
         ES_CONTINUOUS = 0x80000000
         ES_SYSTEM_REQUIRED = 0x00000001
-        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+        ES_AWAYMODE_REQUIRED = 0x00000040
+        ctypes.windll.kernel32.SetThreadExecutionState(
+            ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+        )
         _sleep_prevented = True
-        logger.info("Windows sleep prevention enabled")
+        logger.info("Windows sleep prevention enabled (system + away-mode)")
     except (AttributeError, OSError):
         pass  # Not Windows or API unavailable
 
