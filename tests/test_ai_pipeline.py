@@ -1918,6 +1918,57 @@ class TestV4StripReconstruct:
         for lang in VALID_LANGUAGE_KEYS:
             assert "text" in reconstructed["translations"][lang]
 
+    # ---- Round-trip property tests (v4 only) ----
+    #
+    # These lock the strip/reconstruct pair as a true contract. They guard
+    # against regressions when tasks #1/#2/#3 widen what gets stripped: any
+    # future change that makes strip remove a field reconstruct can't rebuild
+    # will fail one of these properties.
+    #
+    # Defining property: for every v4 result x, the pair must satisfy
+    #   1. strip is idempotent: strip(strip(x)) == strip(x)
+    #   2. reconstruct(strip(x)) == reconstruct(x) — strip never loses
+    #      information that reconstruct can rebuild
+    #   3. strip(reconstruct(strip(x))) == strip(x) — feeding a
+    #      reconstructed result back through strip lands at the canonical
+    #      stripped form (catches e.g. v3-mode strip bugs triggered by
+    #      synthetic word_analysis stubs reconstruct injects).
+
+    @staticmethod
+    def _deep_eq(a, b):
+        return json.dumps(a, sort_keys=True, ensure_ascii=False) == json.dumps(b, sort_keys=True, ensure_ascii=False)
+
+    def test_v4_strip_is_idempotent(self):
+        x = _make_v4_result()
+        once = strip_redundant_fields(x)
+        twice = strip_redundant_fields(once)
+        assert self._deep_eq(once, twice), "strip must be idempotent on v4"
+
+    def test_v4_reconstruct_after_strip_matches_reconstruct(self):
+        """strip then reconstruct must produce the same canonical full form
+        as a direct reconstruct — i.e. strip never removes anything that
+        reconstruct can't put back."""
+        x = _make_v4_result()
+        a = reconstruct_fields(strip_redundant_fields(x))
+        b = reconstruct_fields(x)
+        assert self._deep_eq(a, b), (
+            "reconstruct(strip(x)) must equal reconstruct(x): strip is "
+            "removing data reconstruct can't rebuild"
+        )
+
+    def test_v4_strip_reconstruct_strip_round_trip(self):
+        """Round-tripping a stripped v4 through reconstruct and back through
+        strip must land at the same stripped form. Catches the class of bug
+        where a synthetic word_analysis stub injected by reconstruct trips
+        strip into v3-mode behaviour and over-strips fields v4 needs to keep."""
+        x = _make_v4_result()
+        stripped = strip_redundant_fields(x)
+        round_trip = strip_redundant_fields(reconstruct_fields(stripped))
+        assert self._deep_eq(stripped, round_trip), (
+            "strip(reconstruct(strip(x))) must equal strip(x): the strip "
+            "logic is not consistent under reconstruct's stub injection"
+        )
+
 
 class TestWordDictionary:
     """Tests for word_dictionary.py module."""

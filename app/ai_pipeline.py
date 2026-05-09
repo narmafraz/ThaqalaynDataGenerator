@@ -834,21 +834,27 @@ def strip_redundant_fields(result: dict) -> dict:
         A new dict with redundant fields removed.
     """
     result = json.loads(json.dumps(result))  # deep copy
-    has_word_analysis = bool(result.get("word_analysis"))
-    # Only strip diacritized_text and chunks[].arabic_text when word_analysis
-    # is present (they can be reconstructed from word_analysis via word ranges).
-    # For v4 (word_tags only), preserve them since word_tags can't reconstruct.
-    if has_word_analysis:
+    # word_tags presence is the v4 marker and takes precedence over
+    # word_analysis. A v4 result may transiently contain a synthetic
+    # word_analysis stub (injected by reconstruct_fields() to support
+    # validate_result), so we must not let that stub trigger v3-mode
+    # stripping — which would over-strip diacritized_text and
+    # chunks[].arabic_text that v4 needs to preserve.
+    if "word_tags" in result:
+        # v4: word_tags is the canonical compact form. Drop any
+        # word_analysis (real or stub). Keep diacritized_text and
+        # chunks[].arabic_text — they can't be reconstructed from
+        # word_tags alone.
+        result.pop("word_analysis", None)
+    elif bool(result.get("word_analysis")):
+        # v3: word_analysis is canonical. Strip fields that can be
+        # reconstructed from it via word_start/word_end.
         result.pop("diacritized_text", None)
         for chunk in result.get("chunks", []):
             chunk.pop("arabic_text", None)
     for lang_obj in result.get("translations", {}).values():
         if isinstance(lang_obj, dict):
             lang_obj.pop("text", None)
-    # v4: if word_tags is present, strip the synthesized word_analysis
-    # (it has no translations, so word_tags is the canonical compact form)
-    if "word_tags" in result:
-        result.pop("word_analysis", None)
     return result
 
 
