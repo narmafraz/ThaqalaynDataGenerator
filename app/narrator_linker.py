@@ -32,7 +32,24 @@ NARRATOR_SPLIT_PATTERN = re.compile(
     r"رَفَعَهُ عَنْ|رَفَعَهُ إِلَى|فِي حَدِيثِ|رَفَعَهُ أَنَّ|رَفَعَهُ) "
 )
 
-SKIP_PREFIX_PATTERN = re.compile(r"^([\d\s-]*|أخْبَرَنَا|أَخْبَرَنَا|وَ)* ")
+# Leading prefix to strip before narrator splitting. Anything that's chain-glue
+# at the very start of the isnad — verbs of attribution, the connector "wa-",
+# numeric prefixes from indexed sources — and not part of any narrator's name.
+#
+# Adding these (May 2026): رَوَى, وَرَوَى, حَدَّثَنِي/وَحَدَّثَنِي,
+# حَدَّثَنَا/وَحَدَّثَنَا, أَخْبَرَنِي/وَأَخْبَرَنَا/وَأَخْبَرَنِي,
+# سَمِعْتُ/وَسَمِعْتُ. Without these, the AI-generated isnad text often started
+# with e.g. "رَوَى اِبْنُ بُكَيْرٍ ..." and the leading verb baked into the first
+# extracted narrator name, blocking canonical_id resolution.
+SKIP_PREFIX_PATTERN = re.compile(
+    r"^([\d\s-]*|"
+    r"أخْبَرَنَا|أَخْبَرَنَا|أَخْبَرَنِي|"
+    r"وَأَخْبَرَنَا|وَأَخْبَرَنِي|"
+    r"حَدَّثَنَا|حَدَّثَنِي|وَحَدَّثَنَا|وَحَدَّثَنِي|"
+    r"رَوَى|وَرَوَى|"
+    r"سَمِعْتُ|وَسَمِعْتُ|"
+    r"وَ)* "
+)
 
 NARRATORS_TEXT_PATTERN = re.compile(
     r"(.*?) (قَالَ|فِي هَذِهِ الْآيَةِ|يَرْفَعُهُ قَالَ|رَفَعَهُ قَالَ|"
@@ -64,7 +81,14 @@ NARRATORS_TEXT_FAILOVER_PATTERN_UNDIACRITIZED = re.compile(
     r"(.*?\( عليهم? السلام \))"
 )
 
-SKIP_PREFIX_PATTERN_UNDIACRITIZED = re.compile(r"^([\d\s-]*|اخبرنا|و)* ")
+SKIP_PREFIX_PATTERN_UNDIACRITIZED = re.compile(
+    r"^([\d\s-]*|"
+    r"اخبرنا|اخبرني|واخبرنا|واخبرني|"
+    r"حدثنا|حدثني|وحدثنا|وحدثني|"
+    r"روى|وروى|"
+    r"سمعت|وسمعت|"
+    r"و)* "
+)
 
 
 def strip_html(text: str) -> str:

@@ -7,6 +7,7 @@ exact Arabic name, normalized name, and context-aware disambiguation.
 import json
 import logging
 import os
+import re
 from typing import Dict, List, Optional, Tuple
 
 from app.arabic_normalization import normalize_arabic, strip_tashkeel
@@ -15,6 +16,150 @@ from app.config import AI_PIPELINE_DATA_DIR
 logger = logging.getLogger(__name__)
 
 REGISTRY_FILENAME = "canonical_narrators.json"
+
+
+# Honorific suffixes to strip from a narrator name when building the canonical
+# lookup key. The registry was built from legacy parsing (parenthetical form)
+# while the AI pipeline emits the inline form with full diacritics. After
+# normalize_arabic strips tashkeel + letter variants, both forms collapse to
+# patterns matched here.
+#
+# CRITICAL: these patterns operate on the *post-normalize_arabic* string, which
+# has applied:
+#   - tashkeel stripped
+#   - ى (alef maksura) → ي (yeh)
+#   - آ أ إ ٱ → ا (all hamza-alef variants → plain alef)
+#   - ة → ه (teh marbuta → heh)
+#   - ؤ → و, ئ → ي
+# So patterns here use the COLLAPSED forms: "صلي" not "صلى", "اله" not "آله",
+# "ابي" not "أبي". Building patterns with the original Arabic forms WILL NOT
+# match against post-normalize text.
+#
+# Patterns are anchored at end-of-string with optional leading whitespace.
+_HONORIFIC_SUFFIX_PATTERNS = [
+    re.compile(p) for p in (
+        # Parenthetical forms — registry's traditional style (post-normalize)
+        r"\s*\(\s*ع\.?\s*\)\s*$",
+        r"\s*\(\s*عليه السلام\s*\)\s*$",
+        r"\s*\(\s*عليها السلام\s*\)\s*$",
+        r"\s*\(\s*عليهم السلام\s*\)\s*$",
+        r"\s*\(\s*عليهما السلام\s*\)\s*$",
+        r"\s*\(\s*صلي الله عليه واله(?:\s+وسلم)?\s*\)\s*$",
+        r"\s*\(\s*صلي الله عليه وسلم\s*\)\s*$",
+        r"\s*\(\s*صلوات الله عليه\s*\)\s*$",
+        r"\s*\(\s*صلوات الله عليها\s*\)\s*$",
+        r"\s*\(\s*صلوات الله عليهم\s*\)\s*$",
+        r"\s*\(\s*صلوات الله عليهما\s*\)\s*$",
+        r"\s*\(\s*رضي الله عنه\s*\)\s*$",
+        r"\s*\(\s*رضي الله عنها\s*\)\s*$",
+        r"\s*\(\s*رحمه الله\s*\)\s*$",
+        # Inline forms — AI pipeline's style (post-normalize)
+        r"\s+عليه السلام\s*$",
+        r"\s+عليها السلام\s*$",
+        r"\s+عليهم السلام\s*$",
+        r"\s+عليهما السلام\s*$",
+        r"\s+صلي الله عليه واله(?:\s+وسلم)?\s*$",
+        r"\s+صلي الله عليه وسلم\s*$",
+        r"\s+صلوات الله عليه\s*$",
+        r"\s+صلوات الله عليها\s*$",
+        r"\s+صلوات الله عليهم\s*$",
+        r"\s+صلوات الله عليهما\s*$",
+        r"\s+رضي الله عنه\s*$",
+        r"\s+رضي الله عنها\s*$",
+        r"\s+رحمه الله\s*$",
+        # Trailing standalone "ع" abbreviation (after parenthetical strip)
+        r"\s+ع\s*$",
+    )
+]
+
+
+# Leading chain-glue verbs/connectors that occasionally end up baked into a
+# narrator name when the AI pipeline extracts isnad (e.g. "روى ابن بكير").
+# Matched against the *post-normalize* string. Note: "روى" → "روي" after
+# normalize_arabic's alef-maksura → yeh conversion, so prefix uses "روي".
+#
+# Each entry is checked as a leading-prefix; the first match strips the prefix
+# and any whitespace after.
+#
+# Note: these are deliberately conservative. We don't strip "عن" (from) — that
+# IS often part of a kunya (e.g., "عن أبيه" — "from his father", which we want
+# to preserve as the link between narrators in the chain, not as part of one
+# narrator's identity).
+_LEADING_VERB_PREFIXES = (
+    "وروي ",   # "وروى" post-normalize: alef-maksura → yeh
+    "روي ",    # "روى"
+    "وحدثني ",
+    "حدثني ",
+    "وحدثنا ",
+    "حدثنا ",
+    "واخبرنا ",
+    "اخبرنا ",
+    "واخبرني ",
+    "اخبرني ",
+    "وسمعت ",
+    "سمعت ",
+    # NOTE: "قال " is NOT stripped — it's too common as a sub-token in real
+    # narrator names ("قال علي" could be a real attribution, and stripping it
+    # blindly would alias many distinct narrators).
+)
+
+
+def _strip_honorific_suffix(text: str) -> str:
+    """Remove a trailing honorific suffix from a normalized narrator name.
+
+    Handles both parenthetical (registry) and inline (AI pipeline) forms.
+    Returns the input unchanged if no honorific is present. Operates on
+    the *post-normalize_arabic* string (no tashkeel, normalized letters).
+    """
+    if not text:
+        return text
+    result = text
+    for pattern in _HONORIFIC_SUFFIX_PATTERNS:
+        new_result = pattern.sub("", result)
+        if new_result != result:
+            result = new_result.rstrip()
+            # Don't keep iterating once we find a match — guards against double-strip
+            break
+    return result
+
+
+def _strip_leading_chain_verb(text: str) -> str:
+    """Remove a leading chain-glue verb from a normalized narrator name.
+
+    Examples (after normalize_arabic):
+        "روى ابن بكير" -> "ابن بكير"
+        "حدثنا محمد بن يعقوب" -> "محمد بن يعقوب"
+        "ابن بكير" -> "ابن بكير" (unchanged)
+    """
+    if not text:
+        return text
+    for prefix in _LEADING_VERB_PREFIXES:
+        if text.startswith(prefix):
+            stripped = text[len(prefix):].lstrip()
+            # Refuse to return an empty/single-word stub — if the verb was
+            # the entire content, there's no narrator name to extract.
+            if stripped:
+                return stripped
+    return text
+
+
+def canonical_lookup_key(name_ar: str) -> str:
+    """Build a maximally-stripped lookup key for a narrator name.
+
+    Pipeline:
+    1. normalize_arabic() — strip tashkeel, normalize letter variants, etc.
+    2. Strip trailing honorific suffix (parenthetical OR inline form).
+    3. Strip leading chain verb (روى, حدثنا, etc.).
+    4. Re-collapse any whitespace introduced.
+
+    Returns empty string if the input collapses to nothing useful.
+    """
+    if not name_ar:
+        return ""
+    normalized = normalize_arabic(name_ar)
+    stripped = _strip_honorific_suffix(normalized)
+    stripped = _strip_leading_chain_verb(stripped)
+    return stripped.strip()
 
 
 class NarratorRegistry:
@@ -37,6 +182,11 @@ class NarratorRegistry:
         # Fast lookup indexes
         self._by_exact_ar: Dict[str, int] = {}
         self._by_normalized: Dict[str, List[int]] = {}
+        # Looser key: post-normalize + honorific-stripped + leading-verb-stripped.
+        # Used as a fallback when the AI emits a name that differs from the
+        # registry's canonical form only in honorific style or has a chain-verb
+        # prefix. Kept separate from _by_normalized so we don't conflate them.
+        self._by_canonical_key: Dict[str, List[int]] = {}
 
         self._load(path)
 
@@ -67,7 +217,7 @@ class NarratorRegistry:
                 self._index_variant(variant, canonical_id)
 
     def _index_variant(self, name_ar: str, canonical_id: int):
-        """Add a name variant to both exact and normalized indexes."""
+        """Add a name variant to exact, normalized, and canonical-key indexes."""
         # Exact lookup
         if name_ar not in self._by_exact_ar:
             self._by_exact_ar[name_ar] = canonical_id
@@ -78,6 +228,18 @@ class NarratorRegistry:
             self._by_normalized[normalized] = []
         if canonical_id not in self._by_normalized[normalized]:
             self._by_normalized[normalized].append(canonical_id)
+
+        # Canonical-key lookup (honorific-stripped + leading-verb-stripped).
+        # Always register, even when ckey == normalized — needed so AI-emitted
+        # names with verb-prefix or honorific-suffix can resolve to a registry
+        # entry whose own canonical form happens to be a "clean" name (no
+        # honorific or verb to strip).
+        ckey = canonical_lookup_key(name_ar)
+        if ckey:
+            if ckey not in self._by_canonical_key:
+                self._by_canonical_key[ckey] = []
+            if canonical_id not in self._by_canonical_key[ckey]:
+                self._by_canonical_key[ckey].append(canonical_id)
 
     @property
     def version(self) -> str:
@@ -100,6 +262,18 @@ class NarratorRegistry:
         normalized = normalize_arabic(name_ar)
         return self._by_normalized.get(normalized, [])
 
+    def lookup_canonical_key(self, name_ar: str) -> List[int]:
+        """Look up canonical IDs by the looser canonical key (honorific-stripped
+        + leading-verb-stripped). Returns list (may be ambiguous).
+
+        Use this as a fallback when normalized lookup fails — it handles the
+        registry-vs-AI honorific format mismatch and chain-verb prefixes.
+        """
+        ckey = canonical_lookup_key(name_ar)
+        if not ckey:
+            return []
+        return self._by_canonical_key.get(ckey, [])
+
     def resolve(self, name_ar: str, preceding_names: Optional[List[str]] = None) -> Optional[int]:
         """Resolve a narrator name to canonical ID with context-aware disambiguation.
 
@@ -120,10 +294,15 @@ class NarratorRegistry:
 
         # Step 2: Normalized match
         candidates = self.lookup_normalized(name_ar)
+        if len(candidates) == 0:
+            # Step 2b: Fall back to canonical-key match (handles honorific
+            # format mismatch + chain-verb prefix).
+            candidates = self.lookup_canonical_key(name_ar)
+            if len(candidates) == 0:
+                return None
+
         if len(candidates) == 1:
             return candidates[0]
-        if len(candidates) == 0:
-            return None
 
         # Step 3: Disambiguation via context
         if preceding_names:

@@ -230,3 +230,107 @@ class TestSaveRegistry:
             assert registry2.lookup_exact("new_variant_test") == 1
         finally:
             os.unlink(save_path)
+
+
+class TestCanonicalLookupKey:
+    """Tests for the new canonical_lookup_key + lookup_canonical_key fallback.
+
+    These cover the AI-vs-registry honorific format mismatch and the
+    leading chain-verb prefix that occasionally ends up in extracted names.
+    """
+
+    def test_strips_inline_diacritized_honorific(self):
+        from app.narrator_registry import canonical_lookup_key
+        # AI emits inline form with full diacritics
+        ai_form = "أَبِي جَعْفَرٍ عَلَيْهِ السَّلَامُ"
+        # Registry has parenthetical form
+        registry_form = "أَبِي جَعْفَرٍ ( عليه السلام )"
+        assert canonical_lookup_key(ai_form) == canonical_lookup_key(registry_form)
+
+    def test_strips_parenthetical_no_space_form(self):
+        from app.narrator_registry import canonical_lookup_key
+        a = "أَبِي جَعْفَرٍ ( عليه السلام )"
+        b = "أَبِي جَعْفَرٍ (عليه السلام)"
+        assert canonical_lookup_key(a) == canonical_lookup_key(b)
+
+    def test_strips_prophet_salawat(self):
+        from app.narrator_registry import canonical_lookup_key
+        a = "محمد صلى الله عليه وآله وسلم"
+        b = "محمد ( صلى الله عليه وآله وسلم )"
+        assert canonical_lookup_key(a) == canonical_lookup_key(b) == "محمد"
+
+    def test_strips_leading_verb_rawa(self):
+        from app.narrator_registry import canonical_lookup_key
+        # Verb prefix should be stripped — "روى ابن بكير" -> "ابن بكير"
+        with_verb = "رَوَى اِبْنُ بُكَيْرٍ"
+        without_verb = "اِبْنُ بُكَيْرٍ"
+        assert canonical_lookup_key(with_verb) == canonical_lookup_key(without_verb)
+
+    def test_strips_leading_verb_haddathana(self):
+        from app.narrator_registry import canonical_lookup_key
+        a = "حدثنا محمد بن يعقوب"
+        b = "محمد بن يعقوب"
+        assert canonical_lookup_key(a) == canonical_lookup_key(b)
+
+    def test_does_not_strip_qaala(self):
+        """قال is too common as a real attribution; do not auto-strip."""
+        from app.narrator_registry import canonical_lookup_key, _LEADING_VERB_PREFIXES
+        assert "قال " not in _LEADING_VERB_PREFIXES
+        assert "وقال " not in _LEADING_VERB_PREFIXES
+
+    def test_does_not_collapse_to_empty(self):
+        """A name that is JUST a leading verb should keep the verb (no name to extract)."""
+        from app.narrator_registry import canonical_lookup_key
+        # The strip is guarded: if stripping produces an empty result, the
+        # original is kept. Post-normalize "روى" becomes "روي" (alef-maksura
+        # → yeh under normalize_arabic). The leading-verb prefix list contains
+        # "روي " (with trailing space), which doesn't match a bare "روي" with
+        # no following text — so no strip happens here either way.
+        result = canonical_lookup_key("روى")
+        assert result  # non-empty
+        assert "روي" in result
+
+    def test_lookup_canonical_key_resolves_imam_baqir(self):
+        """The exact case the user reported: AI-emitted Abi Jafar inline form
+        should resolve to a canonical Abi Jafar entry."""
+        from app.narrator_registry import NarratorRegistry
+        narrators = {
+            "9": {
+                "canonical_name_ar": "أَبِي جَعْفَرٍ ( عليه السلام )",
+                "canonical_name_en": "",
+                "role": "imam",
+                "variants_ar": [],
+                "disambiguation_context": None,
+            },
+        }
+        path = _create_registry_file(narrators)
+        try:
+            r = NarratorRegistry(path)
+            # AI form should now resolve via canonical_key fallback
+            ai_form = "أَبِي جَعْفَرٍ عَلَيْهِ السَّلَامُ"
+            assert r.resolve(ai_form) == 9
+            # Canonical-key lookup directly returns the same thing
+            assert 9 in r.lookup_canonical_key(ai_form)
+        finally:
+            os.unlink(path)
+
+    def test_lookup_canonical_key_resolves_with_verb_prefix(self):
+        """A leading verb in the AI-emitted name should not block resolution."""
+        from app.narrator_registry import NarratorRegistry
+        narrators = {
+            "100": {
+                "canonical_name_ar": "اِبْنُ بُكَيْرٍ",
+                "canonical_name_en": "Ibn Bukayr",
+                "role": "narrator",
+                "variants_ar": [],
+                "disambiguation_context": None,
+            },
+        }
+        path = _create_registry_file(narrators)
+        try:
+            r = NarratorRegistry(path)
+            # AI emitted "رَوَى اِبْنُ بُكَيْرٍ" — verb prefix should be stripped
+            assert r.resolve("رَوَى اِبْنُ بُكَيْرٍ") == 100
+        finally:
+            os.unlink(path)
+
