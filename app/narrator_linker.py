@@ -96,6 +96,33 @@ def strip_html(text: str) -> str:
     return SPAN_PATTERN.sub("", text)
 
 
+def _reconstruct_chain_text_from_parts(verse: Verse) -> Optional[str]:
+    """Reconstruct chain text from a verse's existing narrator_chain.parts.
+
+    Used by extract_isnad_text as the idempotent path: when a verse's
+    chain was extracted on a prior run, it lives in narrator_chain.parts
+    (with verse.text[0] already truncated to matn). Concatenating the
+    parts' text fields recovers the original chain text.
+
+    Returns None if no usable parts are present (i.e. fresh data — the
+    caller should fall through to the regex path).
+    """
+    chain = getattr(verse, "narrator_chain", None)
+    if chain is None:
+        return None
+    parts = getattr(chain, "parts", None)
+    if not parts:
+        return None
+    pieces = []
+    for p in parts:
+        text = getattr(p, "text", None) or ""
+        if text:
+            pieces.append(text)
+    if not pieces:
+        return None
+    return "".join(pieces)
+
+
 def extract_isnad_text(verse: Verse, use_undiacritized: bool = False) -> Optional[str]:
     """Extract narrator chain text from the first line of a verse.
 
@@ -103,11 +130,30 @@ def extract_isnad_text(verse: Verse, use_undiacritized: bool = False) -> Optiona
     Sets verse.narrator_chain.text to the extracted text.
 
     Returns the extracted chain text, or None if no chain found.
+
+    Idempotent: if the chain has already been extracted on a prior run
+    (verse.text[0] is matn-only, but verse.narrator_chain.parts contains
+    the previously-extracted chain), reconstructs the chain text from
+    those parts and returns it without re-modifying verse.text[0]. Without
+    this fallback, a re-run of process_all_narrators on already-processed
+    data would silently yield zero narrators and (in combination with the
+    pre-extraction folder delete) destroy all narrator profile pages.
     """
     if not verse.text or len(verse.text) < 1:
-        return None
+        # Even with no text, the chain may have been moved into parts
+        # on a prior run. Try reconstructing from parts before giving up.
+        reconstructed = _reconstruct_chain_text_from_parts(verse)
+        return reconstructed
 
     first_line = verse.text[0]
+
+    # Idempotent path: if narrator_chain already has parts (chain was
+    # extracted on a previous run), reconstruct from there. The pattern
+    # match below would fail because verse.text[0] is now the matn —
+    # without this short-circuit the function is destructive on re-run.
+    reconstructed = _reconstruct_chain_text_from_parts(verse)
+    if reconstructed:
+        return reconstructed
 
     # Try diacritized patterns first (more precise)
     text_pattern = NARRATORS_TEXT_PATTERN

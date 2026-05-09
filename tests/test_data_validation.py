@@ -51,6 +51,26 @@ def _path_to_file(path: str) -> str:
     return os.path.join(DATA_DIR, sanitised + ".json")
 
 
+def _first_narrator_id() -> int:
+    """Return the smallest numeric narrator ID present on disk.
+
+    The registry's IDs aren't dense (Phase 1 dedup removed losers, IDs
+    are never reused) so hardcoding e.g. id=1 is fragile. Tests that
+    just need "some valid narrator" should use this helper.
+    """
+    ndir = os.path.join(DATA_DIR, "people", "narrators")
+    ids = []
+    if os.path.isdir(ndir):
+        for fname in os.listdir(ndir):
+            if fname.endswith(".json"):
+                stem = fname[:-5]
+                if stem.isdigit():
+                    ids.append(int(stem))
+    if not ids:
+        raise FileNotFoundError(f"No narrator files found in {ndir}")
+    return min(ids)
+
+
 def _file_exists(path: str) -> bool:
     """Check whether a canonical path resolves to an existing JSON file."""
     return os.path.isfile(_path_to_file(path))
@@ -116,7 +136,10 @@ class TestSchemaWrapper:
         assert "verse" in data["data"]
 
     def test_narrator_file_wrapper(self):
-        data = _load_json("people/narrators/1.json")
+        # Narrator IDs aren't dense (Phase 1 dedup removed losers), so
+        # use the smallest extant ID rather than hardcoding id=1.
+        nid = _first_narrator_id()
+        data = _load_json(f"people/narrators/{nid}.json")
         assert data["kind"] == "person_content"
         assert "index" in data
         assert "data" in data
@@ -165,7 +188,8 @@ class TestUtf8Integrity:
             f"Found escaped Arabic characters: {arabic_escapes[:5]}"
 
     def test_narrator_title_has_arabic(self):
-        data = _load_json("people/narrators/1.json")
+        nid = _first_narrator_id()
+        data = _load_json(f"people/narrators/{nid}.json")
         titles = data["data"]["titles"]
         assert "ar" in titles
         assert re.search(r"[\u0600-\u06FF]", titles["ar"]), \
@@ -352,7 +376,8 @@ class TestNarratorChains:
         assert len(chain["parts"]) > 0, "Narrator chain has empty parts"
 
     def test_narrator_file_has_required_fields(self):
-        data = _load_json("people/narrators/1.json")
+        nid = _first_narrator_id()
+        data = _load_json(f"people/narrators/{nid}.json")
         assert "index" in data
         assert "kind" in data
         assert data["kind"] == "person_content"
@@ -364,16 +389,18 @@ class TestNarratorChains:
 
     def test_narrator_verse_paths_reference_real_chapters(self):
         """Verify narrator verse_paths point to chapters that exist."""
-        data = _load_json("people/narrators/1.json")["data"]
+        nid = _first_narrator_id()
+        data = _load_json(f"people/narrators/{nid}.json")["data"]
         for vpath in data.get("verse_paths", []):
             parts = vpath.rsplit(":", 1)
             chapter_path = parts[0] if len(parts) > 1 else vpath
             assert _file_exists(chapter_path), \
-                f"Narrator 1 verse_path {vpath}: chapter {chapter_path} not found"
+                f"Narrator {nid} verse_path {vpath}: chapter {chapter_path} not found"
 
     def test_narrator_subchains_ids_consistent(self):
         """Verify subchain keys match their narrator_ids arrays."""
-        data = _load_json("people/narrators/1.json")["data"]
+        nid = _first_narrator_id()
+        data = _load_json(f"people/narrators/{nid}.json")["data"]
         for key, chain_data in data.get("subchains", {}).items():
             expected_ids = [int(x) for x in key.split("-")]
             assert chain_data["narrator_ids"] == expected_ids, \
@@ -665,11 +692,20 @@ class TestDataCompleteness:
         assert len(data["chapters"]) == 8
 
     def test_narrator_count(self):
-        """Narrator count should match the canonical registry output."""
+        """Narrator count should be in a reasonable range.
+
+        The exact count fluctuates with registry dedup work and which
+        books have been processed (e.g. Phase 1 dedup removed 86
+        consolidated entries; new books bring more narrators in). Hard-
+        coding a specific value made this test break on every dedup
+        pass — switched to a sanity range that catches real regressions
+        (e.g. accidentally deleting all narrators) without breaking on
+        legitimate counts.
+        """
         data = _load_json("people/narrators/index.json")
         count = len(data["data"])
-        assert count == 4415, \
-            f"Expected 4415 narrators, got {count}"
+        assert 3000 <= count <= 6000, \
+            f"Narrator count {count} outside reasonable range [3000, 6000]"
 
     def test_narrator_index_coverage(self):
         """Every narrator ID in the index has a corresponding JSON file."""
@@ -700,13 +736,18 @@ class TestDataCompleteness:
         assert not orphans, \
             f"{len(orphans)} narrator files not in index: {orphans[:20]}"
 
-    def test_narrator_1_snapshot(self):
-        """Snapshot key properties of narrator 1."""
-        data = _load_json("people/narrators/1.json")["data"]
+    def test_narrator_snapshot(self):
+        """Snapshot key properties of an arbitrary narrator file.
+
+        Was test_narrator_1_snapshot — hardcoded id=1, broke when Phase
+        1 dedup removed it. Now picks the smallest extant narrator ID.
+        """
+        nid = _first_narrator_id()
+        data = _load_json(f"people/narrators/{nid}.json")["data"]
         assert "ar" in data["titles"]
         assert len(data["verse_paths"]) > 0
         assert len(data["subchains"]) > 0
-        assert data["path"] == "/people/narrators/1"
+        assert data["path"] == f"/people/narrators/{nid}"
 
     def test_books_json_snapshot(self):
         """Snapshot: books.json lists Quran and Al-Kafi."""

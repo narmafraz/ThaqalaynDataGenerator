@@ -147,6 +147,55 @@ class TestExtractIsnadText:
         assert verse.narrator_chain.text is not None
         assert verse.narrator_chain.parts is not None
 
+    def test_idempotent_re_extracts_from_parts(self):
+        """When the chain has already been extracted on a prior run
+        (verse.text[0] is matn-only, narrator_chain.parts contains the
+        chain), reconstruct the chain text from parts instead of returning
+        None.
+
+        Without this, a re-run of process_all_narrators on processed
+        data extracts zero chains and (combined with the pre-extraction
+        folder delete) silently destroys all narrator profile pages.
+        """
+        # Simulate "already processed" state:
+        # - verse.text[0] is just the matn
+        # - narrator_chain.parts holds the chain text in segments
+        verse = Verse()
+        verse.text = ["just the matn here"]
+        verse.narrator_chain = NarratorChain()
+        p1 = SpecialText()
+        p1.kind = "narrator"
+        p1.text = "مُحَمَّدُ بْنُ يَحْيَى"
+        p1.path = "/people/narrators/4"
+        p2 = SpecialText()
+        p2.kind = "plain"
+        p2.text = " عَنْ "
+        p3 = SpecialText()
+        p3.kind = "narrator"
+        p3.text = "أَحْمَدَ بْنِ مُحَمَّدٍ"
+        p3.path = "/people/narrators/5"
+        verse.narrator_chain.parts = [p1, p2, p3]
+
+        result = extract_isnad_text(verse)
+
+        assert result is not None
+        # Reconstructed chain text concatenates parts
+        assert "مُحَمَّدُ بْنُ يَحْيَى" in result
+        assert "عَنْ" in result
+        assert "أَحْمَدَ بْنِ مُحَمَّدٍ" in result
+        # verse.text[0] is NOT re-modified (already truncated)
+        assert verse.text[0] == "just the matn here"
+
+    def test_idempotent_skipped_when_no_parts(self):
+        """When narrator_chain has no parts AND text[0] has no chain,
+        return None (don't fabricate a result)."""
+        verse = Verse()
+        verse.text = ["just the matn here"]
+        verse.narrator_chain = NarratorChain()
+        verse.narrator_chain.parts = []
+        result = extract_isnad_text(verse)
+        assert result is None
+
 
 # ── split_narrator_names tests ─────────────────────────────────────────
 

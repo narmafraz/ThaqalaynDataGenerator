@@ -405,6 +405,66 @@ def _insert_narrator_index_registry(
     write_file("/people/narrators/index", obj)
 
 
+def _probe_chain_extraction(registry: NarratorRegistry) -> bool:
+    """Sample a few Al-Kafi verses, attempt extract_isnad_text on each.
+
+    Returns True if at least one succeeds. Returns False if every probe
+    yields None — that's the signal for the caller to abort instead of
+    destroying the narrator folder.
+
+    Probe size is small (8 verses): enough to catch the catastrophic
+    case (zero chains anywhere) without scanning the whole corpus.
+    """
+    try:
+        kafi = load_chapter("/books/complete/al-kafi")
+    except Exception as e:
+        logger.error("Probe: cannot load Al-Kafi for chain check: %s", e)
+        return False
+
+    samples = []
+    _collect_verse_samples(kafi, samples, target=8)
+    if not samples:
+        logger.error("Probe: no verses found in Al-Kafi")
+        return False
+
+    for hadith in samples:
+        try:
+            chain = extract_isnad_text(hadith, use_undiacritized=False)
+        except Exception:
+            continue
+        if chain:
+            logger.debug("Probe OK: extracted chain from sample verse")
+            return True
+
+    logger.error(
+        "Probe: %d sample verses all yielded no extractable chain. "
+        "This usually means the corpus has already been processed "
+        "(chains moved out of verse.text[0]) AND extract_isnad_text "
+        "could not reconstruct from narrator_chain.parts.", len(samples),
+    )
+    return False
+
+
+def _collect_verse_samples(node, out: list, target: int = 8) -> None:
+    """Walk a chapter tree, collect up to `target` verses into `out`."""
+    if len(out) >= target:
+        return
+    chapters = get_chapters(node)
+    if chapters:
+        for ch in chapters:
+            _collect_verse_samples(ch, out, target)
+            if len(out) >= target:
+                return
+        return
+    verses = get_verses(node)
+    if verses:
+        for v in verses:
+            if v.text and len(v.text) > 0 and v.path:
+                out.append(v)
+                if len(out) >= target:
+                    return
+
+
 def process_all_narrators(report: ProcessingReport = None):
     """Process narrators across ALL books using the canonical narrator registry.
 
@@ -429,6 +489,25 @@ def process_all_narrators(report: ProcessingReport = None):
         return
 
     logger.info("Loaded narrator registry: %d canonical narrators", registry.narrator_count)
+
+    # Pre-flight check: probe Al-Kafi for at least one extractable chain
+    # BEFORE wiping /people/narrators. Without this, running the function on
+    # already-processed data (where chains have been moved out of
+    # verse.text[0] into narrator_chain.parts and the regex finds nothing)
+    # silently destroys all narrator profile pages with no rebuild.
+    #
+    # The narrator_linker now reconstructs chain text from parts as a
+    # fallback (idempotent extract_isnad_text), so a re-run on processed
+    # data should still work — but a probe failure here means something
+    # genuinely broken upstream and we want to fail loud, not silent.
+    if not _probe_chain_extraction(registry):
+        raise RuntimeError(
+            "process_all_narrators: pre-flight chain extraction probe found "
+            "zero chains in Al-Kafi. Refusing to delete /people/narrators/ "
+            "before rebuild — that would destroy all narrator profiles. "
+            "Check that ThaqalaynData is populated and that "
+            "extract_isnad_text can read this corpus state."
+        )
 
     # Reset narrators
     delete_folder("/people/narrators")
