@@ -939,16 +939,42 @@ def validate_result(result: dict) -> List[str]:
     Returns:
         List of error strings. Empty list means validation passed.
     """
-    # Detect v4 format by presence of word_tags key alone.
-    # Do NOT check "word_analysis" not in result — both postprocess_verse() and
-    # reconstruct_fields() may inject a synthetic word_analysis stub from word_tags
-    # before validate_result() is called, making the combined check unreliable.
-    # A response is v4 if and only if it contains word_tags (authoritative).
+    # Detect v4 format. A response is v4 if:
+    #   (a) it has word_tags (legacy v4 wrapper, persisted before #5), OR
+    #   (b) it has chunks with inline arabic_text but no word_analysis with
+    #       per-word translations (current v4 wrapper — chunks are canonical).
+    # v3 is identified by the presence of word_analysis with a translation
+    # field per entry. Anything else is treated as v4.
     is_v4 = "word_tags" in result
+    if not is_v4:
+        word_analysis = result.get("word_analysis")
+        if not word_analysis or not isinstance(word_analysis, list):
+            is_v4 = True
+        else:
+            first = word_analysis[0] if word_analysis else None
+            if isinstance(first, dict) and "translation" not in first:
+                is_v4 = True
 
     # Auto-reconstruct stripped format before validating
     if "diacritized_text" not in result and ("word_analysis" in result or "word_tags" in result):
         result = reconstruct_fields(result)
+
+    # Word count anchors several index-based checks (chunk coverage,
+    # related_quran.word_end, narrator word_ranges). Source it from the
+    # LLM canonical for the format: chunks for v4, word_analysis for v3.
+    # word_tags fallback covers legacy v4 wrappers persisted before #5.
+    if is_v4:
+        chunks_for_count = result.get("chunks") or []
+        if chunks_for_count and any(c.get("arabic_text") for c in chunks_for_count if isinstance(c, dict)):
+            _word_count = sum(
+                len((c.get("arabic_text") or "").split())
+                for c in chunks_for_count
+                if isinstance(c, dict)
+            )
+        else:
+            _word_count = len(result.get("word_tags", []))
+    else:
+        _word_count = len(result.get("word_analysis", []))
 
     errors = []
 
@@ -961,9 +987,10 @@ def validate_result(result: dict) -> List[str]:
     for field_name in required_fields:
         if field_name not in result:
             errors.append(f"missing required field: {field_name}")
-    # Either word_analysis (v3) or word_tags (v4) must be present
-    if "word_analysis" not in result and "word_tags" not in result:
-        errors.append("missing required field: word_analysis or word_tags")
+    # v3 must have word_analysis. v4 carries word data via chunks[].arabic_text
+    # (validated structurally in the chunks block).
+    if not is_v4 and "word_analysis" not in result:
+        errors.append("missing required field: word_analysis")
 
     # --- diacritized_text ---
     if "diacritized_text" in result:
@@ -1119,9 +1146,8 @@ def validate_result(result: dict) -> List[str]:
                             errors.append(f"related_quran word_start < 0 for ref {ref}")
                         if we <= ws:
                             errors.append(f"related_quran word_end <= word_start for ref {ref}")
-                        word_count = len(result.get("word_analysis", result.get("word_tags", [])))
-                        if word_count and we > word_count:
-                            errors.append(f"related_quran word_end {we} exceeds word_analysis length {word_count} for ref {ref}")
+                        if _word_count and we > _word_count:
+                            errors.append(f"related_quran word_end {we} exceeds word_analysis length {_word_count} for ref {ref}")
 
     # --- isnad_matn ---
     if "isnad_matn" in result:
@@ -1170,7 +1196,6 @@ def validate_result(result: dict) -> List[str]:
                     if not isinstance(wr, list):
                         errors.append(f"narrator[{i}] word_ranges must be array")
                     else:
-                        word_count = len(result.get("word_analysis", result.get("word_tags", [])))
                         for j, rng in enumerate(wr):
                             if not isinstance(rng, dict):
                                 errors.append(f"narrator[{i}] word_ranges[{j}] must be object")
@@ -1181,8 +1206,8 @@ def validate_result(result: dict) -> List[str]:
                                 errors.append(f"narrator[{i}] word_ranges[{j}] word_start/word_end must be int")
                             elif we <= ws:
                                 errors.append(f"narrator[{i}] word_ranges[{j}] word_end ({we}) must be > word_start ({ws})")
-                            elif word_count > 0 and we > word_count:
-                                errors.append(f"narrator[{i}] word_ranges[{j}] word_end ({we}) exceeds word_analysis length ({word_count})")
+                            elif _word_count > 0 and we > _word_count:
+                                errors.append(f"narrator[{i}] word_ranges[{j}] word_end ({we}) exceeds word_analysis length ({_word_count})")
 
     # --- translations ---
     if "translations" in result:
@@ -1235,7 +1260,6 @@ def validate_result(result: dict) -> List[str]:
         elif len(result["chunks"]) == 0:
             errors.append("chunks must have at least 1 entry")
         else:
-            word_count = len(result.get("word_analysis", result.get("word_tags", [])))
             chunk_required_fields = ("chunk_type", "arabic_text", "word_start", "word_end", "translations")
             for i, chunk in enumerate(result["chunks"]):
                 if not isinstance(chunk, dict):
@@ -1251,8 +1275,8 @@ def validate_result(result: dict) -> List[str]:
                 if isinstance(ws, int) and isinstance(we, int):
                     if we <= ws:
                         errors.append(f"chunks[{i}] word_end ({we}) must be greater than word_start ({ws})")
-                    if we > word_count:
-                        errors.append(f"chunks[{i}] word_end ({we}) exceeds word_analysis length ({word_count})")
+                    if we > _word_count:
+                        errors.append(f"chunks[{i}] word_end ({we}) exceeds word_analysis length ({_word_count})")
                 # Validate chunk translations
                 if "translations" in chunk:
                     if not isinstance(chunk["translations"], dict):
@@ -1296,10 +1320,10 @@ def validate_result(result: dict) -> List[str]:
                         f"chunks[{i-1}] word_end ({prev_end})"
                     )
             last_chunk = result["chunks"][-1]
-            if isinstance(last_chunk.get("word_end"), int) and last_chunk["word_end"] != word_count:
+            if isinstance(last_chunk.get("word_end"), int) and last_chunk["word_end"] != _word_count:
                 errors.append(
                     f"last chunk word_end ({last_chunk['word_end']}) must equal "
-                    f"word_analysis length ({word_count})"
+                    f"word_analysis length ({_word_count})"
                 )
 
     # --- topics (optional field, validated if present) ---

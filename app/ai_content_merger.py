@@ -246,6 +246,17 @@ def rebuild_narrator_chain_parts_from_ai(verse: dict, ai_result: dict) -> bool:
     if not isnad_matn.get("has_chain"):
         return False
     isnad_ar = (isnad_matn.get("isnad_ar") or "").strip()
+    # isnad_ar is a Phase 2-derived field; if it was stripped from the
+    # response, rebuild it from chunks where chunk_type == "isnad". The
+    # chunks themselves are LLM-original (Phase 1) so this reconstruction
+    # is byte-exact when the chunk types are correct.
+    if not isnad_ar:
+        chunks = ai_result.get("chunks") or []
+        isnad_ar = " ".join(
+            (c.get("arabic_text") or "").strip()
+            for c in chunks
+            if isinstance(c, dict) and c.get("chunk_type") == "isnad"
+        ).strip()
     if not isnad_ar:
         return False
     narrators = isnad_matn.get("narrators") or []

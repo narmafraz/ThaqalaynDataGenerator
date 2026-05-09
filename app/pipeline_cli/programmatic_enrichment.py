@@ -579,9 +579,15 @@ def programmatic_enrich(
     ``tags``, ``content_type``, ``translations.en`` (summary + seo_question
     + key_terms), ``related_quran``, ``has_chain``, ``topics``.
 
-    Phase 2 reconstructs: ``diacritized_text``, ``word_tags``,
+    Phase 2 reconstructs: ``diacritized_text``,
     ``diacritics_status``, ``diacritics_changes``, ``isnad_matn`` (with
     narrators), ``key_phrases``, and supplements ``key_terms``.
+
+    word_tags is no longer persisted: it was a Phase 2-derived field
+    with a placeholder "N" POS tag, never consumed by Phase 3/4 or by
+    Angular. ``enrich_key_terms`` still uses a word_tags shape internally,
+    so we build it transiently from chunks but do not write it back to
+    the result.
 
     Args:
         phase1_result: Dict from Phase 1 containing the 7-field output.
@@ -620,17 +626,20 @@ def programmatic_enrich(
     chunks = result.get("chunks", [])
     has_chain = result.pop("has_chain", False)
 
-    # If Phase 1 didn't provide diacritized_text/word_tags (new format),
-    # reconstruct from chunks' arabic_text.
-    if "diacritized_text" not in result or "word_tags" not in result:
-        diacritized_text, word_tags = reconstruct_from_chunks(chunks)
+    # If Phase 1 didn't provide diacritized_text (new format), reconstruct
+    # from chunks' arabic_text. word_tags is no longer persisted — see the
+    # transient build below for enrich_key_terms.
+    if "diacritized_text" not in result:
+        diacritized_text, _ = reconstruct_from_chunks(chunks)
         result["diacritized_text"] = diacritized_text
-        result["word_tags"] = word_tags
     else:
         diacritized_text = result["diacritized_text"]
         # Ensure chunks have word_start/word_end even in legacy format
         if chunks and "word_start" not in chunks[0]:
             reconstruct_from_chunks(chunks)
+    # Drop any pre-existing word_tags from input (e.g. legacy format) — we
+    # don't persist this field anymore.
+    result.pop("word_tags", None)
 
     # If Phase 1 didn't provide isnad_matn (new format), reconstruct from chunks.
     if "isnad_matn" not in result:
@@ -687,8 +696,10 @@ def programmatic_enrich(
         result["key_phrases"] = matched_phrases
 
     # --- Key terms (merge into translations.*.key_terms) ---
-    word_tags = result.get("word_tags")
-    enriched_terms = enrich_key_terms(word_tags, word_dict)
+    # Build word_tags transiently from chunks for the key_terms extractor —
+    # this is internal scratch data and is NOT persisted on the result.
+    _, transient_word_tags = reconstruct_from_chunks(chunks)
+    enriched_terms = enrich_key_terms(transient_word_tags, word_dict)
     if enriched_terms:
         translations = result.setdefault("translations", {})
         for lang, terms_dict in enriched_terms.items():
@@ -707,7 +718,6 @@ def programmatic_enrich(
     result.setdefault("diacritized_text", arabic_text)
     result.setdefault("diacritics_status", "added")
     result.setdefault("diacritics_changes", [])
-    result.setdefault("word_tags", [])
     result.setdefault("isnad_matn", merged_isnad)
     result.setdefault("translations", {})
     result.setdefault("chunks", [])
@@ -724,16 +734,11 @@ def programmatic_enrich(
         if isinstance(lang_data, dict):
             lang_data.setdefault("key_terms", {})
 
-    # Ensure chunks[].arabic_text exists (reconstruct from word_tags if needed).
-    word_tags = result.get("word_tags", [])
-    for chunk in result.get("chunks", []):
-        if "arabic_text" not in chunk and word_tags:
-            ws = chunk.get("word_start", 0)
-            we = chunk.get("word_end", 0)
-            chunk["arabic_text"] = " ".join(
-                wt[0] if isinstance(wt, (list, tuple)) else str(wt)
-                for wt in word_tags[ws:we]
-            )
+    # In the new 7-field format, chunks always come from Phase 1 with
+    # inline arabic_text. The legacy fallback (rebuild from word_tags) has
+    # been removed alongside word_tags persistence — chunks lacking
+    # arabic_text would now be a Phase 1 LLM error and should be caught by
+    # validate_result, not silently filled in.
 
     # Diacritics_status consistency — if changes exist, can't be "added".
     status = result.get("diacritics_status", "")

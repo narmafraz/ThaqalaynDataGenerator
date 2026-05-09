@@ -554,13 +554,15 @@ class TestProgrammaticEnrichOrchestrator:
         result = programmatic_enrich(dict(SAMPLE_PHASE1), SAMPLE_REQUEST)
         assert result["diacritized_text"] == "قَالَ عَلِيُّ بْنُ إِبْرَاهِيمَ"
 
-    def test_reconstructs_word_tags_from_chunks(self):
-        """word_tags is reconstructed with placeholder POS from chunks."""
+    def test_does_not_persist_word_tags(self):
+        """word_tags is no longer persisted: it was a Phase 2-derived field
+        with a placeholder POS tag and no production consumer outside
+        Phase 2 itself. Phase 2 may build it transiently in memory for
+        enrich_key_terms, but it must not appear in the result."""
         result = programmatic_enrich(dict(SAMPLE_PHASE1), SAMPLE_REQUEST)
-        assert len(result["word_tags"]) == 4
-        assert result["word_tags"][0][0] == "قَالَ"
-        # Placeholder POS tag
-        assert result["word_tags"][0][1] == "N"
+        assert "word_tags" not in result, (
+            "word_tags should not be persisted on the result"
+        )
 
     def test_reconstructs_isnad_matn_from_chunks(self):
         """isnad_matn is built from isnad-typed chunks and has_chain."""
@@ -598,13 +600,13 @@ class TestProgrammaticEnrichOrchestrator:
         assert "عَلِيُّ" in en_kt
 
     def test_all_required_fields_present(self):
-        """Result should have all standard pipeline fields."""
+        """Result should have all standard pipeline fields. word_tags is
+        intentionally absent — see test_does_not_persist_word_tags."""
         result = programmatic_enrich(dict(SAMPLE_PHASE1), SAMPLE_REQUEST)
         expected_fields = {
             "diacritized_text",
             "diacritics_status",
             "diacritics_changes",
-            "word_tags",
             "isnad_matn",
             "translations",
             "chunks",

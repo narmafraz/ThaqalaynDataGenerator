@@ -20,7 +20,11 @@ DICT_FILENAME = "word_translations_dict_v4.json"
 def extract_unique_words(responses_dir: str) -> Dict[str, int]:
     """Scan all responses, collect unique 'word|POS' keys with frequency.
 
-    Reads both v3 (word_analysis) and v4 (word_tags) response formats.
+    Source priority (highest to lowest):
+    1. word_tags (legacy v4 wrappers persisted before #5)
+    2. word_analysis (v3)
+    3. chunks[].arabic_text (current v4 — chunks are the LLM canonical;
+       POS becomes a placeholder "N" since chunks don't carry per-word POS)
 
     Args:
         responses_dir: Path to directory containing response JSON files.
@@ -42,7 +46,7 @@ def extract_unique_words(responses_dir: str) -> Dict[str, int]:
 
         result = data.get("result", {})
 
-        # v4 format: word_tags
+        # Legacy v4 format: word_tags
         word_tags = result.get("word_tags", [])
         if word_tags:
             for entry in word_tags:
@@ -53,12 +57,27 @@ def extract_unique_words(responses_dir: str) -> Dict[str, int]:
 
         # v3 format: word_analysis
         word_analysis = result.get("word_analysis", [])
-        for entry in word_analysis:
-            if isinstance(entry, dict):
-                word = entry.get("word", "")
-                pos = entry.get("pos", "")
-                if word and pos:
-                    key = f"{word}|{pos}"
+        if word_analysis:
+            for entry in word_analysis:
+                if isinstance(entry, dict):
+                    word = entry.get("word", "")
+                    pos = entry.get("pos", "")
+                    if word and pos:
+                        key = f"{word}|{pos}"
+                        counts[key] = counts.get(key, 0) + 1
+            continue
+
+        # New v4 format: source from chunks[].arabic_text. POS is unknown
+        # at the chunk level — use the same "N" placeholder Phase 2 used
+        # for word_tags so existing dictionary keys remain consistent.
+        chunks = result.get("chunks", [])
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            text = chunk.get("arabic_text") or ""
+            for word in text.split():
+                if word:
+                    key = f"{word}|N"
                     counts[key] = counts.get(key, 0) + 1
 
     return dict(sorted(counts.items(), key=lambda x: -x[1]))

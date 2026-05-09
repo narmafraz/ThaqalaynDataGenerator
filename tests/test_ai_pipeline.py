@@ -1793,15 +1793,16 @@ class TestComputeRemaining:
 # ===================================================================
 
 def _make_v4_result(**overrides):
-    """Build a minimally valid v4 pipeline result with word_tags."""
+    """Build a minimally valid v4 pipeline result.
+
+    Internally consistent: chunks[].arabic_text whitespace-split count
+    matches chunks[].word_end - word_start, and word_tags (when present
+    for legacy reasons) has the same length.
+    """
     result = {
         "diacritized_text": "بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ",
         "diacritics_status": "validated",
         "diacritics_changes": [],
-        "word_tags": [
-            ["بِسْمِ", "PREP"],
-            ["اللَّهِ", "N"],
-        ],
         "tags": ["theology", "worship"],
         "content_type": "creedal",
         "related_quran": [],
@@ -1817,7 +1818,7 @@ def _make_v4_result(**overrides):
                 "chunk_type": "body",
                 "arabic_text": "بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ",
                 "word_start": 0,
-                "word_end": 2,
+                "word_end": 4,
                 "translations": {lang: f"Body text ({lang})" for lang in VALID_LANGUAGE_KEYS},
             },
         ],
@@ -1865,15 +1866,12 @@ class TestV4WordTags:
             f"v4 chunks-level diacritics gate should fire on undiacritized word: {errors}"
         )
 
-    def test_word_tags_not_list_of_pairs(self):
+    def test_legacy_word_tags_not_list_of_pairs_still_validated(self):
+        """Legacy v4 wrappers persisted before #5 may still carry word_tags.
+        If present, structural sanity checks still apply."""
         result = _make_v4_result(word_tags=["بِسْمِ", "N"])
         errors = validate_result(result)
         assert len(errors) > 0
-
-    def test_word_tags_empty(self):
-        result = _make_v4_result(word_tags=[])
-        errors = validate_result(result)
-        assert any("word" in e.lower() for e in errors)
 
     def test_v4_translations_text_optional(self):
         """v4 results don't require translations.*.text."""
@@ -1894,21 +1892,47 @@ class TestV4WordTags:
 
 
 class TestV4StripReconstruct:
-    """Tests for v4 strip/reconstruct with word_tags."""
+    """Tests for v4 strip/reconstruct with the new (no word_tags) format
+    and legacy (word_tags-bearing) format."""
 
-    def test_strip_removes_word_analysis_when_word_tags_present(self):
+    def test_strip_keeps_chunks_arabic_text_for_new_v4(self):
+        """New-format v4 (no word_tags). Strip should preserve chunks[].arabic_text
+        because it's Phase 1 LLM canonical."""
         result = _make_v4_result()
+        stripped = strip_redundant_fields(result)
+        assert "word_tags" not in stripped
+        assert "word_analysis" not in stripped
+        assert stripped["chunks"][0]["arabic_text"]
+
+    def test_strip_removes_word_analysis_for_legacy_word_tags(self):
+        """Legacy v4 wrappers may carry word_tags AND a word_analysis stub
+        (e.g. injected by reconstruct). Strip should remove the stub but
+        keep word_tags so validate_result on legacy data still works."""
+        result = _make_v4_result(word_tags=[
+            ["بِسْمِ", "N"],
+            ["اللَّهِ", "N"],
+            ["الرَّحْمٰنِ", "N"],
+            ["الرَّحِيمِ", "N"],
+        ])
         result["word_analysis"] = [{"word": "بِسْمِ", "pos": "PREP"}]
         stripped = strip_redundant_fields(result)
         assert "word_tags" in stripped
         assert "word_analysis" not in stripped
 
-    def test_reconstruct_builds_word_analysis_from_word_tags(self):
-        result = _make_v4_result()
-        assert "word_analysis" not in result
+    def test_reconstruct_builds_word_analysis_from_legacy_word_tags(self):
+        """Legacy responses still have word_tags. reconstruct_fields should
+        synthesize word_analysis from them — preserving the legacy path."""
+        result = _make_v4_result(word_tags=[
+            ["بِسْمِ", "PREP"],
+            ["اللَّهِ", "N"],
+            ["الرَّحْمٰنِ", "N"],
+            ["الرَّحِيمِ", "N"],
+        ])
+        # Strip word_analysis if present
+        result.pop("word_analysis", None)
         reconstructed = reconstruct_fields(result)
         assert "word_analysis" in reconstructed
-        assert len(reconstructed["word_analysis"]) == 2
+        assert len(reconstructed["word_analysis"]) == 4
         assert reconstructed["word_analysis"][0]["word"] == "بِسْمِ"
         assert reconstructed["word_analysis"][0]["pos"] == "PREP"
 

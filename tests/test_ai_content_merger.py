@@ -884,3 +884,59 @@ class TestRebuildNarratorChainPartsFromAI:
         # The unresolved one is plain
         plain_texts = [p["text"] for p in parts if p["kind"] == "plain"]
         assert any("مَجْهُولٌ" in t for t in plain_texts)
+
+    def test_rebuilds_when_isnad_ar_stripped_using_chunks(self):
+        """When isnad_ar is missing (Phase 2-derived field stripped from
+        DataSources), reconstruct it from chunks where chunk_type == 'isnad'.
+        Catches the silent regression where stripped responses fail to
+        produce clickable narrator parts."""
+        from app.ai_content_merger import rebuild_narrator_chain_parts_from_ai
+
+        verse = {"narrator_chain": {"parts": [{"kind": "plain", "text": "OLD"}]}}
+        ai_result = {
+            "isnad_matn": {
+                "has_chain": True,
+                # isnad_ar deliberately absent — stripped from DataSources
+                "narrators": [
+                    {"position": 1, "name_ar": "زُرَارَةَ", "canonical_id": 18},
+                ],
+            },
+            "chunks": [
+                {
+                    "chunk_type": "isnad",
+                    "arabic_text": "زُرَارَةَ عَنْ أَبِي جَعْفَرٍ",
+                },
+                {
+                    "chunk_type": "body",
+                    "arabic_text": "قَالَ شَيْءٌ آخَرُ",
+                },
+            ],
+        }
+        assert rebuild_narrator_chain_parts_from_ai(verse, ai_result) is True
+        parts = verse["narrator_chain"]["parts"]
+        narrator_parts = [p for p in parts if p["kind"] == "narrator"]
+        assert len(narrator_parts) == 1
+        assert narrator_parts[0]["path"] == "/people/narrators/18"
+        assert narrator_parts[0]["text"] == "زُرَارَةَ"
+
+    def test_no_rebuild_when_isnad_ar_stripped_and_no_isnad_chunk(self):
+        """When isnad_ar is stripped AND no chunk has type='isnad', the
+        rebuild can't anchor narrator positions. Bail rather than corrupt
+        existing parts."""
+        from app.ai_content_merger import rebuild_narrator_chain_parts_from_ai
+
+        original_parts = [{"kind": "plain", "text": "OLD"}]
+        verse = {"narrator_chain": {"parts": list(original_parts)}}
+        ai_result = {
+            "isnad_matn": {
+                "has_chain": True,
+                "narrators": [
+                    {"position": 1, "name_ar": "زُرَارَةَ", "canonical_id": 18},
+                ],
+            },
+            "chunks": [
+                {"chunk_type": "body", "arabic_text": "قَالَ شَيْءٌ"},
+            ],
+        }
+        assert rebuild_narrator_chain_parts_from_ai(verse, ai_result) is False
+        assert verse["narrator_chain"]["parts"] == original_parts
