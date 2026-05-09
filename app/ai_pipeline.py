@@ -1024,6 +1024,12 @@ def validate_result(result: dict) -> List[str]:
                         errors.append(f"word_analysis[{i}] word '{word['word']}' has no diacritics (must be fully diacritized)")
 
     # --- word_tags (v4 format) ---
+    # word_tags is reconstructed by Phase 2 from chunks[].arabic_text with a
+    # placeholder "N" POS tag — every entry has the same POS regardless of
+    # the word, so a POS-enum check here is tautological. Diacritics testing
+    # also belongs one level lower: chunks[].arabic_text is the Phase 1 LLM
+    # canonical and is checked directly in the chunks block below. We retain
+    # only cheap structural sanity against malformed Phase 2 output.
     if "word_tags" in result:
         if not isinstance(result["word_tags"], list):
             errors.append(f"word_tags must be array, got {type(result['word_tags']).__name__}")
@@ -1032,23 +1038,8 @@ def validate_result(result: dict) -> List[str]:
                 if not isinstance(entry, list) or len(entry) < 2:
                     errors.append(f"word_tags[{i}] must be [word, POS] pair")
                     continue
-                word_str, pos_tag = entry[0], entry[1]
-                if not isinstance(word_str, str):
+                if not isinstance(entry[0], str):
                     errors.append(f"word_tags[{i}][0] must be string")
-                if pos_tag not in VALID_POS_TAGS:
-                    errors.append(f"invalid pos in word_tags[{i}]: {pos_tag}")
-                # Validate diacritics on word (skip punctuation-only entries)
-                # Skip single-letter abbreviations (ع, ص, ج etc.)
-                if isinstance(word_str, str):
-                    _DIACRITIC_MARKS = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0670")
-                    _ARABIC_LETTER_RANGE = range(0x0621, 0x064B)
-                    _TATWEEL = "\u0640"
-                    bare = word_str.replace(_TATWEEL, "").rstrip(".")
-                    arabic_letters_only = [ch for ch in bare if ord(ch) in _ARABIC_LETTER_RANGE]
-                    is_abbreviation = len(arabic_letters_only) == 1
-                    has_arabic_letter = len(arabic_letters_only) > 0
-                    if has_arabic_letter and not is_abbreviation and not any(ch in _DIACRITIC_MARKS for ch in word_str):
-                        errors.append(f"word_tags[{i}] word '{word_str}' has no diacritics (must be fully diacritized)")
 
     # --- tags ---
     if "tags" in result:
@@ -1270,6 +1261,22 @@ def validate_result(result: dict) -> List[str]:
                                     errors.append(f"chunks[{i}] translations.{lang_key} must be string, got {type(lang_val).__name__}")
                                 elif not lang_val.strip():
                                     errors.append(f"chunks[{i}] translations.{lang_key} is empty string (likely Phase 4 batch failure)")
+                # v4 only: diacritics gate at the LLM-canonical level. v3 has
+                # the equivalent check on word_analysis above (which is itself
+                # LLM-canonical for v3), so don't double up there.
+                if is_v4:
+                    chunk_text = chunk.get("arabic_text", "")
+                    if isinstance(chunk_text, str) and chunk_text:
+                        _DIACRITIC_MARKS = set("ًٌٍَُِّْٰ")
+                        _ARABIC_LETTER_RANGE = range(0x0621, 0x064B)
+                        _TATWEEL = "ـ"
+                        for word in chunk_text.split():
+                            bare = word.replace(_TATWEEL, "").rstrip(".")
+                            arabic_letters_only = [ch for ch in bare if ord(ch) in _ARABIC_LETTER_RANGE]
+                            is_abbreviation = len(arabic_letters_only) == 1
+                            has_arabic_letter = len(arabic_letters_only) > 0
+                            if has_arabic_letter and not is_abbreviation and not any(ch in _DIACRITIC_MARKS for ch in word):
+                                errors.append(f"chunks[{i}] word '{word}' has no diacritics (must be fully diacritized)")
             # Sequential coverage checks
             first_chunk = result["chunks"][0]
             if isinstance(first_chunk.get("word_start"), int) and first_chunk["word_start"] != 0:

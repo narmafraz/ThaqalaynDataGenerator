@@ -1840,10 +1840,30 @@ class TestV4WordTags:
         errors = validate_result(result)
         assert errors == [], f"Unexpected errors: {errors}"
 
-    def test_word_tags_invalid_pos(self):
-        result = _make_v4_result(word_tags=[["بِسْمِ", "INVALID_POS"]])
+    def test_word_tags_invalid_pos_not_flagged(self):
+        """v4 word_tags POS is no longer validated — Phase 2 places a
+        placeholder "N" tag, so a POS-enum check would be tautological.
+        Invalid POS values must NOT raise errors here."""
+        result = _make_v4_result(word_tags=[
+            ["بِسْمِ", "INVALID_POS"],
+            ["اللَّهِ", "ALSO_INVALID"],
+        ])
         errors = validate_result(result)
-        assert any("POS" in e or "pos" in e.lower() for e in errors)
+        assert not any("invalid pos" in e.lower() for e in errors), (
+            f"POS should not be validated for v4 word_tags: {errors}"
+        )
+
+    def test_v4_chunk_arabic_text_diacritics_required(self):
+        """v4 routes the diacritics gate through chunks[].arabic_text — the
+        Phase 1 LLM canonical. An undiacritized word in chunk text must
+        raise an error."""
+        result = _make_v4_result()
+        # Replace the chunk's arabic_text with an undiacritized word
+        result["chunks"][0]["arabic_text"] = "بسم اللَّهِ"
+        errors = validate_result(result)
+        assert any("no diacritics" in e for e in errors), (
+            f"v4 chunks-level diacritics gate should fire on undiacritized word: {errors}"
+        )
 
     def test_word_tags_not_list_of_pairs(self):
         result = _make_v4_result(word_tags=["بِسْمِ", "N"])

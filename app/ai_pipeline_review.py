@@ -441,21 +441,40 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                 ))
             break  # Only check the first matching pattern
 
-    # --- Check 9: word_analysis/word_tags matches original Arabic text ---
-    # Note: word_analysis/word_tags may cover the FULL hadith text (including isnad chain)
-    # while request.arabic_text may only contain the matn. The AI also tokenizes
-    # differently (attaching particles like وَ, omitting parenthetical markers).
-    # We downgrade severity when word list has MORE words (expected chain
-    # inclusion) and only flag "high" when it has significantly fewer (lost content).
-    word_source = result.get("word_analysis", result.get("word_tags"))
-    if word_source and isinstance(word_source, list):
-        if word_source and isinstance(word_source[0], list):
-            # word_tags format: [[word, POS], ...]
-            reconstructed_words = [w[0] for w in word_source if isinstance(w, list) and len(w) >= 2]
-        else:
-            # word_analysis format: [{"word": ..., ...}, ...]
+    # --- Check 9: LLM-canonical Arabic matches the original request text ---
+    # For v4 the LLM canonical is chunks[].arabic_text — everything else
+    # (diacritized_text, word_tags, isnad_ar, matn_ar) is Phase 2
+    # reconstruction from chunks. Source the comparison from chunks directly
+    # so we test the LLM, not Phase 2's join. For v3, word_analysis stays
+    # the canonical and the existing path is preserved.
+    # Note: the canonical may cover the FULL hadith text (chain + matn)
+    # while request.arabic_text covers the same when the parser pre-split
+    # the chain (load_verse_request_data prepends it to verse.text). AI
+    # tokenization can also differ (attaching particles, omitting markers),
+    # so we downgrade severity for "more words" and only flag high when
+    # significantly fewer.
+    if is_v4:
+        chunks_for_check = result.get("chunks") or []
+        canonical_parts = [
+            c.get("arabic_text", "") for c in chunks_for_check
+            if isinstance(c, dict)
+        ]
+        reconstructed = " ".join(p for p in canonical_parts if p) if canonical_parts else None
+        _word_field = "chunks"
+        _word_field_idx_template = "chunks[{i}]"
+        _word_label = "chunks[].arabic_text"
+    else:
+        word_source = result.get("word_analysis")
+        if word_source and isinstance(word_source, list):
             reconstructed_words = [w.get("word", "") for w in word_source if isinstance(w, dict)]
-        reconstructed = " ".join(reconstructed_words)
+            reconstructed = " ".join(reconstructed_words)
+        else:
+            reconstructed = None
+        _word_field = "word_analysis"
+        _word_field_idx_template = "word_analysis[{i}]"
+        _word_label = "word_analysis"
+
+    if reconstructed:
         # Strip punctuation alongside diacritics for comparison — source text may
         # include trailing periods or other non-Arabic punctuation (including
         # Arabic comma U+060C, Arabic semicolon U+061B, Arabic question mark U+061F)
@@ -470,8 +489,8 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
             more_words = len(reconstructed_clean) > len(original_clean)
             # AI typically includes isnad chain → more words; or uses
             # different tokenization (attached particles) → fewer words.
-            # Only flag as high severity when word_analysis has significantly
-            # fewer words (>30% loss), suggesting content was dropped.
+            # Only flag as high severity when significantly fewer words
+            # (>30% loss), suggesting content was dropped.
             fewer_ratio = (len(original_clean) - len(reconstructed_clean)) / max(len(original_clean), 1)
             if more_words:
                 severity = "low"
@@ -479,13 +498,6 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                 severity = "high"
             else:
                 severity = "low"
-            # For v4, target "word_tags" in the fix prompt — the fix model needs the
-            # actual word_tags list (not a synthetic word_analysis stub) so it can add
-            # missing entries in [word, POS] format. The fixed word_tags will persist
-            # in the saved result (strip_redundant_fields keeps word_tags, not word_analysis).
-            # For v3, keep targeting "word_analysis" as before.
-            _word_field = "word_tags" if is_v4 else "word_analysis"
-            _word_label = "word_tags" if is_v4 else "word_analysis"
             warnings.append(ReviewWarning(
                 field=_word_field,
                 category="word_count_mismatch",
@@ -498,21 +510,23 @@ def review_result(result: dict, request: PipelineRequest) -> List[ReviewWarning]
                 ),
             ))
         elif reconstructed_clean != original_clean:
-            # Same word count but different content — find first divergence
+            # Same word count but different content — collect up to N
+            # divergences so reviewers and the fix model can see the scope
+            # rather than only the earliest one.
+            _MAX_DIVERGENCES = 10
+            divergences = 0
             for i, (rw, ow) in enumerate(zip(reconstructed_clean, original_clean)):
                 if rw != ow:
-                    # For v4, target word_tags so the fix model corrects the canonical
-                    # word list (not the synthetic stub). For v3, keep word_analysis.
-                    _word_field_idx = f"word_tags[{i}]" if is_v4 else f"word_analysis[{i}]"
-                    _word_label = "word_tags" if is_v4 else "word_analysis"
                     warnings.append(ReviewWarning(
-                        field=_word_field_idx,
+                        field=_word_field_idx_template.format(i=i),
                         category="word_text_mismatch",
                         severity="high",
                         message=f"{_word_label}[{i}] is '{rw}' but original has '{ow}'",
                         suggestion="Fix the word to match the original Arabic text.",
                     ))
-                    break
+                    divergences += 1
+                    if divergences >= _MAX_DIVERGENCES:
+                        break
 
     # --- Check 8: key_terms count parity across languages ---
     if isinstance(translations, dict):
