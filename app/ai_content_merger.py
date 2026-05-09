@@ -209,8 +209,155 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
     return ai
 
 
+def rebuild_narrator_chain_parts_from_ai(verse: dict, ai_result: dict) -> bool:
+    """Rebuild verse['narrator_chain']['parts'] using AI-side narrator data.
+
+    Why: the legacy parse pipeline (process_all_narrators) sets parts using
+    regex extraction on the raw chain text. Quality depends on the chain
+    text's diacritization and on the regex's ability to identify narrator
+    boundaries. Where it fails, the entire chain ends up as a single plain
+    part (no clickability).
+
+    The AI pipeline's Phase 2 enrichment produces a structured narrators[]
+    array with each narrator's name_ar + canonical_id (re-resolved by the
+    merger via NarratorRegistry just before this call). That's strictly
+    higher-quality structural information than the regex can produce.
+
+    This function re-derives parts from that structured data:
+    1. Iterate AI narrators in position order
+    2. For each, find name_ar in the remaining chain text and split there
+    3. Emit a plain part for the "before" segment + a narrator part with
+       the canonical_id link
+
+    For existing data where name_ar still has a leading chain verb baked
+    in (pre-D-fix responses), strip the verb prefix before search/split so
+    the verb stays in the surrounding plain segment rather than the
+    clickable narrator text.
+
+    Falls back gracefully: if any narrator's name_ar can't be located in
+    the chain, leave the existing parts unchanged. This covers AI/source
+    text mismatches, partial chain extractions, etc.
+
+    Returns True if parts were rebuilt, False otherwise.
+    """
+    isnad_matn = ai_result.get("isnad_matn", {})
+    if not isinstance(isnad_matn, dict):
+        return False
+    if not isnad_matn.get("has_chain"):
+        return False
+    isnad_ar = (isnad_matn.get("isnad_ar") or "").strip()
+    if not isnad_ar:
+        return False
+    narrators = isnad_matn.get("narrators") or []
+    if not narrators:
+        return False
+
+    # If verse doesn't have a narrator_chain block yet, set up the structure.
+    chain = verse.get("narrator_chain") or {}
+    if not isinstance(chain, dict):
+        return False
+
+    # Lazy-import to avoid circular imports + reuse the same verb-strip
+    # logic as the registry lookup.
+    from app.narrator_registry import _LEADING_VERB_PREFIXES
+    from app.arabic_normalization import normalize_arabic
+
+    def _strip_leading_verb_preserve_diacritics(name: str) -> str:
+        """Strip a leading chain verb from a (potentially diacritized) name.
+
+        We can't use canonical_lookup_key here — that returns the
+        normalized form, which won't be findable in the original
+        diacritized chain text. Instead, normalize just enough to detect
+        the verb prefix, then chop the corresponding number of chars from
+        the original.
+        """
+        if not name:
+            return name
+        normalized = normalize_arabic(name)
+        for prefix in _LEADING_VERB_PREFIXES:
+            if normalized.startswith(prefix):
+                # Walk the original char-by-char in lockstep with the
+                # normalized; stop when normalized has consumed `len(prefix)`
+                # characters.
+                target = len(prefix)
+                consumed = 0
+                idx = 0
+                while idx < len(name) and consumed < target:
+                    nch = normalize_arabic(name[idx])
+                    if nch:
+                        consumed += len(nch)
+                    idx += 1
+                stripped = name[idx:].lstrip()
+                if stripped:
+                    return stripped
+        return name
+
+    # Build new parts list.
+    new_parts: List[dict] = []
+    remaining = isnad_ar
+
+    # Validate first: make sure every narrator name can be found in the chain.
+    # If any can't, bail and leave existing parts untouched.
+    sentinel = remaining
+    cleaned_names: List[tuple] = []  # (clean_name, canonical_id)
+    for n in narrators:
+        if not isinstance(n, dict):
+            return False
+        name_ar = (n.get("name_ar") or "").strip()
+        if not name_ar:
+            return False
+        clean_name = _strip_leading_verb_preserve_diacritics(name_ar).strip()
+        if not clean_name:
+            return False
+        # Try the cleaned name first; fall back to the original surface form
+        # in case the verb-strip removed too much (defense in depth).
+        if clean_name in sentinel:
+            idx = sentinel.find(clean_name)
+            sentinel = sentinel[idx + len(clean_name):]
+            cleaned_names.append((clean_name, n.get("canonical_id")))
+        elif name_ar in sentinel:
+            idx = sentinel.find(name_ar)
+            sentinel = sentinel[idx + len(name_ar):]
+            cleaned_names.append((name_ar, n.get("canonical_id")))
+        else:
+            # Can't locate this narrator in the chain — bail.
+            return False
+
+    # All narrators located in order; build the parts list.
+    for clean_name, canonical_id in cleaned_names:
+        idx = remaining.find(clean_name)
+        if idx == -1:
+            # Should not happen given the validation above, but be defensive.
+            return False
+        before = remaining[:idx]
+        if before:
+            new_parts.append({"kind": "plain", "text": before})
+        if canonical_id is not None:
+            new_parts.append({
+                "kind": "narrator",
+                "path": f"/people/narrators/{canonical_id}",
+                "text": clean_name,
+            })
+        else:
+            # No canonical ID — render as plain (no clickable link)
+            new_parts.append({"kind": "plain", "text": clean_name})
+        remaining = remaining[idx + len(clean_name):]
+
+    # Anything left after the last narrator (e.g. " قَالَ")
+    if remaining:
+        new_parts.append({"kind": "plain", "text": remaining})
+
+    chain["parts"] = new_parts
+    # Drop redundant text — same optimization the legacy path does
+    if "text" in chain:
+        chain["text"] = None
+    verse["narrator_chain"] = chain
+    return True
+
+
 def merge_ai_into_verse(verse: dict, ai_lookup: Dict[str, dict]) -> bool:
-    """If verse's path matches ai_lookup, set verse['ai'] to lean content.
+    """If verse's path matches ai_lookup, set verse['ai'] to lean content
+    AND rebuild verse['narrator_chain']['parts'] from AI narrators.
 
     Returns True if AI content was merged.
     """
@@ -224,6 +371,13 @@ def merge_ai_into_verse(verse: dict, ai_lookup: Dict[str, dict]) -> bool:
 
     lean_ai = build_lean_ai_content(ai_data["result"], ai_data["ai_attribution"])
     verse["ai"] = lean_ai
+
+    # Rebuild narrator_chain.parts from the (canonical-id-resolved) AI data.
+    # This overrides the legacy parse pipeline's regex-based linking with
+    # the higher-quality structured AI output. Safe to call on any verse —
+    # silently no-ops if AI lacks a chain or narrator names can't be located.
+    rebuild_narrator_chain_parts_from_ai(verse, ai_data["result"])
+
     return True
 
 

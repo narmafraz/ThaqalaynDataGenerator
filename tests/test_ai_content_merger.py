@@ -786,3 +786,101 @@ class TestResolveCanonicalIds:
 
         # Already had the same canonical_id, so count should be 0
         assert count == 0
+
+
+class TestRebuildNarratorChainPartsFromAI:
+    """Tests for the AI-side narrator_chain.parts rebuilder."""
+
+    def test_rebuilds_simple_chain(self):
+        """Three-narrator chain with Ibn Bukayr (verb-prefixed in old data),
+        Zurara, and Imam Baqir (inline-honorific). All resolve to canonical IDs.
+        Verifies the verb is stripped into the surrounding plain segment."""
+        from app.ai_content_merger import rebuild_narrator_chain_parts_from_ai
+
+        verse = {"narrator_chain": {"parts": [{"kind": "plain", "text": "OLD"}]}}
+        ai_result = {
+            "isnad_matn": {
+                "has_chain": True,
+                "isnad_ar": "3859 - وَ رَوَى اِبْنُ بُكَيْرٍ عَنْ زُرَارَةَ عَنْ أَبِي جَعْفَرٍ عَلَيْهِ اَلسَّلاَمُ قَالَ",
+                "narrators": [
+                    {"position": 1, "name_ar": "رَوَى اِبْنُ بُكَيْرٍ", "canonical_id": 56},
+                    {"position": 2, "name_ar": "زُرَارَةَ", "canonical_id": 18},
+                    {"position": 3, "name_ar": "أَبِي جَعْفَرٍ عَلَيْهِ اَلسَّلاَمُ", "canonical_id": 9},
+                ],
+            },
+        }
+        rebuilt = rebuild_narrator_chain_parts_from_ai(verse, ai_result)
+        assert rebuilt is True
+        parts = verse["narrator_chain"]["parts"]
+        # Verify three narrator parts exist with correct paths
+        narrator_parts = [p for p in parts if p["kind"] == "narrator"]
+        assert len(narrator_parts) == 3
+        assert narrator_parts[0]["path"] == "/people/narrators/56"
+        # The verb prefix "رَوَى" must NOT be inside the clickable narrator text
+        assert "رَوَى" not in narrator_parts[0]["text"]
+        assert narrator_parts[1]["path"] == "/people/narrators/18"
+        assert narrator_parts[2]["path"] == "/people/narrators/9"
+
+    def test_skips_when_no_chain(self):
+        from app.ai_content_merger import rebuild_narrator_chain_parts_from_ai
+        verse = {"narrator_chain": {"parts": [{"kind": "plain", "text": "X"}]}}
+        ai_result = {"isnad_matn": {"has_chain": False, "narrators": []}}
+        assert rebuild_narrator_chain_parts_from_ai(verse, ai_result) is False
+        # Original parts preserved
+        assert verse["narrator_chain"]["parts"] == [{"kind": "plain", "text": "X"}]
+
+    def test_skips_when_narrators_empty(self):
+        from app.ai_content_merger import rebuild_narrator_chain_parts_from_ai
+        verse = {"narrator_chain": {"parts": [{"kind": "plain", "text": "X"}]}}
+        ai_result = {
+            "isnad_matn": {
+                "has_chain": True,
+                "isnad_ar": "some chain text",
+                "narrators": [],
+            },
+        }
+        assert rebuild_narrator_chain_parts_from_ai(verse, ai_result) is False
+
+    def test_skips_when_narrator_not_in_chain(self):
+        """Defense in depth: if the AI emitted a name that does not appear
+        in the chain text, do not corrupt parts. Leave existing intact."""
+        from app.ai_content_merger import rebuild_narrator_chain_parts_from_ai
+        original_parts = [{"kind": "plain", "text": "OLD"}]
+        verse = {"narrator_chain": {"parts": list(original_parts)}}
+        ai_result = {
+            "isnad_matn": {
+                "has_chain": True,
+                "isnad_ar": "زُرَارَةَ عَنْ أَبِي جَعْفَرٍ",
+                "narrators": [
+                    # This name is not present in isnad_ar
+                    {"position": 1, "name_ar": "نَجْم بن طالب", "canonical_id": 999},
+                ],
+            },
+        }
+        assert rebuild_narrator_chain_parts_from_ai(verse, ai_result) is False
+        # Original parts unchanged
+        assert verse["narrator_chain"]["parts"] == original_parts
+
+    def test_unresolved_narrator_renders_as_plain(self):
+        """A narrator whose canonical_id is None should render as plain
+        (no clickable link), but still segment the chain correctly."""
+        from app.ai_content_merger import rebuild_narrator_chain_parts_from_ai
+        verse = {"narrator_chain": {"parts": []}}
+        ai_result = {
+            "isnad_matn": {
+                "has_chain": True,
+                "isnad_ar": "زُرَارَةَ عَنْ مَجْهُولٌ",
+                "narrators": [
+                    {"position": 1, "name_ar": "زُرَارَةَ", "canonical_id": 18},
+                    {"position": 2, "name_ar": "مَجْهُولٌ", "canonical_id": None},
+                ],
+            },
+        }
+        assert rebuild_narrator_chain_parts_from_ai(verse, ai_result) is True
+        parts = verse["narrator_chain"]["parts"]
+        narrator_parts = [p for p in parts if p["kind"] == "narrator"]
+        assert len(narrator_parts) == 1  # Only the resolved one
+        assert narrator_parts[0]["path"] == "/people/narrators/18"
+        # The unresolved one is plain
+        plain_texts = [p["text"] for p in parts if p["kind"] == "plain"]
+        assert any("مَجْهُولٌ" in t for t in plain_texts)
