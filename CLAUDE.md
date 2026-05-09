@@ -28,6 +28,8 @@ uv sync --all-extras
 
 ## Running the Data Generator
 
+> **See also:** [`../Thaqalayn/docs/COMMANDS.md`](../Thaqalayn/docs/COMMANDS.md) — comprehensive ecosystem-wide command reference (scrapers, AI pipeline, monitoring, salvage, deployment). The notes below cover this repo's specifics.
+
 ```bash
 # Using PowerShell script (sets up environment automatically)
 ./add_data.ps1
