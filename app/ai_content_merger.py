@@ -92,12 +92,15 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
     """Restructure AI pipeline result into lean zero-duplication format.
 
     Transformations:
-    - v3 (word_analysis present): Remove diacritized_text and chunks[].arabic_text
-      (both can be reconstructed from word_analysis via word_start/word_end)
-    - v4 (word_tags only): Preserve diacritized_text and chunks[].arabic_text
-      (cannot be reconstructed from word_tags alone)
-    - Copy word_tags as-is when present (v4 format)
-    - Remove: isnad_matn.isnad_ar and isnad_matn.matn_ar (unused in UI)
+    - v3 (word_analysis present): keep word_analysis. Drop diacritized_text
+      and chunks[].arabic_text — both reconstruct from word_analysis ranges.
+    - v4 (no word_analysis): keep chunks[].arabic_text (Phase 1 LLM
+      canonical, must be preserved per persistence rule). Drop
+      diacritized_text and word_tags — both are Phase 2-derived from
+      chunks and have no consumer (Angular reads chunks[].arabic_text
+      directly; word_tags has placeholder POS and no UI consumer).
+    - Remove: isnad_matn.isnad_ar and isnad_matn.matn_ar (unused in UI;
+      reconstructable from chunks where chunk_type=="isnad")
     - Remove: diacritics_changes (unused in UI)
     - Remove: similar_content_hints (unused in UI, no longer generated in v4)
     - Dissolve translations[lang] into: summaries[lang], key_terms[lang], seo_questions[lang]
@@ -127,18 +130,15 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
     if has_word_analysis:
         ai["word_analysis"] = result["word_analysis"]
 
-    # Copy word_tags as-is (v4 format: [word, POS] pairs, no per-word translations)
-    if "word_tags" in result:
-        ai["word_tags"] = result["word_tags"]
+    # v4 (no word_analysis): word_tags and diacritized_text are Phase 2
+    # derived. Both reconstruct from chunks[].arabic_text. Neither has a
+    # production consumer that wouldn't be better served by reading chunks
+    # directly. Drop both. v3 already drops diacritized_text below, and v3
+    # never had word_tags.
 
-    # When word_analysis is absent (v4), preserve diacritized_text since it
-    # cannot be reconstructed from word_tags alone
-    if not has_word_analysis and "diacritized_text" in result:
-        ai["diacritized_text"] = result["diacritized_text"]
-
-    # Copy chunks — only strip arabic_text when word_analysis is available
-    # (it can be reconstructed from word_analysis via word_start/word_end).
-    # For v4 (word_tags only), preserve arabic_text so the UI can display it.
+    # Copy chunks — strip arabic_text only for v3 (it can be reconstructed
+    # from word_analysis via word_start/word_end). For v4, chunks[].arabic_text
+    # IS the LLM canonical (Phase 1 produces it directly) and must be kept.
     if "chunks" in result:
         lean_chunks = []
         for chunk in result["chunks"]:
@@ -203,7 +203,9 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
     if "diacritics_status" in result:
         ai["diacritics_status"] = result["diacritics_status"]
 
-    # NOTE: diacritized_text only copied when word_analysis is absent (v4/word_tags)
+    # NOTE: diacritized_text and word_tags intentionally NOT copied — both
+    # are Phase 2-derived from chunks[].arabic_text. Angular consumers that
+    # historically read diacritized_text need a chunks-based fallback (#4).
     # NOTE: diacritics_changes intentionally NOT copied (unused in UI)
 
     return ai

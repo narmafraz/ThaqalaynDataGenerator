@@ -271,6 +271,92 @@ class TestBuildLeanAiContent:
         assert "seo_questions" not in lean
 
 
+def _sample_v4_result():
+    """A v4 pipeline result: no word_analysis, chunks[].arabic_text is the
+    LLM canonical, may or may not carry legacy word_tags."""
+    return {
+        "diacritized_text": "أَخْبَرَنَا أَبُو جَعْفَرٍ",
+        "diacritics_status": "completed",
+        "diacritics_changes": [],
+        # Legacy responses may still carry word_tags — Phase 2 stopped
+        # persisting it post-#5 but old corpus files have it.
+        "word_tags": [
+            ["أَخْبَرَنَا", "N"],
+            ["أَبُو", "N"],
+            ["جَعْفَرٍ", "N"],
+        ],
+        "tags": ["theology"],
+        "content_type": "narrative",
+        "topics": ["reasoning"],
+        "related_quran": [],
+        "key_phrases": [],
+        "isnad_matn": {
+            "has_chain": True,
+            "isnad_ar": "أَخْبَرَنَا أَبُو جَعْفَرٍ",
+            "matn_ar": "",
+            "narrators": [
+                {"position": 1, "name_ar": "أَبُو جَعْفَرٍ", "canonical_id": 9,
+                 "role": "transmitter", "identity_confidence": "certain"},
+            ],
+        },
+        "translations": {
+            "en": {"summary": "EN summary", "key_terms": {}, "seo_question": "EN q?"},
+        },
+        "chunks": [
+            {
+                "chunk_type": "isnad",
+                "arabic_text": "أَخْبَرَنَا أَبُو جَعْفَرٍ",
+                "word_start": 0,
+                "word_end": 3,
+                "translations": {"en": "He told us, Abu Jafar"},
+            },
+        ],
+    }
+
+
+class TestBuildLeanAiContentV4:
+    """v4 lean-format guarantees. The LLM canonical for v4 is
+    chunks[].arabic_text; everything else Arabic-shaped is Phase 2 derived."""
+
+    def test_drops_diacritized_text_v4(self):
+        """diacritized_text is Phase 2 derived. Drop from v4 lean output."""
+        lean = build_lean_ai_content(_sample_v4_result(), _sample_attribution())
+        assert "diacritized_text" not in lean
+
+    def test_drops_word_tags_v4(self):
+        """word_tags is Phase 2 derived (placeholder POS) and has no consumer.
+        Drop from v4 lean output even when present in legacy responses."""
+        lean = build_lean_ai_content(_sample_v4_result(), _sample_attribution())
+        assert "word_tags" not in lean
+
+    def test_keeps_chunks_arabic_text_v4(self):
+        """chunks[].arabic_text is Phase 1 LLM canonical for v4 — must be
+        preserved per persistence rule. Angular reads it directly."""
+        lean = build_lean_ai_content(_sample_v4_result(), _sample_attribution())
+        assert lean["chunks"][0]["arabic_text"] == "أَخْبَرَنَا أَبُو جَعْفَرٍ"
+
+    def test_no_word_analysis_synthesized_v4(self):
+        """Lean v4 output has no word_analysis (it's a v3 field). Angular's
+        chunked view path reads chunks[].arabic_text instead."""
+        lean = build_lean_ai_content(_sample_v4_result(), _sample_attribution())
+        assert "word_analysis" not in lean
+
+    def test_strips_isnad_ar_matn_ar_v4(self):
+        """Same as v3: isnad_ar and matn_ar are Phase 2 derived from chunks."""
+        lean = build_lean_ai_content(_sample_v4_result(), _sample_attribution())
+        assert "isnad_ar" not in lean["isnad_matn"]
+        assert "matn_ar" not in lean["isnad_matn"]
+
+    def test_preserves_chunk_metadata_v4(self):
+        """chunk_type, word_start, word_end, translations all preserved."""
+        lean = build_lean_ai_content(_sample_v4_result(), _sample_attribution())
+        chunk = lean["chunks"][0]
+        assert chunk["chunk_type"] == "isnad"
+        assert chunk["word_start"] == 0
+        assert chunk["word_end"] == 3
+        assert chunk["translations"]["en"]
+
+
 # ─── merge_ai_into_verse ────────────────────────────────────────────────────
 
 class TestMergeAiIntoVerse:
