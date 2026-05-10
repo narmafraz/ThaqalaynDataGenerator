@@ -130,6 +130,12 @@ def build_phase1_user_message(request: PipelineRequest) -> str:
    - Multiple variants of the same concept across separate entries — pick once
      (e.g. one chip "أَوَّلِ الشَّهْرِ وَوَسَطِهِ وَآخِرِهِ" or just "أَوَّلِ الشَّهْر",
      not three chips for the three time-positions).
+   - Clausal/verbal phrases that *describe scenarios* rather than *naming concepts*:
+     prefer "مَوْتُ الزَّوْجَةِ" (death of the wife) over "الْمَرْأَةُ تَمُوتُ" (the
+     woman dies); prefer "حِصَّةُ الزَّوْجِ" (the husband's share) over "فَالْمَالُ
+     كُلُّهُ لَهُ" (then all the estate is for him). The chip strip works best
+     as a vocabulary glossary, not a sentence list — pick noun phrases that
+     name a concept, not predications that describe an event.
    Keys MUST be Arabic words/phrases with full diacritics taken from the text.
 6. "related_quran": (array) [{"ref": "surah:ayah", "relationship": "thematic"}] or []
    Only include thematic connections to Quran verses. Do not scan for explicit [S:V] refs.
