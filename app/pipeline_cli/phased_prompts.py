@@ -114,8 +114,23 @@ def build_phase1_user_message(request: PipelineRequest) -> str:
 5. "translations": {"en": {"summary": "2-3 sentences explaining the verse's meaning and significance",
                            "seo_question": "A natural question this verse answers",
                            "key_terms": {"Arabic term with diacritics": "English definition in context", ...}}}
-   key_terms: 3-8 important Arabic terms from the text with contextual English definitions.
-   Keys MUST be Arabic words with full diacritics taken from the text.
+   key_terms: a small *selective glossary* of the distinctive Arabic vocabulary in the matn —
+   the words a non-specialist reader would benefit from seeing flagged. Render in the UI
+   as chips below the summary. NOT a complete word list (that's a separate field).
+   - Pick 3-8 terms (or fewer for very short verses — don't pad to reach 8).
+   - Use multi-word phrases for compound concepts: "لَيْلَةُ الْقَدْرِ", "أَوَّلِ الصَّلَاةِ",
+     "تَكْبِيرَةِ الِافْتِتَاحِ" — one chip per concept, not split into separate words.
+   - Prefer distinctive content: legal terms, theological doctrines, ritual actions,
+     key objects/places, technical fiqh vocabulary.
+   AVOID:
+   - Narrator names (e.g. رِفَاعَة, زُرَارَة, transmission verbs like حَدَّثَنَا) — these
+     are isnad/chain content, not vocabulary from the narration's substance.
+   - Generic possessive/relational particles (لِأَبِي, إِحْدَاهُمَا, مِنْهُ, etc.) unless
+     they carry a doctrinally distinctive sense.
+   - Multiple variants of the same concept across separate entries — pick once
+     (e.g. one chip "أَوَّلِ الشَّهْرِ وَوَسَطِهِ وَآخِرِهِ" or just "أَوَّلِ الشَّهْر",
+     not three chips for the three time-positions).
+   Keys MUST be Arabic words/phrases with full diacritics taken from the text.
 6. "related_quran": (array) [{"ref": "surah:ayah", "relationship": "thematic"}] or []
    Only include thematic connections to Quran verses. Do not scan for explicit [S:V] refs.
 7. "topics": (array of 1-5 strings) Pick ONLY from this closed set of valid topic keys:
