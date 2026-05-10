@@ -99,15 +99,46 @@ def _make_valid_result(**overrides):
 
 
 def _make_valid_result_with_chain(**overrides):
-    """Build a valid result with has_chain=True and narrator data."""
+    """Build a valid result with has_chain=True and narrator data.
+
+    Internally consistent: word_analysis lists the same 8 words that the
+    chain + matn cover, and chunks' word_start/word_end + arabic_text agree
+    with that word_analysis so strip/reconstruct round-trips cleanly.
+    """
     result = _make_valid_result()
+    # Override word_analysis to actual chain + matn words so chunks align
+    chain_words = [
+        ("عَنْ", "PREP"),
+        ("أَحْمَدَ", "N"),
+        ("بْنِ", "N"),
+        ("مُحَمَّدٍ", "N"),
+        ("عَنْ", "PREP"),
+        ("أَبِي", "N"),
+        ("عَبْدِ", "N"),
+        ("اللَّهِ", "N"),
+    ]
+    matn_words = [
+        ("طَلَبُ", "N"),
+        ("الْعِلْمِ", "N"),
+        ("فَرِيضَةٌ", "N"),
+    ]
+    all_words = chain_words + matn_words
+    result["word_analysis"] = [
+        {
+            "word": w,
+            "translation": {lang: f"trans-{lang}-{i}" for lang in VALID_LANGUAGE_KEYS},
+            "pos": pos,
+        }
+        for i, (w, pos) in enumerate(all_words)
+    ]
+    result["diacritized_text"] = " ".join(w for w, _ in all_words)
     result["isnad_matn"] = {
-        "isnad_ar": "عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ عَنْ أَبِي عَبْدِ اللَّهِ عَلَيْهِ السَّلَامُ قَالَ",
+        "isnad_ar": "عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ عَنْ أَبِي عَبْدِ اللَّهِ",
         "matn_ar": "طَلَبُ الْعِلْمِ فَرِيضَةٌ",
         "has_chain": True,
         "narrators": [
             {
-                "name_ar": "أَحْمَدُ بْنُ مُحَمَّدٍ",
+                "name_ar": "أَحْمَدَ بْنِ مُحَمَّدٍ",
                 "name_en": "Ahmad ibn Muhammad",
                 "role": "narrator",
                 "position": 1,
@@ -116,7 +147,7 @@ def _make_valid_result_with_chain(**overrides):
                 "known_identity": "Ahmad ibn Muhammad al-Barqi",
             },
             {
-                "name_ar": "أَبُو عَبْدِ اللَّهِ",
+                "name_ar": "أَبِي عَبْدِ اللَّهِ",
                 "name_en": "Abu Abdillah",
                 "role": "imam",
                 "position": 2,
@@ -129,19 +160,24 @@ def _make_valid_result_with_chain(**overrides):
     result["chunks"] = [
         {
             "chunk_type": "isnad",
-            "arabic_text": "عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ",
+            "arabic_text": " ".join(w for w, _ in chain_words),
             "word_start": 0,
-            "word_end": 1,
-            "translations": {lang: f"Isnad ({lang})" for lang in VALID_LANGUAGE_KEYS},
+            "word_end": len(chain_words),
+            "translations": {lang: f"Isnad text in {lang} for the chain of narration" for lang in VALID_LANGUAGE_KEYS},
         },
         {
             "chunk_type": "body",
-            "arabic_text": "طَلَبُ الْعِلْمِ فَرِيضَةٌ",
-            "word_start": 1,
-            "word_end": 2,
-            "translations": {lang: f"Body ({lang})" for lang in VALID_LANGUAGE_KEYS},
+            "arabic_text": " ".join(w for w, _ in matn_words),
+            "word_start": len(chain_words),
+            "word_end": len(all_words),
+            "translations": {lang: f"Body text in {lang}" for lang in VALID_LANGUAGE_KEYS},
         },
     ]
+    # Update top-level translations.text to match the joined chunk text
+    full_text = " ".join(c["translations"]["en"] for c in result["chunks"])
+    for lang_data in result["translations"].values():
+        if isinstance(lang_data, dict):
+            lang_data["text"] = full_text
     result.update(overrides)
     return result
 
@@ -936,6 +972,150 @@ class TestValidateChunks:
         result["chunks"][0]["translations"]["en"] = {"text": "not a plain string"}
         errors = validate_result(result)
         assert any("chunks[0] translations.en must be string" in e for e in errors)
+
+    def test_chunk_translation_length_phase4_silent_swallow(self):
+        """Catches the Phase-4 silent-partial-output failure mode: a 1-word
+        EN translation for a 30-word AR chunk. The empty-string check above
+        only catches fully-empty translations; this catches truncations."""
+        result = _make_v4_result()
+        # Replace chunks[0] with a 30-word ar chunk and a 1-word en
+        long_ar = " ".join(["كَلِمَةٌ"] * 30)
+        result["chunks"][0]["arabic_text"] = long_ar
+        result["chunks"][0]["word_end"] = 30
+        result["chunks"][0]["translations"]["en"] = "yes"
+        errors = validate_result(result)
+        assert any("en translation length out of bounds" in e for e in errors), (
+            f"Expected length-bound error, got: {errors}"
+        )
+
+    def test_chunk_translation_length_short_chunk_lenient(self):
+        """Short chunks get loose bounds because honorific expansion
+        legitimately inflates English. A 4-word AR chunk → 20-word EN
+        (5x ratio) should NOT flag because 5x is within the 8x upper
+        bound for short chunks."""
+        result = _make_v4_result()
+        result["chunks"][0]["arabic_text"] = "أَبِالنَّبِيِّ أَمْ بِالْوَصِيِّ تُكَذِّبَانِ"
+        result["chunks"][0]["word_end"] = 4
+        result["chunks"][0]["translations"]["en"] = (
+            "Is it with the Prophet (peace be upon him and his family) "
+            "or with the Successor (peace be upon him) that you both deny?"
+        )
+        errors = validate_result(result)
+        # Should not include a length-bound error for this chunk
+        assert not any("chunks[0] en translation length out of bounds" in e for e in errors), (
+            f"Short-chunk honorific expansion should be tolerated: {errors}"
+        )
+
+    def test_chunk_type_body_starts_with_chain_verb(self):
+        """Catches LLM mis-typing: a body chunk that starts with a chain
+        transmission verb (حدثني/حدثنا/etc) should have been typed isnad."""
+        result = _make_v4_result()
+        # Add a second chunk that's mis-typed as body but starts with a chain verb
+        result["chunks"] = [
+            dict(result["chunks"][0]),
+            {
+                "chunk_type": "body",
+                "arabic_text": "حَدَّثَنِي زُرَارَةُ بْنُ أَعْيَنَ قَالَ",
+                "word_start": result["chunks"][0]["word_end"],
+                "word_end": result["chunks"][0]["word_end"] + 4,
+                "translations": {lang: f"Body text {lang}" for lang in VALID_LANGUAGE_KEYS},
+            },
+        ]
+        errors = validate_result(result)
+        assert any("starts with chain transmission verb" in e for e in errors), (
+            f"Expected chain-opener error on body chunk: {errors}"
+        )
+
+    def test_chunk_type_body_with_wa_prefix_chain_verb(self):
+        """Wa- prefix should be stripped before checking — 'وحدثني' should
+        flag the same as 'حدثني'."""
+        result = _make_v4_result()
+        result["chunks"] = [
+            dict(result["chunks"][0]),
+            {
+                "chunk_type": "body",
+                "arabic_text": "وَحَدَّثَنِي زُرَارَةُ بْنُ أَعْيَنَ قَالَ",
+                "word_start": result["chunks"][0]["word_end"],
+                "word_end": result["chunks"][0]["word_end"] + 4,
+                "translations": {lang: f"Body text {lang}" for lang in VALID_LANGUAGE_KEYS},
+            },
+        ]
+        errors = validate_result(result)
+        assert any("starts with chain transmission verb" in e for e in errors)
+
+    def test_chunk_type_isnad_with_chain_verb_does_not_flag(self):
+        """The chain-verb check fires only on non-isnad chunks. An isnad
+        chunk starting with حَدَّثَنِي is normal."""
+        result = _make_v4_result()
+        result["chunks"][0]["chunk_type"] = "isnad"
+        result["chunks"][0]["arabic_text"] = "حَدَّثَنِي زُرَارَةُ بْنُ أَعْيَنَ قَالَ"
+        result["chunks"][0]["word_end"] = 4
+        # has_chain must agree with isnad chunk presence
+        result["isnad_matn"]["has_chain"] = True
+        result["isnad_matn"]["narrators"] = [{
+            "name_ar": "زُرَارَةُ بْنُ أَعْيَنَ", "name_en": "Zurara b. A'yan",
+            "role": "narrator", "position": 1,
+            "identity_confidence": "definite", "ambiguity_note": None,
+        }]
+        errors = validate_result(result)
+        assert not any("starts with chain transmission verb" in e for e in errors)
+
+    def test_isnad_chunk_without_narrator_surface_flags(self):
+        """Catches narrator/chunk disagreement: chunk_type='isnad' but the
+        narrators[] list contains names that don't appear in the chunk text.
+        Real-world LLM error from the corpus measurement."""
+        result = _make_v4_result()
+        result["chunks"][0]["chunk_type"] = "isnad"
+        result["chunks"][0]["arabic_text"] = "زُرَارَةُ بْنُ أَعْيَنَ"
+        result["chunks"][0]["word_end"] = 3
+        result["isnad_matn"]["has_chain"] = True
+        # narrators[] has a different name than the chunk content
+        result["isnad_matn"]["narrators"] = [{
+            "name_ar": "ابْنُ بُكَيْرٍ", "name_en": "Ibn Bukayr",
+            "role": "narrator", "position": 1,
+            "identity_confidence": "definite", "ambiguity_note": None,
+        }]
+        errors = validate_result(result)
+        assert any("contains no narrator surface" in e for e in errors), (
+            f"Expected narrator-surface error: {errors}"
+        )
+
+    def test_isnad_chunk_with_matching_narrator_passes(self):
+        """The narrator-surface check should accept a chunk whose text
+        contains a normalized substring of any narrator's name_ar."""
+        result = _make_v4_result()
+        result["chunks"][0]["chunk_type"] = "isnad"
+        result["chunks"][0]["arabic_text"] = "عَنْ زُرَارَةَ بْنِ أَعْيَنَ قَالَ"
+        result["chunks"][0]["word_end"] = 4
+        result["isnad_matn"]["has_chain"] = True
+        result["isnad_matn"]["narrators"] = [{
+            "name_ar": "زُرَارَةَ بْنِ أَعْيَنَ", "name_en": "Zurara b. A'yan",
+            "role": "narrator", "position": 1,
+            "identity_confidence": "definite", "ambiguity_note": None,
+        }]
+        errors = validate_result(result)
+        assert not any("contains no narrator surface" in e for e in errors), (
+            f"Should accept matching narrator: {errors}"
+        )
+
+    def test_isnad_chunk_alif_variant_normalization(self):
+        """Alif-waṣla in chunk text vs plain alif in narrator name should
+        normalize to a match — common pattern in v4 LLM output."""
+        result = _make_v4_result()
+        result["chunks"][0]["chunk_type"] = "isnad"
+        # ٱلْحَسَنُ in chunk vs الحسن in narrator
+        result["chunks"][0]["arabic_text"] = "ٱلْحَسَنُ بْنُ سَعِيدٍ"
+        result["chunks"][0]["word_end"] = 3
+        result["isnad_matn"]["has_chain"] = True
+        result["isnad_matn"]["narrators"] = [{
+            "name_ar": "الحَسَنُ بْنُ سَعِيدٍ", "name_en": "al-Hasan b. Sa'id",
+            "role": "narrator", "position": 1,
+            "identity_confidence": "definite", "ambiguity_note": None,
+        }]
+        errors = validate_result(result)
+        assert not any("contains no narrator surface" in e for e in errors), (
+            f"Alif normalization should let chunk and narrator match: {errors}"
+        )
 
     def test_chunk_translation_empty_string(self):
         # Concrete Phase 4 batch-failure footprint: a verse that saved with

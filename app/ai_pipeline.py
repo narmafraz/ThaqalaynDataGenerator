@@ -1209,6 +1209,68 @@ def validate_result(result: dict) -> List[str]:
                             elif _word_count > 0 and we > _word_count:
                                 errors.append(f"narrator[{i}] word_ranges[{j}] word_end ({we}) exceeds word_analysis length ({_word_count})")
 
+            # Cross-check: every chunk typed "isnad" must contain at least one
+            # narrator surface from isnad_matn.narrators[]. When this fails,
+            # narrators[] doesn't describe the chunk content (LLM emitted a
+            # different chain in narrators[] than in chunks). Downstream the
+            # merger's rebuild_narrator_chain_parts_from_ai bails because no
+            # name_ar can be located in the chain text, losing clickability.
+            chunks_for_isnad_check = result.get("chunks") or []
+            narrators_list = isnad.get("narrators") or []
+            if (
+                isinstance(chunks_for_isnad_check, list)
+                and chunks_for_isnad_check
+                and isinstance(narrators_list, list)
+                and narrators_list
+            ):
+                _ALIF_VARIANTS = "أإآٱا"
+                _YA_VARIANTS = "يى"
+                _DIACRITIC_MARKS_LOCAL = set("ًٌٍَُِّْٰـ")
+
+                def _normalize_arabic(s):
+                    out = []
+                    for ch in s:
+                        if ch in _DIACRITIC_MARKS_LOCAL:
+                            continue
+                        if ch in _ALIF_VARIANTS:
+                            out.append("ا")
+                        elif ch in _YA_VARIANTS:
+                            out.append("ي")
+                        else:
+                            out.append(ch)
+                    return "".join(out)
+
+                # Build narrator-name surface set: full name_ar + first
+                # whitespace-separated word (>= 3 chars to skip particles).
+                narrator_surfaces = set()
+                for n in narrators_list:
+                    if not isinstance(n, dict):
+                        continue
+                    name = (n.get("name_ar") or "").strip()
+                    if not name:
+                        continue
+                    bare = _normalize_arabic(name)
+                    narrator_surfaces.add(bare)
+                    parts = bare.split()
+                    if parts and len(parts[0]) >= 3:
+                        narrator_surfaces.add(parts[0])
+
+                if narrator_surfaces:
+                    for ci, chunk in enumerate(chunks_for_isnad_check):
+                        if not isinstance(chunk, dict):
+                            continue
+                        if chunk.get("chunk_type") != "isnad":
+                            continue
+                        ctext = (chunk.get("arabic_text") or "").strip()
+                        if not ctext:
+                            continue
+                        bare_ctext = _normalize_arabic(ctext)
+                        if not any(surf in bare_ctext for surf in narrator_surfaces):
+                            errors.append(
+                                f"chunks[{ci}] type='isnad' contains no narrator surface from "
+                                f"isnad_matn.narrators[] — narrators[] disagrees with chunk content"
+                            )
+
     # --- translations ---
     if "translations" in result:
         if not isinstance(result["translations"], dict):
@@ -1291,6 +1353,66 @@ def validate_result(result: dict) -> List[str]:
                                     errors.append(f"chunks[{i}] translations.{lang_key} must be string, got {type(lang_val).__name__}")
                                 elif not lang_val.strip():
                                     errors.append(f"chunks[{i}] translations.{lang_key} is empty string (likely Phase 4 batch failure)")
+                # Chunk translation length sanity (en only — Phase 4 generates
+                # other languages from English, so en is the canonical quality
+                # signal). Catches Phase 4 partial-output bugs where the LLM
+                # returned a 1-word translation for a 30-word chunk. Bounds are
+                # asymmetric: short chunks get loose bounds because honorific
+                # expansion ("صلى الله عليه وآله وسلم" → "may Allah bless him
+                # and his family and grant them peace") inflates en for short
+                # ar text. Longer chunks get tighter bounds where the inflation
+                # averages out. Empty translations are caught above; non-string
+                # translations are caught by the type check above.
+                ar_text_raw = chunk.get("arabic_text")
+                ar_text_for_len = ar_text_raw.strip() if isinstance(ar_text_raw, str) else ""
+                en_raw = (chunk.get("translations") or {}).get("en")
+                en_for_len = en_raw.strip() if isinstance(en_raw, str) else ""
+                if ar_text_for_len and en_for_len:
+                    ar_w = len(ar_text_for_len.split())
+                    en_w = len(en_for_len.split())
+                    if ar_w > 0 and en_w > 0:
+                        if ar_w < 5:
+                            low_b, high_b = 0.2 * ar_w, 8.0 * ar_w
+                        else:
+                            low_b, high_b = 0.4 * ar_w, 4.0 * ar_w
+                        if en_w < low_b or en_w > high_b:
+                            ratio = en_w / ar_w
+                            errors.append(
+                                f"chunks[{i}] en translation length out of bounds: "
+                                f"{en_w} en words vs {ar_w} ar words (ratio={ratio:.2f}, "
+                                f"expected {low_b:.1f}-{high_b:.1f})"
+                            )
+                # Chunk-type plausibility: non-isnad chunks must not start with
+                # a strict chain-transmission verb (روى/حدثني/حدثنا/أخبرني/أخبرنا).
+                # When they do, the LLM mis-typed the chunk — it carries chain
+                # content but is labeled body/opening/closing. Downstream the
+                # matn-vs-isnad split produces wrong results. The check strips
+                # diacritics + alif/ya variants for robust comparison.
+                if chunk.get("chunk_type") not in (None, "isnad") and ar_text_for_len:
+                    _CHUNK_TYPE_OPENERS = {"روى", "رواه", "روي", "حدثنا", "حدثني", "اخبرنا", "اخبرني"}
+                    _ALIF_VARIANTS = "أإآٱا"
+                    _YA_VARIANTS = "يى"
+                    _DIACRITIC_MARKS_LOCAL = set("ًٌٍَُِّْٰـ")
+                    norm_chars = []
+                    for ch in ar_text_for_len:
+                        if ch in _DIACRITIC_MARKS_LOCAL:
+                            continue
+                        if ch in _ALIF_VARIANTS:
+                            norm_chars.append("ا")
+                        elif ch in _YA_VARIANTS:
+                            norm_chars.append("ي")
+                        else:
+                            norm_chars.append(ch)
+                    norm_text = "".join(norm_chars)
+                    first_word = norm_text.split()[0] if norm_text.split() else ""
+                    # Strip a leading wa- prefix so "وروى" still flags as "روى"
+                    if first_word.startswith("و") and len(first_word) > 1:
+                        first_word = first_word[1:]
+                    if first_word in _CHUNK_TYPE_OPENERS:
+                        errors.append(
+                            f"chunks[{i}] type={chunk.get('chunk_type')!r} starts with chain "
+                            f"transmission verb {first_word!r} — likely mis-typed isnad content"
+                        )
                 # v4 only: diacritics gate at the LLM-canonical level. v3 has
                 # the equivalent check on word_analysis above (which is itself
                 # LLM-canonical for v3), so don't double up there.
