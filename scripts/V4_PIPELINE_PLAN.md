@@ -1,5 +1,63 @@
 # V4 Pipeline Plan — Cost-Efficient Full Corpus Processing
 
+## Implementation status (updated 2026-05-10)
+
+This plan was largely implemented but **two of its building blocks went a
+different direction** for cost reasons. Documenting here so future work
+starts from the right baseline.
+
+**What shipped as planned:**
+- v4 prompt with chunks-canonical Arabic
+- `chunks[].translations` (11 languages) as the per-chunk translation source
+- `translations.*.text` reconstruction from chunks (now fully removed
+  from persistence — Angular reconstructs at render time)
+- Removal of `similar_content_hints`
+- `extract_unique_words()` and the `word_dictionary.py` module skeleton
+
+**What changed from this plan:**
+1. **Phase 1 prompt drops `word_tags` entirely.** The v4 plan kept the
+   LLM emitting `[word, POS]` pairs in word_tags. Each emitted POS tag
+   is a small but per-word output cost; with ~50-200 words per hadith
+   and 58K hadiths, the structured per-word emission was a meaningful
+   share of output cost. Phase 1 was simplified to chunks-only.
+   Phase 2 then reconstructs word_tags from chunks via whitespace split,
+   tagging every word with placeholder `"N"`. Net: no word_tags from
+   the LLM, no real POS data anywhere.
+2. **Corpus word dictionary (Phase 7 step 3) was never executed.**
+   `word_translations_dict_v4.json` doesn't exist. The dictionary was
+   meant to be built once by LLM-translating every unique `(word, POS)`
+   in the corpus (~$60-400). Without it, `assemble_word_analysis()`
+   has no input and isn't invoked in production. v4 verses
+   consequently have no word-by-word translation data; Angular's
+   word-by-word UI works for v3 but is dark for v4.
+3. **`enrich_key_terms` is disabled.** It depended on the corpus
+   dictionary above and is a no-op in production. Phase 1 LLM emits
+   ~6.5 quality contextual key_terms per verse on average so the
+   gap-fill it would have provided is marginal anyway. See its
+   docstring in `app/pipeline_cli/programmatic_enrichment.py` and the
+   call site (commented out) in `programmatic_enrich`.
+
+**Resurrection path** (planned for a future session, will span multiple
+sessions due to scope):
+
+1. Run `python -m app.pipeline_cli.pipeline word-dict extract` to
+   collect unique `(word, POS)` pairs across the corpus (POS will be
+   mostly `"N"` from current data; pre-#5 corpus data with real POS
+   gives better discrimination)
+2. LLM-batch-translate every unique pair once (one-shot job, $60-400)
+3. Save as `word_translations_dict_v4.json`
+4. Wire `assemble_word_analysis()` into the merger
+5. Update Angular to expose word-by-word hover translations for v4
+6. Optionally re-enable `enrich_key_terms` gap-fill (low value — likely
+   skip)
+
+**Cleanup arc (2026-05-09 → 2026-05-10):** stripped Phase 2-derivable
+fields (`diacritized_text`, `word_tags`, `isnad_matn.{isnad_ar,matn_ar}`)
+from DataSources and the merger; saves ~180 MB in ThaqalaynData. See
+recent generator commits for details.
+
+---
+
 ## Problem Statement
 
 | Metric | Current (v3) | Target (v4) |

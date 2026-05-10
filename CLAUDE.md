@@ -366,9 +366,9 @@ The pipeline generates 12 fields per hadith/verse:
 | 11 | `topics` | array | 1-5 sub-topics from `topic_taxonomy.json` |
 | 12 | `key_phrases` | array | 0-5 multi-word Arabic expressions |
 
-**v4 changes**: `word_analysis` → `word_tags` (just `[word, POS]` pairs, translations via corpus-wide dictionary). `translations.*.text` reconstructed from chunks. `similar_content_hints` removed.
+**v4 changes**: `word_analysis` → `word_tags` (originally `[word, POS]` pairs from the LLM, later dropped from Phase 1 prompt for cost reasons — Phase 2 reconstructs from chunks with placeholder "N" POS). `translations.*.text` reconstructed from chunks. `similar_content_hints` removed. Persistence of `word_tags`, `diacritized_text`, and `isnad_matn.{isnad_ar,matn_ar}` removed (all Phase 2 derivable from `chunks[].arabic_text`); they are stripped in DataSources and the merger.
 
-**Word dictionary** (`ai-pipeline-data/word_translations_dict_v4.json`): Corpus-wide `(word, POS)` → 11-language translations. Module: `app/pipeline_cli/word_dictionary.py`.
+**Word dictionary** (planned, not yet built): `ai-pipeline-data/word_translations_dict_v4.json` was meant to hold corpus-wide `(word, POS)` → 11-language translations, built once via LLM batch translation of unique pairs across all responses (~$60-400 one-time). The module `app/pipeline_cli/word_dictionary.py` implements the extraction/translation/assembly contract. As of 2026-05 the corpus translation step (V4_PIPELINE_PLAN.md Phase 7 step 3) was never executed because Phase 1 was simplified for cost reasons. The dictionary file does not exist; `enrich_key_terms` and the merger gap-fill that depend on it are disabled. See the `word_dictionary.py` module docstring for the resurrection path.
 
 **Supporting data files** (in `ThaqalaynDataSources/ai-pipeline-data/`):
 - `topic_taxonomy.json` — Two-level taxonomy: 14 Level 1 × ~5-8 Level 2 topics (~90 total)

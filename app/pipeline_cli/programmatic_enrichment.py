@@ -289,10 +289,49 @@ def enrich_key_terms(
     word_tags: Optional[List[list]],
     word_dictionary: Optional[dict],
 ) -> Dict[str, Dict[str, str]]:
-    """Derive per-language key terms from word_tags and the word dictionary.
+    """[DORMANT — disabled in production. Kept for the planned restoration.]
 
-    Selects content words (nouns, verbs, adjectives) that are not common
-    isnad particles, then looks each up in *word_dictionary*.
+    Derive per-language key terms from word_tags and a corpus-wide word
+    dictionary. Selects content words (nouns, verbs, adjectives) that are
+    not common isnad particles, then looks each up in *word_dictionary*.
+
+    HISTORY (2026-05): originally part of the v4 pipeline plan
+    (``scripts/V4_PIPELINE_PLAN.md`` Phase 3+7). Phase 1's prompt was
+    later simplified to drop word_tags from the LLM output for cost
+    reasons — at $0.20-1.00/hadith of model output, every field counted
+    and word_tags + per-word POS was the most expensive structured
+    field with the lowest per-verse value. Phase 2 now reconstructs
+    word_tags from chunks with a placeholder ``"N"`` POS (see
+    ``reconstruct_from_chunks``), and a *corpus-wide* word translation
+    dictionary (``word_translations_dict_v4.json``) was meant to be built
+    by:
+
+      1. Scanning all responses for unique (word, POS) pairs (``extract_unique_words``)
+      2. Batch-translating each unique pair once via LLM (~$60-400)
+      3. Writing the dictionary
+      4. ``assemble_word_analysis(word_tags, dict)`` would then restore
+         v3-style word-by-word translations at zero per-verse cost
+      5. Angular would expose word-level hover translations for v4
+
+    That dictionary was never built. ``word_translations_dict_v4.json``
+    does not exist on disk and ``load_v4_dictionary()`` returns ``{}``.
+    The currently-loaded ``word_dictionary.json`` is a small (29-entry)
+    *Phase 1 prompt glossary*, not the corpus dictionary this function
+    expects, so even when this function is called the lookup misses
+    every word.
+
+    PRESENT STATE: the call site in :func:`programmatic_enrich` is
+    disabled. This function is preserved as a reference contract for
+    when the corpus dictionary is built.
+
+    PRIMARY FUTURE USE: when the dictionary lands the primary consumer
+    is :func:`app.pipeline_cli.word_dictionary.assemble_word_analysis`
+    (restoring per-word translations to v4 — what the v3 UI uses for
+    hover popups). ``enrich_key_terms`` is a *secondary* user — it would
+    fill gaps in Phase 1 LLM-emitted ``translations.lang.key_terms``,
+    but the LLM produces 6+ contextual key_terms per verse on average
+    so the gap-fill is marginal. Likely worth dropping at that point
+    in favour of just trusting Phase 1 for key_terms.
 
     Args:
         word_tags: List of ``[word, POS]`` pairs from v4 pipeline output.
@@ -695,24 +734,34 @@ def programmatic_enrich(
     if "key_phrases" not in result or not result["key_phrases"]:
         result["key_phrases"] = matched_phrases
 
-    # --- Key terms (merge into translations.*.key_terms) ---
-    # Build word_tags transiently from chunks for the key_terms extractor —
-    # this is internal scratch data and is NOT persisted on the result.
-    _, transient_word_tags = reconstruct_from_chunks(chunks)
-    enriched_terms = enrich_key_terms(transient_word_tags, word_dict)
-    if enriched_terms:
-        translations = result.setdefault("translations", {})
-        for lang, terms_dict in enriched_terms.items():
-            lang_data = translations.setdefault(lang, {})
-            if isinstance(lang_data, dict):
-                existing_kt = lang_data.get("key_terms")
-                if not existing_kt or not isinstance(existing_kt, dict):
-                    lang_data["key_terms"] = terms_dict
-                else:
-                    # Merge — Phase 2 fills gaps, doesn't overwrite.
-                    for ar_term, trans in terms_dict.items():
-                        if ar_term not in existing_kt:
-                            existing_kt[ar_term] = trans
+    # --- Key terms (DORMANT — see enrich_key_terms docstring) ---
+    # The Phase 2 key_terms gap-fill is currently disabled. It depends on a
+    # corpus-wide word translation dictionary (`word_translations_dict_v4.json`)
+    # that was planned in scripts/V4_PIPELINE_PLAN.md Phase 7 step 3 but never
+    # built. Even with a dictionary built, the gap-fill would be marginal —
+    # Phase 1 LLM emits ~6.5 contextually-meaningful key_terms per verse and
+    # leaves no gaps to fill in 500/500 sampled responses (audited 2026-05-10).
+    #
+    # Phase 1's translations.{lang}.key_terms is the sole production source
+    # of key_terms. The merger preserves it as-is. To re-enable Phase 2
+    # gap-fill, build the corpus dictionary (see word_dictionary.py) and
+    # uncomment the block below.
+    #
+    # _, transient_word_tags = reconstruct_from_chunks(chunks)
+    # enriched_terms = enrich_key_terms(transient_word_tags, word_dict)
+    # if enriched_terms:
+    #     translations = result.setdefault("translations", {})
+    #     for lang, terms_dict in enriched_terms.items():
+    #         lang_data = translations.setdefault(lang, {})
+    #         if isinstance(lang_data, dict):
+    #             existing_kt = lang_data.get("key_terms")
+    #             if not existing_kt or not isinstance(existing_kt, dict):
+    #                 lang_data["key_terms"] = terms_dict
+    #             else:
+    #                 # Merge — Phase 2 fills gaps, doesn't overwrite.
+    #                 for ar_term, trans in terms_dict.items():
+    #                     if ar_term not in existing_kt:
+    #                         existing_kt[ar_term] = trans
 
     # Ensure all 12 fields are present with sensible defaults.
     result.setdefault("diacritized_text", arabic_text)

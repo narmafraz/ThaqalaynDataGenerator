@@ -1,9 +1,43 @@
-"""Word dictionary management for v4 pipeline.
+"""Word dictionary management for v4 pipeline. [DORMANT INFRASTRUCTURE]
 
 Extracts unique (word, POS) pairs from corpus responses, translates them
 once via LLM, and assembles full word_analysis from word_tags + dictionary.
 
 This eliminates per-hadith word translation — the biggest cost driver in v3.
+
+STATUS (2026-05): the corpus translation step (step 3 in V4_PIPELINE_PLAN.md
+Phase 7) was never executed because Phase 1 prompt was simplified to drop
+word_tags emission for cost reasons. As a result:
+
+  - extract_unique_words(): WORKS — but Phase 2's reconstructed word_tags
+    all carry placeholder POS "N", so the resulting (word|N) keys lose the
+    discrimination that real POS would provide. Pre-#5 corpus data with
+    real POS in word_tags still yields good (word|POS) keys.
+  - load_v4_dictionary(): WORKS — but word_translations_dict_v4.json
+    doesn't exist on disk yet so it returns {}.
+  - assemble_word_analysis(): WORKS — but is only invoked from tests
+    (production never assembles word_analysis for v4 verses; Angular
+    has no v4 word-by-word UI as a result).
+  - find_missing_words(), build_translation_prompt(),
+    save_v4_dictionary(): WORK — these would be the resurrection path:
+    extract → find_missing → build_prompt → call LLM → save dict.
+
+To resurrect (planned for a future session):
+
+  1. Build the corpus dictionary by translating every (word, POS) once
+     via LLM batch. Estimate ~$60-400 depending on the model.
+  2. Wire `assemble_word_analysis(word_tags, dict)` into the merger so
+     v4 responses get per-word translations attached at merge time
+     (zero per-verse cost).
+  3. Update Angular to expose word-by-word hover translations for v4
+     (the v3 UI already does this via word_analysis).
+  4. Optionally re-enable enrich_key_terms gap-fill in
+     programmatic_enrichment.py (see its docstring for caveats).
+
+Currently this module is preserved as the contract for that work.
+The CLI `python -m app.pipeline_cli.pipeline word-dict ...`
+subcommands still wire into these functions for ad-hoc dictionary
+building.
 """
 
 import json
