@@ -74,9 +74,15 @@ _HONORIFIC_SUFFIX_PATTERNS = [
         r"\s+رضي الله عنها\s*$",
         r"\s+رحمه الله\s*$",
         r"\s+رحمه الله تعالي\s*$",
-        # Tahdhib's "may Allah strengthen him" preamble decoration
-        r"\s+ايده الله\s*$",
-        r"\s+ايده الله تعالي\s*$",
+        # Note: "أيده الله [تعالى]" is NOT stripped here, even though it
+        # looks like an honorific. Removing it from "الشيخ أيده الله
+        # تعالى" produces ckey "الشيخ" which collides with a different
+        # registry entry — a real narrator referred to as "الشيخ
+        # (عليه السلام)" in al-Kafi. Tahdhib's standalone "الشيخ أيده
+        # الله تعالى" preamble is handled instead by the per-book
+        # preamble strip in narrator_linker._BOOK_PREAMBLE_PATTERNS,
+        # which peels the entire phrase before chain extraction so it
+        # never reaches the resolver as a candidate name.
         # Trailing standalone "ع"/"ره"/"ص" abbreviations (after parenthetical strip)
         r"\s+ع\s*$",
         r"\s+ره\s*$",

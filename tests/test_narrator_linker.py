@@ -405,6 +405,21 @@ class TestStripBookPreamble:
         peeled = _strip_book_preamble(line, "tahdhib-al-ahkam")
         assert peeled.startswith("عَنْ"), peeled
 
+    def test_tahdhib_standalone_sheikh_ayyadahu(self):
+        """The bare "الشيخ أيده الله تعالى" (no "ما أخبرني به" prefix) must
+        also be peeled — without this, it slips through to the splitter
+        and the resolver mis-links it to a different "الشيخ" registry
+        entry (the al-Kafi Imam reference)."""
+        line = "اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ مُحَمَّدِ بْنِ يَحْيَى قَالَ matn"
+        peeled = _strip_book_preamble(line, "tahdhib-al-ahkam")
+        assert peeled.startswith("عَنْ"), peeled
+
+    def test_istibsar_standalone_sheikh_ayyadahu(self):
+        """al-Istibsar uses the same Tusi formula as Tahdhib."""
+        line = "اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"
+        peeled = _strip_book_preamble(line, "al-istibsar")
+        assert peeled.startswith("عَنْ"), peeled
+
     def test_istibsar_meta_isnad(self):
         line = "فَأَمَّا مَا رَوَاهُ اَلْحُسَيْنُ بْنُ سَعِيدٍ عَنْ matn"
         peeled = _strip_book_preamble(line, "al-istibsar")

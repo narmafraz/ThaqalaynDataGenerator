@@ -385,12 +385,19 @@ class TestTrailingJunkStripping:
         clean = "أَبِي جَعْفَرٍ"
         assert canonical_lookup_key(layered) == canonical_lookup_key(clean)
 
-    def test_strips_inline_ayyadahu_allah(self):
-        """Tahdhib's "may Allah strengthen him" honorific."""
+    def test_does_not_strip_inline_ayyadahu_allah(self):
+        """Tahdhib's "may Allah strengthen him" must NOT be stripped at the
+        resolver layer — stripping it from "الشيخ أيده الله تعالى" produces
+        ckey "الشيخ", which collides with a different registry entry (an
+        Imam called "the Sheikh" in al-Kafi). This phrase is handled
+        instead by the per-book preamble strip in narrator_linker."""
         from app.narrator_registry import canonical_lookup_key
         a = "اَلشَّيْخُ أَيَّدَهُ اللَّهُ تَعَالَى"
         b = "الشيخ"
-        assert canonical_lookup_key(a) == canonical_lookup_key(b)
+        # Different ckeys — a retains the honorific.
+        assert canonical_lookup_key(a) != canonical_lookup_key(b)
+        # And ckey for a still includes "ايده الله" tokens.
+        assert "ايده الله" in canonical_lookup_key(a)
 
     def test_strips_abbreviated_paren_honorifics(self):
         """Abbreviated forms (ع), (ره), (ص) common in older typesetting."""

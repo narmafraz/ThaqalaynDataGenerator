@@ -160,10 +160,21 @@ _BOOK_PREAMBLE_PATTERNS = {
     "tahdhib-al-ahkam": [
         re.compile(r"^\s*ما أخبرني به الشيخ أيده الله(?:\s+تعالى)?\s+"),
         re.compile(r"^\s*أخبرني به الشيخ أيده الله(?:\s+تعالى)?\s+"),
+        # Standalone "الشيخ أيده الله [تعالى]" without the "ما أخبرني به"
+        # prefix — Tahdhib's editorial reference to al-Mufid as the source
+        # of the chain. Must be peeled here, not via honorific-suffix strip
+        # in the resolver: stripping "أيده الله تعالى" alone collapses the
+        # candidate to ckey "الشيخ" which collides with a different
+        # registered narrator (an Imam referred to as "the Sheikh" in
+        # al-Kafi).
+        re.compile(r"^\s*الشيخ أيده الله(?:\s+تعالى)?\s+"),
         re.compile(r"^\s*فأما ما رواه\s+"),
         re.compile(r"^\s*ما رواه\s+"),
     ],
     "al-istibsar": [
+        re.compile(r"^\s*ما أخبرني به الشيخ أيده الله(?:\s+تعالى)?\s+"),
+        re.compile(r"^\s*أخبرني به الشيخ أيده الله(?:\s+تعالى)?\s+"),
+        re.compile(r"^\s*الشيخ أيده الله(?:\s+تعالى)?\s+"),
         re.compile(r"^\s*فأما ما رواه\s+"),
         re.compile(r"^\s*ما رواه\s+"),
     ],
