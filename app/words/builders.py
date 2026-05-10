@@ -1,0 +1,567 @@
+"""Page builders for the per-word JSON output.
+
+Produces two kinds of pages:
+
+- **Surface pages** (`/words/surfaces/{surface}.json`) — lightweight,
+  one per unique surface form in the corpus. Contains the surface's
+  occurrence paths + a pointer to its lemma page (lazy-loaded by UI).
+
+- **Lemma pages** (`/words/lemmas/{lemma}.json`) — heavier, one per
+  unique lemma. Contains root, paradigm, cross-references to external
+  lexicons (Lane's, QAC, Wiktextract). LLM-synthesized content fields
+  (definitions, translations, etymology) are left as ``None`` here and
+  filled in by a separate LLM phase in a future session.
+
+This module does NO LLM calls — output is deterministic from CAMeL
+Tools + pre-downloaded source indexes. Safe to run unattended.
+
+Lookup keys across sources:
+- ``corpus_surfaces``: Arabic NFC keys (from corpus extraction).
+- ``qac_lemma_index``: Arabic UTF-8 keys (lemmas from QAC v0.4).
+- ``wiktextract_summary``: Arabic NFC keys (Wiktionary headwords).
+- ``lanes_orth_index``: **Buckwalter-encoded** keys (Perseus quirk).
+  We build an Arabic-keyed reverse map in :func:`build_lanes_arabic_index`
+  using CAMeL's bw2ar mapper.
+"""
+from __future__ import annotations
+
+import functools
+import logging
+import re
+from typing import Any, Dict, List, Optional, Tuple
+
+from .morphology import (
+    POS_TRANSLATION_TO_OURS,
+    analyze,
+    extract_lemma,
+    extract_root,
+    generate_paradigm,
+    get_best_analysis,
+    paradigm_by_role,
+)
+from .normalize import normalize_for_match, slug
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Lane's (Perseus Buckwalter) → Arabic NFC helpers
+# ---------------------------------------------------------------------------
+
+# Perseus uses standard Buckwalter PLUS a small extension set:
+# - `^` appears as a marker we strip (purpose unclear; possibly Perseus's
+#   own annotation for shadda placement or a tag we can't decode).
+# - Digits like ``1`` appear positionally in some entries.
+# - We strip these before applying CAMeL's bw2ar mapper.
+_PERSEUS_EXTRA_CHARS = re.compile(r"[\^0-9]")
+
+
+@functools.lru_cache(maxsize=1)
+def _get_bw2ar():
+    """Lazy CAMeL Tools Buckwalter→Arabic mapper."""
+    from camel_tools.utils.charmap import CharMapper
+    return CharMapper.builtin_mapper("bw2ar")
+
+
+def perseus_bw_to_arabic(bw: str) -> str:
+    """Convert a Perseus-encoded Buckwalter string to NFC Arabic.
+
+    Strips Perseus-specific extension chars (``^``, digits) then applies
+    CAMeL Tools' bw2ar mapper. The result is NFC-normalized via :func:`slug`.
+
+    Best-effort: the output may still contain rare unmapped characters
+    where the Perseus encoding is ambiguous; we don't try to recover those.
+    """
+    if not bw:
+        return ""
+    stripped = _PERSEUS_EXTRA_CHARS.sub("", bw)
+    mapper = _get_bw2ar()
+    try:
+        ar = mapper.map_string(stripped)
+    except Exception:
+        return ""
+    return slug(ar)
+
+
+def build_lanes_arabic_index(
+    orth_index: Dict[str, List[str]],
+) -> Dict[str, List[str]]:
+    """Reverse-map Lane's orth_index from Buckwalter keys to Arabic NFC.
+
+    Multiple Buckwalter spellings can collapse to the same Arabic form
+    after stripping diacritics, so values are accumulated as lists.
+    """
+    out: Dict[str, List[str]] = {}
+    for bw_key, entry_ids in orth_index.items():
+        ar_key = perseus_bw_to_arabic(bw_key)
+        if not ar_key:
+            continue
+        out.setdefault(ar_key, []).extend(entry_ids)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Canonical diacritized lemma derivation
+# ---------------------------------------------------------------------------
+
+# Citation-form role per POS family. For verbs the citation form is the
+# past 3ms ("he said"); for nouns the singular nominative indefinite.
+# Adjectives and adverbs follow the noun convention. Other POS just use
+# the analyzer's diac field if any.
+_CITATION_ROLE_BY_POS_FAMILY = {
+    "verb": "past_3ms",
+    # Nouns/adjectives — paradigm_by_role doesn't tag singular forms with
+    # roles by default; we fall back to picking the first form when this
+    # is the case.
+}
+
+
+@functools.lru_cache(maxsize=20000)
+def canonical_diacritized_lemma(lex: str, pos: str = "verb") -> str:
+    """Return the canonical diacritized form of a lemma (citation form).
+
+    For verbs, this is past 3ms (e.g., ``قَالَ`` for the root ق-و-ل).
+    For nouns and adjectives, returns the first generated form, since
+    CAMeL's role-tagging doesn't cover noun citation forms cleanly.
+    For unknown/unanalyzable lemmas, returns the input ``lex`` as-is.
+
+    LRU-cached so repeated lookups during a batch run are O(1).
+
+    Args:
+        lex: Undiacritized lemma (``lex`` field from CAMeL analysis).
+        pos: CAMeL POS (e.g., "verb", "noun", "adj").
+
+    Returns:
+        NFC-normalized diacritized lemma string. Falls back to ``slug(lex)``
+        if the paradigm generator produces nothing.
+    """
+    if not lex:
+        return ""
+    base_pos = _strip_pos_dot_suffix(pos) or "verb"
+
+    if base_pos == "verb":
+        # Find the past_3ms entry in the role-tagged paradigm.
+        for entry in paradigm_by_role(lex, pos=base_pos):
+            if entry.get("role") == "past_3ms":
+                d = entry.get("diacritized")
+                if d:
+                    return slug(d)
+        # If past_3ms missing (rare), fall back to any tagged form.
+        roles = paradigm_by_role(lex, pos=base_pos)
+        if roles:
+            d = roles[0].get("diacritized")
+            if d:
+                return slug(d)
+    else:
+        # Nouns/adj: just take the first generated diac.
+        raw = generate_paradigm(lex, pos=base_pos)
+        for entry in raw:
+            d = entry.get("diac")
+            if d:
+                return slug(d)
+
+    return slug(lex)
+
+
+# ---------------------------------------------------------------------------
+# WordPageBuilder
+# ---------------------------------------------------------------------------
+
+class WordPageBuilder:
+    """Builds surface + lemma page dicts using pre-loaded source data.
+
+    Hold this once per build run and call ``build_surface`` / ``build_lemma``
+    in a loop. Source-index lookups are O(1) dict access; the heavy work
+    is CAMeL Tools morphological analysis on the surface forms.
+
+    Attributes:
+        corpus_surfaces: Mapping NFC surface → ``{count, paths[]}`` from
+            :func:`corpus_extract.extract_corpus_surface_set`.
+        qac_lemma_index: Mapping QAC lemma (UTF-8 Arabic) → ``{lemma, root,
+            pos, occurrences[]}``. From ``quranic-arabic-corpus/lemma_index.json``.
+        wiktextract_summary: Mapping Arabic NFC → ``{entry_count, pos_tags,
+            has_etymology, sense_count}``. From ``wiktextract-arabic/summary_index.json``.
+        lanes_arabic_index: Mapping Arabic NFC → list of Lane's entry IDs.
+            Built via :func:`build_lanes_arabic_index` from the raw orth_index.
+    """
+
+    def __init__(
+        self,
+        corpus_surfaces: Optional[Dict[str, Dict]] = None,
+        qac_lemma_index: Optional[Dict[str, Dict]] = None,
+        wiktextract_summary: Optional[Dict[str, Dict]] = None,
+        lanes_arabic_index: Optional[Dict[str, List[str]]] = None,
+    ):
+        self.corpus_surfaces = corpus_surfaces or {}
+        self.qac_lemma_index = qac_lemma_index or {}
+        self.wiktextract_summary = wiktextract_summary or {}
+        self.lanes_arabic_index = lanes_arabic_index or {}
+        # Normalized-form reverse indexes for fuzzy lookups across the
+        # three external sources (each uses a slightly different
+        # diacritization convention, so we also look up by the
+        # alif/ya-unified, diacritic-stripped key).
+        self._qac_normalized = _build_normalized_index(self.qac_lemma_index)
+        self._wikt_normalized = _build_normalized_index(self.wiktextract_summary)
+        self._lanes_normalized = _build_normalized_list_index(self.lanes_arabic_index)
+        # Corpus normalized index — different sources diacritize lemmas
+        # differently, and even within the corpus the same word may
+        # appear in two slightly different diacritization variants
+        # across verses. The normalized fallback unions counts.
+        self._corpus_normalized = _build_normalized_corpus_index(
+            self.corpus_surfaces
+        )
+
+    # ---- surface page -----------------------------------------------------
+
+    def build_surface(self, surface: str) -> Dict:
+        """Build a surface-page dict for one diacritized surface form.
+
+        Output shape:
+            {
+              "surface": "وَقَالَ",
+              "slug": "وَقَالَ",  # NFC
+              "occurrence_count": int,
+              "occurrence_paths": [list of /books/... paths],
+              "morphology": {
+                "lemma": "قَالَ",
+                "lemma_slug": "قَالَ",
+                "root": "ل.و.ق" or null,
+                "pos": "V" or null,
+                "pos_camel": "verb" or null,  # raw CAMeL pos
+                "clitics": {"prc0", "prc1", "prc2", "prc3", "enc0"}  # any present
+              } | null,  # null if unanalyzable
+              "lemma_link": "/words/lemmas/قَالَ" | null,
+            }
+
+        ``occurrence_paths`` come from the corpus surface set. If the
+        surface isn't in the corpus set we still build a page but with
+        zero occurrences.
+        """
+        key = slug(surface)
+        corpus_entry = self.corpus_surfaces.get(key, {})
+        analysis = get_best_analysis(key)
+
+        morph: Optional[Dict] = None
+        lemma_slug: Optional[str] = None
+        if analysis and _is_useful_analysis(analysis):
+            lex = analysis.get("lex")
+            pos_camel = analysis.get("pos") or ""
+            # Canonical diacritized lemma — same slug the lemma page uses.
+            lemma_slug = (
+                canonical_diacritized_lemma(lex, pos_camel) if lex else None
+            )
+            morph = {
+                "lex": lex,
+                "lemma_slug": lemma_slug,
+                "root": analysis.get("root") or None,
+                "pos": POS_TRANSLATION_TO_OURS.get(pos_camel),
+                "pos_camel": pos_camel or None,
+                "clitics": _extract_clitics(analysis),
+            }
+
+        return {
+            "surface": surface,
+            "slug": key,
+            "occurrence_count": corpus_entry.get("count", 0),
+            "occurrence_paths": corpus_entry.get("paths", []),
+            "morphology": morph,
+            "lemma_link": f"/words/lemmas/{lemma_slug}" if lemma_slug else None,
+        }
+
+    # ---- lemma page -------------------------------------------------------
+
+    def build_lemma(self, lemma: str, pos_hint: str = "verb") -> Dict:
+        """Build a lemma-page dict for one diacritized lemma form.
+
+        Output shape:
+            {
+              "lemma": "قَالَ",
+              "slug": "قَالَ",
+              "root": "ل.و.ق" | null,
+              "pos": "V" | null,
+              "pos_camel": "verb" | null,
+              "paradigm": [
+                {"role": "past_3ms", "form": "قَالَ", "diacritized": "قَالَ",
+                 "in_corpus": bool, "count": int | null}, ...
+              ],
+              "frequency_in_corpus": int,  # sum across paradigm forms
+              "cross_references": {
+                "qac": {"found": bool, "lemma_key": ..., "root": ..., "pos": ...,
+                        "occurrence_count": int},
+                "wiktextract": {"found": bool, "entry_count": int, "pos_tags": [...]},
+                "lanes": {"found": bool, "entry_ids": [...]},
+              },
+              "translations": null,    # filled by LLM phase
+              "definition": null,      # filled by LLM phase
+              "etymology": null,       # filled by LLM phase
+            }
+
+        ``pos_hint`` tells CAMeL Tools which POS to run the generator
+        against (defaults to verb; pass "noun" for nouns, etc.). The
+        analyzer is run on the lemma itself to detect the actual POS;
+        the hint is only used by the paradigm generator.
+        """
+        key = slug(lemma)
+        # Get authoritative POS/root from analyzing the lemma form itself.
+        # The "lex" returned will often equal lemma_slug.
+        analysis = get_best_analysis(key)
+        pos_camel: Optional[str] = analysis.get("pos") if analysis else None
+        root = analysis.get("root") if analysis else None
+        pos_label = POS_TRANSLATION_TO_OURS.get(pos_camel) if pos_camel else None
+
+        # If analyzer disagrees with hint, prefer analyzer's POS for
+        # the paradigm generator (better fidelity).
+        gen_pos = _strip_pos_dot_suffix(pos_camel) or pos_hint
+
+        # CAMeL's generator wants the undiacritized "lex" form. The
+        # analyzer's ``lex`` is the proper key — fall back to NFC slug
+        # if no analysis.
+        gen_lemma = (analysis.get("lex") if analysis else None) or key
+        paradigm_raw = paradigm_by_role(gen_lemma, pos=gen_pos)
+
+        paradigm: List[Dict] = []
+        total_freq = 0
+        for entry in paradigm_raw:
+            form_key = entry.get("form")
+            corpus_hit = self._lookup_corpus_form(form_key) if form_key else None
+            count = corpus_hit.get("count") if corpus_hit else None
+            in_corpus = corpus_hit is not None
+            if in_corpus and count:
+                total_freq += count
+            paradigm.append({
+                "role": entry.get("role"),
+                "form": form_key,
+                "diacritized": entry.get("diacritized"),
+                "in_corpus": in_corpus,
+                "count": count,
+                "asp": entry.get("asp"),
+                "per": entry.get("per"),
+                "gen": entry.get("gen"),
+                "num": entry.get("num"),
+            })
+
+        return {
+            "lemma": lemma,
+            "slug": key,
+            "root": root,
+            "pos": pos_label,
+            "pos_camel": pos_camel,
+            "paradigm": paradigm,
+            "frequency_in_corpus": total_freq,
+            "cross_references": {
+                "qac": self._lookup_qac(key, gen_lemma),
+                "wiktextract": self._lookup_wiktextract(key, gen_lemma),
+                "lanes": self._lookup_lanes(key, gen_lemma),
+            },
+            "translations": None,
+            "definition": None,
+            "etymology": None,
+        }
+
+    # ---- corpus lookup ----------------------------------------------------
+
+    def _lookup_corpus_form(self, form: str) -> Optional[Dict]:
+        """Look up a surface form in the corpus, direct or normalized.
+
+        Falls back to the normalized index if the exact diacritized
+        form isn't present, which is common: CAMeL Tools' generator
+        and the corpus chunks sometimes use different diacritization
+        conventions for the same word (e.g. ``قالَ`` vs ``قَالَ``).
+        """
+        if not form:
+            return None
+        hit = self.corpus_surfaces.get(form)
+        if hit:
+            return hit
+        n = normalize_for_match(form)
+        if not n:
+            return None
+        return self._corpus_normalized.get(n)
+
+    # ---- cross-reference lookups ------------------------------------------
+
+    def _lookup_qac(self, lemma_diac: str, lemma_lex: str) -> Dict:
+        """Look up lemma in the Quranic Arabic Corpus.
+
+        QAC lemma keys are UTF-8 Arabic with idiosyncratic partial
+        diacritization (e.g., ``قالَ`` not ``قَالَ``). Try direct match
+        first, then a normalized (diacritics-stripped + alif/ya unified)
+        fallback.
+        """
+        entry, matched_key = _lookup_with_fallback(
+            self.qac_lemma_index, self._qac_normalized, lemma_diac, lemma_lex
+        )
+        if entry:
+            occurrences = entry.get("occurrences", [])
+            return {
+                "found": True,
+                "lemma_key": matched_key,
+                "root": entry.get("root"),
+                "pos": entry.get("pos"),
+                "occurrence_count": len(occurrences),
+            }
+        return {"found": False}
+
+    def _lookup_wiktextract(self, lemma_diac: str, lemma_lex: str) -> Dict:
+        """Look up lemma in the Wiktextract Arabic summary index."""
+        entry, _matched = _lookup_with_fallback(
+            self.wiktextract_summary, self._wikt_normalized, lemma_lex, lemma_diac
+        )
+        if entry:
+            return {
+                "found": True,
+                "entry_count": entry.get("entry_count", 0),
+                "pos_tags": entry.get("pos_tags", []),
+                "has_etymology": entry.get("has_etymology", False),
+                "sense_count": entry.get("sense_count", 0),
+            }
+        return {"found": False}
+
+    def _lookup_lanes(self, lemma_diac: str, lemma_lex: str) -> Dict:
+        """Look up lemma in the Arabic-keyed Lane's index."""
+        # Direct match first.
+        for key in (lemma_diac, lemma_lex):
+            if not key:
+                continue
+            entry_ids = self.lanes_arabic_index.get(key)
+            if entry_ids:
+                return {"found": True, "entry_ids": entry_ids}
+        # Normalized fallback.
+        for key in (lemma_diac, lemma_lex):
+            if not key:
+                continue
+            n = normalize_for_match(key)
+            entry_ids = self._lanes_normalized.get(n)
+            if entry_ids:
+                return {"found": True, "entry_ids": entry_ids}
+        return {"found": False}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# CAMeL clitic fields. ``prcN`` are proclitics (e.g., wa-, fa-, bi-, al-);
+# ``encN`` are enclitics (e.g., -hu, -hum). Empty string == no clitic.
+_CLITIC_FIELDS = ("prc0", "prc1", "prc2", "prc3", "enc0", "enc1")
+
+
+def _extract_clitics(analysis: Dict) -> Dict[str, str]:
+    """Extract non-empty clitic markers from a CAMeL analysis dict.
+
+    CAMeL uses ``"0"`` for "no clitic" and ``"na"`` for "not applicable"
+    (e.g., on a totally unknown token). Both are filtered out — only
+    real proclitic/enclitic markers remain.
+    """
+    clitics: Dict[str, str] = {}
+    for f in _CLITIC_FIELDS:
+        v = analysis.get(f)
+        if v and v != "0" and v != "na":
+            clitics[f] = v
+    return clitics
+
+
+def _is_useful_analysis(analysis: Dict) -> bool:
+    """Heuristic: did CAMeL actually recognize this surface form?
+
+    CAMeL Tools doesn't raise on unrecognized input — it returns a
+    fallback analysis with ``pos="foreign"`` and ``root="FOREIGN"``
+    (or all-``None``). We treat those as no analysis.
+    """
+    pos = analysis.get("pos")
+    root = analysis.get("root")
+    if not pos and not root:
+        return False
+    if pos == "foreign" or root == "FOREIGN":
+        return False
+    return True
+
+
+_POS_DOT_SUFFIX_RE = re.compile(r"\.[a-z_]+$")
+
+
+def _strip_pos_dot_suffix(pos: Optional[str]) -> Optional[str]:
+    """Strip CAMeL's POS sub-tags (e.g., ``noun_prop`` → still ``noun_prop``;
+    ``verb.act_partic`` → ``verb``). The generator API expects the base POS.
+    """
+    if not pos:
+        return None
+    return _POS_DOT_SUFFIX_RE.sub("", pos)
+
+
+def _build_normalized_index(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a normalized-key reverse map for a dict.
+
+    Multiple entries can collapse to the same normalized key; the last
+    one wins (good enough for fuzzy lookup — these sources don't
+    enumerate every diacritization variant).
+    """
+    out: Dict[str, Any] = {}
+    for key, value in d.items():
+        n = normalize_for_match(key)
+        if n:
+            out[n] = value
+    return out
+
+
+def _build_normalized_list_index(
+    d: Dict[str, List[str]],
+) -> Dict[str, List[str]]:
+    """Build a normalized-key reverse map; concatenate values on collisions."""
+    out: Dict[str, List[str]] = {}
+    for key, value in d.items():
+        n = normalize_for_match(key)
+        if not n:
+            continue
+        out.setdefault(n, []).extend(value)
+    return out
+
+
+def _build_normalized_corpus_index(
+    corpus_surfaces: Dict[str, Dict],
+) -> Dict[str, Dict]:
+    """Normalized-key corpus index. Unions counts + paths across variants.
+
+    Multiple diacritization variants of the same surface form collapse
+    to one normalized key. We union the path lists and sum the counts
+    so a paradigm-form lookup against the normalized index returns the
+    aggregate (count, paths) across all spelling variants.
+    """
+    out: Dict[str, Dict] = {}
+    for key, value in corpus_surfaces.items():
+        n = normalize_for_match(key)
+        if not n:
+            continue
+        bucket = out.setdefault(n, {"count": 0, "paths": []})
+        bucket["count"] += value.get("count", 0)
+        bucket["paths"].extend(value.get("paths", []))
+    # De-dup + sort paths once at the end.
+    for bucket in out.values():
+        bucket["paths"] = sorted(set(bucket["paths"]))
+    return out
+
+
+def _lookup_with_fallback(
+    direct: Dict[str, Any],
+    normalized: Dict[str, Any],
+    *keys: str,
+) -> Tuple[Optional[Any], Optional[str]]:
+    """Lookup helper: try each ``keys[i]`` in direct map first, then in
+    the normalized map (via :func:`normalize_for_match`).
+
+    Returns ``(matched_value, matched_key)`` or ``(None, None)``.
+    """
+    for k in keys:
+        if not k:
+            continue
+        v = direct.get(k)
+        if v:
+            return v, k
+    for k in keys:
+        if not k:
+            continue
+        n = normalize_for_match(k)
+        v = normalized.get(n)
+        if v:
+            return v, k
+    return None, None
