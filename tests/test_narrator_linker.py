@@ -8,6 +8,9 @@ import pytest
 
 from app.models.quran import NarratorChain, SpecialText, Verse
 from app.narrator_linker import (
+    _book_slug_from_path,
+    _looks_like_isnad,
+    _strip_book_preamble,
     build_chain_parts,
     extract_isnad_text,
     link_verse_narrators,
@@ -338,6 +341,148 @@ class TestLinkVerseNarrators:
         assert 1 in canonical_ids
         # Unknown narrator gets skipped (None filtered out)
         assert len(canonical_ids) == 1
+
+
+class TestLooksLikeIsnad:
+    """The Class 2 pre-filter: detect non-isnad verses before trying to
+    extract a chain from them.
+
+    Permissive — any one chain signal in the leading window passes.
+    """
+
+    def test_real_kafi_chain_passes(self):
+        line = "مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"
+        assert _looks_like_isnad(line)
+
+    def test_saduq_father_chain_passes(self):
+        # Saduq's "my father (peace upon him) said: X told me ..." style.
+        line = "أَبِي رَحِمَهُ اَللَّهُ قَالَ حَدَّثَنِي مُحَمَّدُ بْنُ يَحْيَى"
+        assert _looks_like_isnad(line)
+
+    def test_haddathana_alone_passes(self):
+        line = "حَدَّثَنَا أَحْمَدُ بْنُ مُحَمَّدٍ matn"
+        assert _looks_like_isnad(line)
+
+    def test_faqih_narrative_quote_rejected(self):
+        # Real Faqih opener — narrative, no chain.
+        line = "مَا كَانَ فِي اَلْكِتَابِ مِنْ ذِكْرِ اَلصَّلاَةِ"
+        assert not _looks_like_isnad(line)
+
+    def test_back_reference_rejected(self):
+        # "And with this isnad he said..." — back-reference to prior chain,
+        # has no chain of its own.
+        line = "وَبِهَذَا اَلْإِسْنَادِ قَالَ كَذَا وَكَذَا"
+        assert not _looks_like_isnad(line)
+
+    def test_prophet_quote_rejected(self):
+        # "And the Messenger of Allah said..." — direct attribution, no chain.
+        line = "وَقَالَ رَسُولُ اَللَّهِ صَلَّى اَللَّهُ عَلَيْهِ وَآلِهِ"
+        assert not _looks_like_isnad(line)
+
+    def test_empty_rejected(self):
+        assert not _looks_like_isnad("")
+
+    def test_undiacritized_chain_passes_via_fallback(self):
+        # Diacritized signal patterns alone wouldn't match plain "حدثني" —
+        # the strip_tashkeel fallback covers this.
+        line = "حدثني محمد بن الحسن قال matn"
+        assert _looks_like_isnad(line)
+
+
+class TestStripBookPreamble:
+    """Per-book leading-preamble strip used to peel meta-prose wrappers
+    before chain extraction (Tahdhib's "the Sheikh, may Allah strengthen
+    him, told me..." formula being the canonical example)."""
+
+    def test_tahdhib_full_preamble(self):
+        line = "مَا أَخْبَرَنِي بِهِ اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"
+        peeled = _strip_book_preamble(line, "tahdhib-al-ahkam")
+        assert peeled.startswith("عَنْ"), peeled
+        assert len(peeled) < len(line)
+
+    def test_tahdhib_short_preamble(self):
+        line = "أَخْبَرَنِي بِهِ اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ مُحَمَّدِ بْنِ يَحْيَى قَالَ matn"
+        peeled = _strip_book_preamble(line, "tahdhib-al-ahkam")
+        assert peeled.startswith("عَنْ"), peeled
+
+    def test_istibsar_meta_isnad(self):
+        line = "فَأَمَّا مَا رَوَاهُ اَلْحُسَيْنُ بْنُ سَعِيدٍ عَنْ matn"
+        peeled = _strip_book_preamble(line, "al-istibsar")
+        assert peeled.startswith("اَلْحُسَيْنُ") or peeled.startswith("الْحُسَيْنُ"), peeled
+
+    def test_unknown_book_passthrough(self):
+        line = "anything goes here"
+        assert _strip_book_preamble(line, "some-unknown-book") == line
+
+    def test_no_preamble_match_passthrough(self):
+        line = "مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ قَالَ"
+        assert _strip_book_preamble(line, "tahdhib-al-ahkam") == line
+
+    def test_none_book_slug_passthrough(self):
+        line = "مَا أَخْبَرَنِي بِهِ اَلشَّيْخُ"
+        assert _strip_book_preamble(line, None) == line
+
+
+class TestBookSlugFromPath:
+    def test_basic_path(self):
+        assert _book_slug_from_path("/books/tahdhib-al-ahkam:1:2:3") == "tahdhib-al-ahkam"
+
+    def test_kafi_path(self):
+        assert _book_slug_from_path("/books/al-kafi:1:2:3:4") == "al-kafi"
+
+    def test_path_with_no_colon(self):
+        assert _book_slug_from_path("/books/quran") == "quran"
+
+    def test_none_path(self):
+        assert _book_slug_from_path(None) is None
+
+    def test_bare_path(self):
+        assert _book_slug_from_path("/") is None
+        assert _book_slug_from_path("") is None
+        assert _book_slug_from_path("/no-books-prefix:1:2") is None
+
+
+class TestExtractIsnadGuards:
+    """End-to-end checks that the new guards in extract_isnad_text fire."""
+
+    def test_narrative_verse_returns_none(self):
+        verse = _make_verse("مَا كَانَ فِي اَلْكِتَابِ مِنْ ذِكْرِ اَلصَّلاَةِ")
+        assert extract_isnad_text(verse) is None
+        # verse.text[0] preserved (no chain extracted)
+        assert verse.text[0].startswith("مَا كَانَ")
+
+    def test_back_reference_returns_none(self):
+        verse = _make_verse("وَبِهَذَا اَلْإِسْنَادِ قَالَ كَذَا")
+        assert extract_isnad_text(verse) is None
+
+    def test_tahdhib_preamble_peeled_then_chain_extracted(self):
+        verse = Verse()
+        verse.path = "/books/tahdhib-al-ahkam:1:2:3"
+        verse.text = [
+            "مَا أَخْبَرَنِي بِهِ اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ مُحَمَّدِ بْنِ يَحْيَى قَالَ matn-text"
+        ]
+        chain_text = extract_isnad_text(verse)
+        assert chain_text is not None
+        # Preamble peeled — no longer in chain text
+        assert "أَخْبَرَنِي بِهِ" not in chain_text
+        # Chain text should include the actual narrator
+        assert "مُحَمَّدِ بْنِ يَحْيَى" in chain_text
+
+    def test_idempotent_path_skips_guards(self):
+        """Re-running extract on a verse whose chain is already in
+        narrator_chain.parts must reconstruct the chain text without
+        being rejected by _looks_like_isnad (which would see a matn,
+        not an isnad, in verse.text[0])."""
+        verse = Verse()
+        verse.path = "/books/al-kafi:1:1:1:1"
+        verse.text = ["just-the-matn"]  # chain already moved out
+        verse.narrator_chain = NarratorChain()
+        p = SpecialText()
+        p.kind = "narrator"
+        p.text = "مُحَمَّدُ بْنُ يَحْيَى"
+        verse.narrator_chain.parts = [p]
+        result = extract_isnad_text(verse)
+        assert result == "مُحَمَّدُ بْنُ يَحْيَى"
 
 
 class TestEndingPhraseLongestMatch:

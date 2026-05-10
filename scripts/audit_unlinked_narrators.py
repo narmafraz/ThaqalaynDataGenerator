@@ -40,7 +40,12 @@ os.environ.setdefault("SOURCE_DATA_DIR", "../ThaqalaynDataSources/")
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from app.narrator_linker import split_narrator_names  # noqa: E402
+from app.narrator_linker import (  # noqa: E402
+    _book_slug_from_path,
+    _looks_like_isnad,
+    _strip_book_preamble,
+    split_narrator_names,
+)
 from app.narrator_registry import NarratorRegistry, canonical_lookup_key  # noqa: E402
 
 
@@ -89,6 +94,16 @@ def main():
                     help="Write full TSV report to this path")
     ap.add_argument("--undiacritized", action="store_true",
                     help="Use undiacritized splitter fallback (for non-Kafi books)")
+    ap.add_argument(
+        "--simulate-class2",
+        action="store_true",
+        help=(
+            "Simulate the Class 2 extractor guards (_looks_like_isnad + per-book "
+            "preamble strip) on reconstructed chain text. Approximates what the "
+            "audit would report after process_all_narrators is re-run with the "
+            "new extractor — without actually re-running it."
+        ),
+    )
     args = ap.parse_args()
 
     books_root = Path(args.data_dir).resolve() / "books"
@@ -112,6 +127,7 @@ def main():
     verses_seen = 0
     chains_seen = 0
     unresolved_total = 0
+    rejected_class2 = 0
 
     for path in iter_verse_files(books_root, args.book):
         try:
@@ -132,6 +148,19 @@ def main():
         chain_text = reconstruct_chain_text(parts)
         if not chain_text.strip():
             continue
+
+        if args.simulate_class2:
+            # Approximate the new extractor's behaviour: peel the per-book
+            # preamble (if any), then drop the verse if no chain signal
+            # remains. This mirrors what extract_isnad_text would do on a
+            # fresh re-run.
+            verse_path = verse.get("path")
+            book_slug = _book_slug_from_path(verse_path)
+            chain_text = _strip_book_preamble(chain_text, book_slug)
+            if not _looks_like_isnad(chain_text):
+                rejected_class2 += 1
+                continue
+
         chains_seen += 1
 
         # Re-split & resolve. We deliberately re-run the splitter rather than
@@ -161,6 +190,9 @@ def main():
 
     print(f"[info] scanned: verses_with_chain={verses_seen} chains_split={chains_seen} "
           f"unresolved_occurrences={unresolved_total} unique_names={len(counter)}")
+    if args.simulate_class2:
+        print(f"[info] class2-simulated: {rejected_class2} verses rejected "
+              f"(no chain signal after preamble strip)")
     print()
 
     # Top N to console
