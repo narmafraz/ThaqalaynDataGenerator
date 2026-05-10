@@ -1216,6 +1216,71 @@ class TestValidateChunks:
             f"12-narrator chain should pass: {errors}"
         )
 
+    def test_has_chain_without_isnad_chunk_flags(self):
+        """Phase 1 prompt mandates: 'If has_chain is true, the narrator
+        chain MUST be in one or more isnad chunks'. Enforce the contract:
+        has_chain=True with no chunk_type='isnad' is a structural violation."""
+        result = _make_v4_result()
+        result["isnad_matn"]["has_chain"] = True
+        result["isnad_matn"]["isnad_ar"] = "..."
+        result["isnad_matn"]["narrators"] = [{
+            "name_ar": "زُرَارَةُ", "name_en": "Zurara",
+            "role": "narrator", "position": 1,
+            "identity_confidence": "definite", "ambiguity_note": None,
+        }]
+        # All chunks typed body/opening/closing — no isnad
+        result["chunks"] = [{
+            "chunk_type": "body",
+            "arabic_text": "بِسْمِ اللَّهِ الرَّحْمٰنِ الرَّحِيمِ",
+            "word_start": 0, "word_end": 4,
+            "translations": {lang: f"Body {lang}" for lang in VALID_LANGUAGE_KEYS},
+        }]
+        errors = validate_result(result)
+        assert any(
+            "has_chain is true but no chunk has chunk_type='isnad'" in e
+            for e in errors
+        ), f"Expected has_chain↔isnad-chunk consistency error: {errors}"
+
+    def test_has_chain_with_isnad_chunk_passes(self):
+        """When has_chain=True is properly accompanied by an isnad chunk,
+        the consistency check passes."""
+        result = _make_v4_result()
+        result["isnad_matn"]["has_chain"] = True
+        result["isnad_matn"]["isnad_ar"] = "..."
+        result["isnad_matn"]["narrators"] = [{
+            "name_ar": "زُرَارَةُ", "name_en": "Zurara",
+            "role": "narrator", "position": 1,
+            "identity_confidence": "definite", "ambiguity_note": None,
+        }]
+        result["chunks"] = [
+            {
+                "chunk_type": "isnad",
+                "arabic_text": "زُرَارَةُ بْنُ أَعْيَنَ",
+                "word_start": 0, "word_end": 3,
+                "translations": {lang: f"Isnad {lang}" for lang in VALID_LANGUAGE_KEYS},
+            },
+            {
+                "chunk_type": "body",
+                "arabic_text": "قَالَ شَيْءٌ",
+                "word_start": 3, "word_end": 5,
+                "translations": {lang: f"Body {lang}" for lang in VALID_LANGUAGE_KEYS},
+            },
+        ]
+        errors = validate_result(result)
+        assert not any(
+            "no chunk has chunk_type='isnad'" in e for e in errors
+        ), f"Properly-typed isnad chunk should pass: {errors}"
+
+    def test_has_chain_false_skips_isnad_chunk_check(self):
+        """has_chain=False (no narration) skips the consistency check."""
+        result = _make_v4_result()
+        # Default fixture has has_chain=False
+        assert result["isnad_matn"]["has_chain"] is False
+        errors = validate_result(result)
+        assert not any(
+            "no chunk has chunk_type='isnad'" in e for e in errors
+        )
+
 
 # ===================================================================
 # Enum constant completeness tests

@@ -1166,6 +1166,27 @@ def validate_result(result: dict) -> List[str]:
                     errors.append("has_chain is true but isnad_ar is empty")
                 if not isnad.get("narrators"):
                     errors.append("has_chain is true but narrators is empty")
+                # Structural agreement with chunks: the Phase 1 prompt
+                # mandates "If has_chain is true, the narrator chain MUST
+                # be in one or more 'isnad' chunks" (phased_prompts.py).
+                # Enforcing the contract: when has_chain=True there must be
+                # at least one chunk with chunk_type='isnad'. Catches both
+                # the catastrophic 4_131_1 class (no isnad chunk + bogus
+                # narrators) and the milder pattern where the LLM types
+                # the chain as 'body'. ~14% of the legacy corpus has this
+                # inconsistency — those existing files stay on disk
+                # unchanged; the gate only fires on fresh generations.
+                chunks_for_chain_check = result.get("chunks") or []
+                if isinstance(chunks_for_chain_check, list) and chunks_for_chain_check:
+                    has_isnad_chunk = any(
+                        isinstance(c, dict) and c.get("chunk_type") == "isnad"
+                        for c in chunks_for_chain_check
+                    )
+                    if not has_isnad_chunk:
+                        errors.append(
+                            "has_chain is true but no chunk has chunk_type='isnad' — "
+                            "the Phase 1 prompt requires the chain to live in an isnad chunk"
+                        )
             # Chain-length sanity. 99.7% of corpus chains have ≤ 12
             # narrators; anything beyond 15 is wildly anomalous and is
             # typically the LLM populating narrators[] with matn
