@@ -394,31 +394,48 @@ class TestStripBookPreamble:
     before chain extraction (Tahdhib's "the Sheikh, may Allah strengthen
     him, told me..." formula being the canonical example)."""
 
-    def test_tahdhib_full_preamble(self):
+    def test_tahdhib_full_preamble_keeps_sheikh(self):
+        """The full preamble strips only the meta-isnad wrapper ("ما أخبرني
+        به") — the "الشيخ أيده الله تعالى" phrase that follows is left in
+        place so the resolver can attribute it to al-Mufid (id 4630)."""
         line = "مَا أَخْبَرَنِي بِهِ اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"
         peeled = _strip_book_preamble(line, "tahdhib-al-ahkam")
-        assert peeled.startswith("عَنْ"), peeled
-        assert len(peeled) < len(line)
+        # "ما أخبرني به" stripped, but Sheikh phrase preserved
+        assert "أَخْبَرَنِي بِهِ" not in peeled, peeled
+        assert peeled.startswith("اَلشَّيْخُ") or peeled.startswith("الشَّيْخُ"), peeled
 
-    def test_tahdhib_short_preamble(self):
+    def test_tahdhib_short_preamble_keeps_sheikh(self):
         line = "أَخْبَرَنِي بِهِ اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ مُحَمَّدِ بْنِ يَحْيَى قَالَ matn"
         peeled = _strip_book_preamble(line, "tahdhib-al-ahkam")
-        assert peeled.startswith("عَنْ"), peeled
+        assert "أَخْبَرَنِي بِهِ" not in peeled, peeled
+        assert peeled.startswith("اَلشَّيْخُ") or peeled.startswith("الشَّيْخُ"), peeled
 
-    def test_tahdhib_standalone_sheikh_ayyadahu(self):
-        """The bare "الشيخ أيده الله تعالى" (no "ما أخبرني به" prefix) must
-        also be peeled — without this, it slips through to the splitter
-        and the resolver mis-links it to a different "الشيخ" registry
-        entry (the al-Kafi Imam reference)."""
+    def test_tahdhib_full_preamble_with_numeric_prefix(self):
+        """Hadith-numbered entries like "70 - ما أخبرني به ..." must still
+        be peeled. Without the optional numeric-prefix handling, the
+        leading "70 - " blocks the "^\\s*ما" anchor and the wrapper is
+        left baked into the chain text."""
+        line = "70 - مَا أَخْبَرَنِي بِهِ اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ"
+        peeled = _strip_book_preamble(line, "tahdhib-al-ahkam")
+        assert "70" not in peeled, peeled
+        assert "أَخْبَرَنِي بِهِ" not in peeled, peeled
+        assert peeled.startswith("اَلشَّيْخُ") or peeled.startswith("الشَّيْخُ"), peeled
+
+    def test_tahdhib_standalone_sheikh_left_in_place(self):
+        """The bare "الشيخ أيده الله تعالى" (no "ما أخبرني به" prefix) is
+        NOT peeled — the resolver attributes it to al-Mufid via the
+        book-scoped registry entry."""
         line = "اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ مُحَمَّدِ بْنِ يَحْيَى قَالَ matn"
         peeled = _strip_book_preamble(line, "tahdhib-al-ahkam")
-        assert peeled.startswith("عَنْ"), peeled
+        # Unchanged — no preamble to peel
+        assert peeled == line
 
-    def test_istibsar_standalone_sheikh_ayyadahu(self):
+    def test_istibsar_preamble_keeps_sheikh(self):
         """al-Istibsar uses the same Tusi formula as Tahdhib."""
-        line = "اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"
+        line = "مَا أَخْبَرَنِي بِهِ اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ"
         peeled = _strip_book_preamble(line, "al-istibsar")
-        assert peeled.startswith("عَنْ"), peeled
+        assert "أَخْبَرَنِي بِهِ" not in peeled, peeled
+        assert peeled.startswith("اَلشَّيْخُ") or peeled.startswith("الشَّيْخُ"), peeled
 
     def test_istibsar_meta_isnad(self):
         line = "فَأَمَّا مَا رَوَاهُ اَلْحُسَيْنُ بْنُ سَعِيدٍ عَنْ matn"
@@ -511,7 +528,13 @@ class TestBookScopedResolution:
                 "canonical_name_ar": "الشَّيْخُ الْمُفِيدُ",
                 "canonical_name_en": "al-Shaykh al-Mufid",
                 "role": "scholar",
-                "variants_ar": ["الشَّيْخُ"],
+                "variants_ar": [
+                    "الشَّيْخُ",
+                    # Tusi's editorial honorific — must resolve when the
+                    # "ما أخبرني به" wrapper is peeled and the Sheikh
+                    # phrase is left as the first chain candidate.
+                    "الشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى",
+                ],
                 "disambiguation_context": None,
                 "disambiguation_books": ["tahdhib-al-ahkam"],
             },
@@ -541,13 +564,39 @@ class TestBookScopedResolution:
         because the entry is scoped to Tahdhib only."""
         verse = Verse()
         verse.path = "/books/al-kafi:1:1:1:1"
-        verse.text = ["وَ أَخْبَرَنِي اَلشَخُ عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"]
         # Use the diacritized form so we hit the same path
         verse.text = ["وَ أَخْبَرَنِي اَلشَّيْخُ عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"]
         ids = link_verse_narrators(verse, scoped_registry)
         # al-Mufid (200) must not appear; ahmad (300) still should
         assert 200 not in ids, f'al-Mufid leaked into al-Kafi: {ids}'
         assert 300 in ids
+
+    def test_tahdhib_wrapper_preamble_credits_mufid(self, scoped_registry):
+        """The "ما أخبرني به ..." wrapper case — wrapper stripped, Sheikh
+        phrase preserved, al-Mufid attributed. This is the case that
+        previously lost al-Mufid attribution because the preamble strip
+        peeled the whole Sheikh phrase along with the wrapper."""
+        verse = Verse()
+        verse.path = "/books/tahdhib-al-ahkam:1:2:3"
+        verse.text = [
+            "مَا أَخْبَرَنِي بِهِ اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"
+        ]
+        ids = link_verse_narrators(verse, scoped_registry)
+        assert 200 in ids, f'expected al-Mufid (200) linked, got {ids}'
+        assert 300 in ids
+
+    def test_tahdhib_numeric_prefix_wrapper_credits_mufid(self, scoped_registry):
+        """Hadith-numbered entries like "70 - ما أخبرني به ..." must also
+        credit al-Mufid (regression: previously the leading "70 - " blocked
+        the wrapper strip, leaving "ما أخبرني به الشيخ ..." as a non-
+        resolving plain chunk)."""
+        verse = Verse()
+        verse.path = "/books/tahdhib-al-ahkam:1:2:3"
+        verse.text = [
+            "70 - مَا أَخْبَرَنِي بِهِ اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"
+        ]
+        ids = link_verse_narrators(verse, scoped_registry)
+        assert 200 in ids, f'expected al-Mufid (200) linked, got {ids}'
 
 
 class TestEndingPhraseLongestMatch:

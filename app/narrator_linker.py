@@ -158,25 +158,32 @@ def _looks_like_isnad(first_line: str) -> bool:
 # strip_tashkeel for stability across diacritization variants.
 _BOOK_PREAMBLE_PATTERNS = {
     "tahdhib-al-ahkam": [
-        re.compile(r"^\s*ما أخبرني به الشيخ أيده الله(?:\s+تعالى)?\s+"),
-        re.compile(r"^\s*أخبرني به الشيخ أيده الله(?:\s+تعالى)?\s+"),
+        # Strip just the meta-isnad wrapper ("what he told me about", "and
+        # as for what was narrated"), NOT the Sheikh phrase itself. With
+        # al-Mufid (id 4630, scoped to tahdhib + istibsar) registered, any
+        # remaining "الشيخ أيده الله تعالى" / "الشيخ" candidate after the
+        # wrapper is stripped resolves through the normal resolver path.
+        #
+        # The "(?:\d+\s*[-–]\s*)?" optional prefix handles hadith-numbered
+        # entries like "70 - ما أخبرني به ...". Without it, the leading
+        # numeric prefix blocks the "^\s*ما" anchor and the wrapper isn't
+        # peeled, leaving "ما أخبرني به الشيخ" baked into the chain as a
+        # non-resolving candidate.
+        #
         # Standalone "الشيخ أيده الله [تعالى]" without the "ما أخبرني به"
-        # prefix — Tahdhib's editorial reference to al-Mufid as the source
-        # of the chain. Must be peeled here, not via honorific-suffix strip
-        # in the resolver: stripping "أيده الله تعالى" alone collapses the
-        # candidate to ckey "الشيخ" which collides with a different
-        # registered narrator (an Imam referred to as "the Sheikh" in
-        # al-Kafi).
-        re.compile(r"^\s*الشيخ أيده الله(?:\s+تعالى)?\s+"),
-        re.compile(r"^\s*فأما ما رواه\s+"),
-        re.compile(r"^\s*ما رواه\s+"),
+        # wrapper is intentionally NOT in this list — the resolver matches
+        # it to al-Mufid via al-Mufid's variants_ar (book-scoped to
+        # tahdhib + istibsar).
+        re.compile(r"^\s*(?:\d+\s*[-–]\s*)?ما أخبرني به\s+"),
+        re.compile(r"^\s*(?:\d+\s*[-–]\s*)?أخبرني به\s+"),
+        re.compile(r"^\s*(?:\d+\s*[-–]\s*)?فأما ما رواه\s+"),
+        re.compile(r"^\s*(?:\d+\s*[-–]\s*)?ما رواه\s+"),
     ],
     "al-istibsar": [
-        re.compile(r"^\s*ما أخبرني به الشيخ أيده الله(?:\s+تعالى)?\s+"),
-        re.compile(r"^\s*أخبرني به الشيخ أيده الله(?:\s+تعالى)?\s+"),
-        re.compile(r"^\s*الشيخ أيده الله(?:\s+تعالى)?\s+"),
-        re.compile(r"^\s*فأما ما رواه\s+"),
-        re.compile(r"^\s*ما رواه\s+"),
+        re.compile(r"^\s*(?:\d+\s*[-–]\s*)?ما أخبرني به\s+"),
+        re.compile(r"^\s*(?:\d+\s*[-–]\s*)?أخبرني به\s+"),
+        re.compile(r"^\s*(?:\d+\s*[-–]\s*)?فأما ما رواه\s+"),
+        re.compile(r"^\s*(?:\d+\s*[-–]\s*)?ما رواه\s+"),
     ],
 }
 
