@@ -1166,6 +1166,17 @@ def validate_result(result: dict) -> List[str]:
                     errors.append("has_chain is true but isnad_ar is empty")
                 if not isnad.get("narrators"):
                     errors.append("has_chain is true but narrators is empty")
+            # Chain-length sanity. 99.7% of corpus chains have ≤ 12
+            # narrators; anything beyond 15 is wildly anomalous and is
+            # typically the LLM populating narrators[] with matn
+            # sentence-fragments (faqih_4_131_1: 31 fragments). Real chains
+            # rarely exceed 12 even for well-attested narrations.
+            narrators_for_count = isnad.get("narrators") or []
+            if isinstance(narrators_for_count, list) and len(narrators_for_count) > 15:
+                errors.append(
+                    f"narrators has {len(narrators_for_count)} entries (>15 — "
+                    f"real isnad chains rarely exceed 12; likely matn fragments)"
+                )
             for i, narrator in enumerate(isnad.get("narrators", [])):
                 if not isinstance(narrator, dict):
                     errors.append(f"narrator[{i}] must be object")
@@ -1184,6 +1195,23 @@ def validate_result(result: dict) -> List[str]:
                     )
                 if narrator.get("position") != i + 1:
                     errors.append(f"narrator position mismatch: expected {i+1}, got {narrator.get('position')}")
+                # name_ar structural sanity. Threshold tuned against the
+                # actual corpus distribution: 99.1% of narrator names are
+                # ≤ 14 words; the long tail beyond is sentence-fragment
+                # territory. Catches faqih_4_131_1 (31 fragments) and
+                # al-istibsar_1_54_5 (12-18-word fragments) while sparing
+                # legitimate full-genealogy kunya names common in al-Amali
+                # responses (e.g. "أَبُو أَحْمَدَ الْعَبَّاسُ بْنُ الْفَضْلِ
+                # بْنِ جَعْفَرٍ الْأنْصَارِيّ" = 9-10 words).
+                name_ar = narrator.get("name_ar")
+                if isinstance(name_ar, str):
+                    word_count_name = len(name_ar.strip().split())
+                    if word_count_name > 14:
+                        errors.append(
+                            f"narrator[{i}] name_ar has {word_count_name} words "
+                            f"(>14 — likely a sentence fragment, not a name): "
+                            f"{name_ar[:60]!r}"
+                        )
                 # Validate optional canonical_id
                 if "canonical_id" in narrator:
                     cid = narrator["canonical_id"]

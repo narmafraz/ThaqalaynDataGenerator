@@ -1126,6 +1126,96 @@ class TestValidateChunks:
         errors = validate_result(result)
         assert any("chunks[0] translations.fa is empty string" in e for e in errors)
 
+    def test_narrator_name_too_long_flags(self):
+        """Real-world LLM failure mode: a fiqh ruling mis-typed as
+        has_chain=True with narrators[] populated by matn sentence-fragments
+        instead of actual narrator names. 18-word fragment from
+        al-istibsar_1_54_5 (observed in 2026-05-10 sample run)."""
+        result = _make_v4_result()
+        result["isnad_matn"]["has_chain"] = True
+        result["isnad_matn"]["isnad_ar"] = "..."
+        # 18-word sentence fragment masquerading as a narrator name
+        bogus_name = " ".join(["كَلِمَة"] * 18)
+        result["isnad_matn"]["narrators"] = [{
+            "name_ar": bogus_name,
+            "name_en": "(sentence fragment)",
+            "role": "narrator", "position": 1,
+            "identity_confidence": "definite", "ambiguity_note": None,
+        }]
+        errors = validate_result(result)
+        assert any("words (>14 — likely a sentence fragment" in e for e in errors), (
+            f"Expected narrator-name length error: {errors}"
+        )
+
+    def test_narrator_name_normal_length_passes(self):
+        """Real narrator names — including full-genealogy kunya names common
+        in al-Amali (8-10 words) — should not flag. Threshold is tuned at 14
+        so legitimate long names pass."""
+        result = _make_v4_result()
+        result["isnad_matn"]["has_chain"] = True
+        result["isnad_matn"]["isnad_ar"] = "..."
+        result["isnad_matn"]["narrators"] = [
+            {
+                "name_ar": "أَبُو جَعْفَرٍ مُحَمَّدُ بْنُ يَعْقُوبَ",  # 5 words
+                "name_en": "Abu Ja'far Muhammad b. Ya'qub",
+                "role": "narrator", "position": 1,
+                "identity_confidence": "definite", "ambiguity_note": None,
+            },
+            {
+                # 9-word full-genealogy name from al-Amali responses (legit)
+                "name_ar": "أَبُو أَحْمَدَ الْعَبَّاسُ بْنُ الْفَضْلِ بْنِ جَعْفَرٍ الْأنْصَارِيُّ",
+                "name_en": "Abu Ahmad al-Abbas b. al-Fadl b. Ja'far al-Ansari",
+                "role": "narrator", "position": 2,
+                "identity_confidence": "definite", "ambiguity_note": None,
+            },
+        ]
+        errors = validate_result(result)
+        assert not any("likely a sentence fragment" in e for e in errors), (
+            f"Should accept normal narrator names: {errors}"
+        )
+
+    def test_narrators_chain_too_long_flags(self):
+        """Real-world LLM failure: 31-narrator "chain" in faqih_4_131_1
+        (sentence fragments masquerading as a chain). Real chains rarely
+        exceed 12 narrators; threshold is set at 15."""
+        result = _make_v4_result()
+        result["isnad_matn"]["has_chain"] = True
+        result["isnad_matn"]["isnad_ar"] = "..."
+        # 16 narrators, each individually short to isolate this check from
+        # the name-length one
+        result["isnad_matn"]["narrators"] = [
+            {
+                "name_ar": "مُحَمَّد",
+                "name_en": "Muhammad",
+                "role": "narrator", "position": i + 1,
+                "identity_confidence": "definite", "ambiguity_note": None,
+            }
+            for i in range(16)
+        ]
+        errors = validate_result(result)
+        assert any("real isnad chains rarely exceed 12" in e for e in errors), (
+            f"Expected chain-length error: {errors}"
+        )
+
+    def test_narrators_chain_at_normal_length_passes(self):
+        """Up to 12 narrators should not flag — corpus 99.7% percentile."""
+        result = _make_v4_result()
+        result["isnad_matn"]["has_chain"] = True
+        result["isnad_matn"]["isnad_ar"] = "..."
+        result["isnad_matn"]["narrators"] = [
+            {
+                "name_ar": "مُحَمَّد",
+                "name_en": "Muhammad",
+                "role": "narrator", "position": i + 1,
+                "identity_confidence": "definite", "ambiguity_note": None,
+            }
+            for i in range(12)
+        ]
+        errors = validate_result(result)
+        assert not any("real isnad chains rarely exceed 12" in e for e in errors), (
+            f"12-narrator chain should pass: {errors}"
+        )
+
 
 # ===================================================================
 # Enum constant completeness tests
