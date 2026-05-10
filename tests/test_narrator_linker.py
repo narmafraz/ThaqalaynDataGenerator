@@ -500,6 +500,56 @@ class TestExtractIsnadGuards:
         assert result == "مُحَمَّدُ بْنُ يَحْيَى"
 
 
+class TestBookScopedResolution:
+    """End-to-end check that link_verse_narrators threads book_slug from
+    verse.path through to the registry's book-scope disambiguation."""
+
+    @pytest.fixture
+    def scoped_registry(self):
+        narrators = {
+            "200": {
+                "canonical_name_ar": "الشَّيْخُ الْمُفِيدُ",
+                "canonical_name_en": "al-Shaykh al-Mufid",
+                "role": "scholar",
+                "variants_ar": ["الشَّيْخُ"],
+                "disambiguation_context": None,
+                "disambiguation_books": ["tahdhib-al-ahkam"],
+            },
+            "300": {
+                "canonical_name_ar": "أَحْمَدَ بْنِ مُحَمَّدٍ",
+                "canonical_name_en": "Ahmad ibn Muhammad",
+                "role": "narrator",
+                "variants_ar": [],
+                "disambiguation_context": None,
+                "old_ids": [],
+            },
+        }
+        path = _create_registry_file(narrators)
+        yield NarratorRegistry(path)
+        os.unlink(path)
+
+    def test_tahdhib_verse_links_sheikh_to_mufid(self, scoped_registry):
+        verse = Verse()
+        verse.path = "/books/tahdhib-al-ahkam:1:2:3"
+        verse.text = ["وَ أَخْبَرَنِي اَلشَّيْخُ عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"]
+        ids = link_verse_narrators(verse, scoped_registry)
+        assert 200 in ids, f'expected al-Mufid (200) linked, got {ids}'
+        assert 300 in ids
+
+    def test_alkafi_verse_does_not_link_sheikh_to_mufid(self, scoped_registry):
+        """The same chain in al-Kafi must NOT resolve "الشيخ" to al-Mufid,
+        because the entry is scoped to Tahdhib only."""
+        verse = Verse()
+        verse.path = "/books/al-kafi:1:1:1:1"
+        verse.text = ["وَ أَخْبَرَنِي اَلشَخُ عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"]
+        # Use the diacritized form so we hit the same path
+        verse.text = ["وَ أَخْبَرَنِي اَلشَّيْخُ عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ قَالَ matn"]
+        ids = link_verse_narrators(verse, scoped_registry)
+        # al-Mufid (200) must not appear; ahmad (300) still should
+        assert 200 not in ids, f'al-Mufid leaked into al-Kafi: {ids}'
+        assert 300 in ids
+
+
 class TestEndingPhraseLongestMatch:
     """The chain-end regex must prefer the longer alternative when one is a
     prefix of another, otherwise the trailing characters leak into the last

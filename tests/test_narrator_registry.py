@@ -480,3 +480,113 @@ class TestTrailingJunkStripping:
         finally:
             os.unlink(path)
 
+
+class TestDisambiguationBooks:
+    """Book-scope disambiguation: an entry's ``disambiguation_books`` field
+    constrains it to only resolve when the chain comes from a listed book.
+
+    Use case: al-Mufid is conventionally referred to as "الشيخ" in Tahdhib
+    al-Ahkam and al-Istibsar (Tusi's editorial references to his teacher),
+    but bare "الشيخ" elsewhere should not resolve to him.
+    """
+
+    @pytest.fixture
+    def book_registry_path(self):
+        """Registry with: an unscoped Imam ref + a book-scoped al-Mufid
+        sharing the variant 'الشيخ'."""
+        narrators = {
+            "100": {
+                "canonical_name_ar": "الشَّيْخِ ( عليه السلام )",
+                "canonical_name_en": "the Sheikh (an Imam reference)",
+                "role": "imam",
+                "variants_ar": [],
+                "disambiguation_context": None,
+            },
+            "200": {
+                "canonical_name_ar": "الشَّيْخُ الْمُفِيدُ",
+                "canonical_name_en": "al-Shaykh al-Mufid",
+                "role": "scholar",
+                "variants_ar": ["الشَّيْخُ", "أَخْبَرَنِي الشَّيْخُ"],
+                "disambiguation_context": None,
+                "disambiguation_books": ["tahdhib-al-ahkam", "al-istibsar"],
+            },
+        }
+        path = _create_registry_file(narrators)
+        yield path
+        os.unlink(path)
+
+    def test_resolves_in_listed_book(self, book_registry_path):
+        from app.narrator_registry import NarratorRegistry
+        r = NarratorRegistry(book_registry_path)
+        # Bare الشيخ in Tahdhib → al-Mufid
+        assert r.resolve("الشَّيْخُ", book_slug="tahdhib-al-ahkam") == 200
+        assert r.resolve("الشيخ", book_slug="tahdhib-al-ahkam") == 200
+        # Same in al-Istibsar
+        assert r.resolve("الشَّيْخُ", book_slug="al-istibsar") == 200
+
+    def test_does_not_resolve_in_other_book(self, book_registry_path):
+        """Outside listed books, bare الشيخ must NOT resolve to al-Mufid.
+        The other candidate (id 100) is the Imam reference which uses the
+        parenthetical form — bare الشيخ shouldn't match it either."""
+        from app.narrator_registry import NarratorRegistry
+        r = NarratorRegistry(book_registry_path)
+        assert r.resolve("الشَّيْخُ", book_slug="al-kafi") is None
+        assert r.resolve("الشيخ", book_slug="al-kafi") is None
+        assert r.resolve("الشيخ", book_slug="man-la-yahduruhu-al-faqih") is None
+
+    def test_parenthetical_imam_form_still_resolves_everywhere(self, book_registry_path):
+        """Entry 100 (the Imam ref) has no disambiguation_books, so its
+        exact-match form resolves regardless of book."""
+        from app.narrator_registry import NarratorRegistry
+        r = NarratorRegistry(book_registry_path)
+        for book in ("tahdhib-al-ahkam", "al-istibsar", "al-kafi", None):
+            assert r.resolve("الشَّيْخِ ( عليه السلام )", book_slug=book) == 100, book
+
+    def test_verbal_form_resolves_in_listed_book(self, book_registry_path):
+        """The "أخبرني الشيخ" variant (declared explicitly) resolves
+        in-scope; the bare form (via normalised match on الشيخ variant)
+        does too."""
+        from app.narrator_registry import NarratorRegistry
+        r = NarratorRegistry(book_registry_path)
+        assert r.resolve("أَخْبَرَنِي الشَّيْخُ", book_slug="tahdhib-al-ahkam") == 200
+        assert r.resolve("أَخْبَرَنِي الشَّيْخُ", book_slug="al-kafi") is None
+
+    def test_no_book_context_skips_filter(self, book_registry_path):
+        """Passing book_slug=None keeps the existing behaviour — entries
+        with disambiguation_books are NOT filtered out. This preserves
+        backward compatibility for callers that don't yet thread the book
+        context (and matters for tests / one-off scripts)."""
+        from app.narrator_registry import NarratorRegistry
+        r = NarratorRegistry(book_registry_path)
+        # With no book context, the al-Mufid match wins (only candidate
+        # for bare الشيخ).
+        assert r.resolve("الشَّيْخُ") == 200
+
+    def test_filter_returns_none_when_all_scoped_out(self, book_registry_path):
+        """If the only candidate is book-scoped and the current book is
+        not in scope, resolve returns None (rather than picking the
+        out-of-scope candidate as a default)."""
+        from app.narrator_registry import NarratorRegistry
+        r = NarratorRegistry(book_registry_path)
+        assert r.resolve("الشَّيْخُ", book_slug="nahj-al-balagha") is None
+
+    def test_real_registry_al_mufid_entry(self):
+        """Verify the actual al-Mufid entry (id 4630) we added to the
+        live canonical_narrators.json behaves correctly."""
+        from app.narrator_registry import NarratorRegistry
+        r = NarratorRegistry()  # default path = real registry
+        # In Tahdhib / Istibsar: bare الشيخ → 4630
+        assert r.resolve("الشَّيْخُ", book_slug="tahdhib-al-ahkam") == 4630
+        assert r.resolve("الشَّيْخُ", book_slug="al-istibsar") == 4630
+        # Elsewhere: None
+        assert r.resolve("الشَّيْخُ", book_slug="al-kafi") is None
+        assert r.resolve("الشَّيْخُ", book_slug="man-la-yahduruhu-al-faqih") is None
+        # The al-Kafi-style parenthetical form still resolves to 2709
+        assert r.resolve("الشَّيْخِ ( عليه السلام )", book_slug="al-kafi") == 2709
+        # Tahdhib's editorial phrasing
+        assert r.resolve("اَلشَّيْخُ أَيَّدَهُ اَللَّهُ تَعَالَى",
+                         book_slug="tahdhib-al-ahkam") == 4630
+        # Mid-chain verbal form
+        assert r.resolve("أَخْبَرَنِي اَلشَّيْخُ",
+                         book_slug="tahdhib-al-ahkam") == 4630
+

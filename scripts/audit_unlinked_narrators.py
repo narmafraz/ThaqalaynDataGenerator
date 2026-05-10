@@ -149,14 +149,15 @@ def main():
         if not chain_text.strip():
             continue
 
+        verse_path = verse.get("path")
+        verse_book_slug = _book_slug_from_path(verse_path)
+
         if args.simulate_class2:
             # Approximate the new extractor's behaviour: peel the per-book
             # preamble (if any), then drop the verse if no chain signal
             # remains. This mirrors what extract_isnad_text would do on a
             # fresh re-run.
-            verse_path = verse.get("path")
-            book_slug = _book_slug_from_path(verse_path)
-            chain_text = _strip_book_preamble(chain_text, book_slug)
+            chain_text = _strip_book_preamble(chain_text, verse_book_slug)
             if not _looks_like_isnad(chain_text):
                 rejected_class2 += 1
                 continue
@@ -165,13 +166,17 @@ def main():
 
         # Re-split & resolve. We deliberately re-run the splitter rather than
         # trusting the persisted "plain" parts as candidate names — the splitter
-        # is the source of truth for what's a name vs. chain glue.
+        # is the source of truth for what's a name vs. chain glue. book_slug
+        # is threaded so book-scoped entries (e.g. al-Mufid for Tahdhib /
+        # al-Istibsar) resolve correctly.
         names = split_narrator_names(chain_text, use_undiacritized=args.undiacritized)
         if not names:
             continue
         preceding: List[str] = []
         for name in names:
-            cid = registry.resolve(name, preceding_names=preceding)
+            cid = registry.resolve(
+                name, preceding_names=preceding, book_slug=verse_book_slug
+            )
             preceding.append(name)
             if cid is not None:
                 continue
@@ -185,8 +190,8 @@ def main():
                 name_examples[ckey] = name
                 rel = str(path.relative_to(books_root.parent)).replace("\\", "/")
                 example_paths[ckey] = rel
-            book_slug = path.relative_to(books_root).parts[0]
-            book_per_ckey[ckey][book_slug] += 1
+            book_slug_for_count = path.relative_to(books_root).parts[0]
+            book_per_ckey[ckey][book_slug_for_count] += 1
 
     print(f"[info] scanned: verses_with_chain={verses_seen} chains_split={chains_seen} "
           f"unresolved_occurrences={unresolved_total} unique_names={len(counter)}")

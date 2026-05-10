@@ -334,37 +334,60 @@ class NarratorRegistry:
             return []
         return self._by_canonical_key.get(ckey, [])
 
-    def resolve(self, name_ar: str, preceding_names: Optional[List[str]] = None) -> Optional[int]:
+    def resolve(
+        self,
+        name_ar: str,
+        preceding_names: Optional[List[str]] = None,
+        book_slug: Optional[str] = None,
+    ) -> Optional[int]:
         """Resolve a narrator name to canonical ID with context-aware disambiguation.
 
         Strategy:
         1. Try exact match first (fastest, most precise)
-        2. Try normalized match — if unique, return it
-        3. If multiple normalized matches, use disambiguation_context
-        4. Return None if truly ambiguous
+        2. Try normalized match
+        3. Fall back to canonical-key match (honorific/verb-stripped)
+        4. Apply per-stage book-scope filter (disambiguation_books)
+        5. Disambiguate by preceding-names context if multiple candidates remain
+        6. Default to first candidate (registry-frequency ordered)
 
         Args:
-            name_ar: Arabic narrator name to resolve
-            preceding_names: List of preceding narrator names in the chain (for disambiguation)
+            name_ar: Arabic narrator name to resolve.
+            preceding_names: List of preceding narrator names in the chain
+                (used for preceding-context disambiguation).
+            book_slug: Slug of the book the chain is from (e.g. "tahdhib-al-ahkam").
+                When supplied, candidates with a ``disambiguation_books`` entry
+                are filtered: a candidate matches only if its book list contains
+                this slug. Candidates without a ``disambiguation_books`` field
+                are always allowed.
+
+        The book filter applies at every stage. For stage 1 (exact match),
+        passing the filter is required — if the only exact-match candidate
+        fails the book scope, exact match yields no result and we fall through
+        to stage 2.
         """
-        # Step 1: Exact match
+        # Step 1: Exact match (single candidate)
         exact = self.lookup_exact(name_ar)
         if exact is not None:
-            return exact
+            filtered = self._filter_by_book([exact], book_slug)
+            if filtered:
+                return filtered[0]
+            # Exact candidate rejected by book filter — fall through to next stages
 
         # Step 2: Normalized match
         candidates = self.lookup_normalized(name_ar)
+        candidates = self._filter_by_book(candidates, book_slug)
         if len(candidates) == 0:
             # Step 2b: Fall back to canonical-key match (handles honorific
             # format mismatch + chain-verb prefix).
             candidates = self.lookup_canonical_key(name_ar)
+            candidates = self._filter_by_book(candidates, book_slug)
             if len(candidates) == 0:
                 return None
 
         if len(candidates) == 1:
             return candidates[0]
 
-        # Step 3: Disambiguation via context
+        # Step 3: Disambiguation via preceding-names context
         if preceding_names:
             for cid in candidates:
                 entry = self._narrators.get(cid, {})
@@ -375,6 +398,35 @@ class NarratorRegistry:
         # Step 4: Default to most common (first in list, which is ordered by narration count)
         # Return first candidate as default — bootstrap orders by frequency
         return candidates[0]
+
+    def _filter_by_book(
+        self,
+        candidates: List[int],
+        book_slug: Optional[str],
+    ) -> List[int]:
+        """Apply per-entry ``disambiguation_books`` constraint to candidates.
+
+        An entry that declares ``disambiguation_books`` matches only when the
+        provided ``book_slug`` is in that list. Entries without the field are
+        always allowed. When ``book_slug`` is None, no entry is filtered out —
+        the field is ignored entirely (backward-compatible for callers that
+        don't yet pass the book context).
+        """
+        if not candidates:
+            return candidates
+        if book_slug is None:
+            return candidates
+        result = []
+        for cid in candidates:
+            entry = self._narrators.get(cid, {})
+            books = entry.get("disambiguation_books")
+            if not books:
+                # No book scope declared — always allow
+                result.append(cid)
+            elif book_slug in books:
+                result.append(cid)
+            # Else: this entry is book-scoped and the current book doesn't match — drop
+        return result
 
     def _matches_context(self, context: str, preceding_names: List[str]) -> bool:
         """Check if disambiguation context matches the chain context.

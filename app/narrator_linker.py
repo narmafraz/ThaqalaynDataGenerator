@@ -448,17 +448,23 @@ def split_narrator_names(
 def resolve_narrators(
     names: List[str],
     registry: NarratorRegistry,
+    book_slug: Optional[str] = None,
 ) -> List[Tuple[str, Optional[int]]]:
     """Resolve narrator names against the canonical registry.
 
     Returns list of (name_text, canonical_id_or_None).
-    Uses chain context (preceding names) for disambiguation.
+    Uses chain context (preceding names) for disambiguation, and the
+    optional ``book_slug`` to scope candidates that declare a
+    ``disambiguation_books`` constraint (e.g. al-Mufid for Tahdhib/Istibsar
+    chains referring to "الشيخ").
     """
     resolved = []
     preceding = []
 
     for name in names:
-        canonical_id = registry.resolve(name, preceding_names=preceding)
+        canonical_id = registry.resolve(
+            name, preceding_names=preceding, book_slug=book_slug
+        )
         resolved.append((name, canonical_id))
         preceding.append(name)
 
@@ -524,6 +530,11 @@ def link_verse_narrators(
 
     Modifies verse in-place (sets narrator_chain.parts, removes chain from text[0]).
     Returns list of canonical IDs found (may be empty).
+
+    The verse's book slug is derived from its path and threaded through to
+    the resolver as ``book_slug`` — registry entries with a
+    ``disambiguation_books`` constraint (e.g. al-Mufid for Tahdhib/Istibsar)
+    use it to scope themselves to the right books.
     """
     # Step 1: Extract isnad text
     isnad_text = extract_isnad_text(verse, use_undiacritized=use_undiacritized)
@@ -535,8 +546,9 @@ def link_verse_narrators(
     if not names:
         return []
 
-    # Step 3: Resolve against registry
-    resolved = resolve_narrators(names, registry)
+    # Step 3: Resolve against registry, with book context for disambiguation
+    book_slug = _book_slug_from_path(getattr(verse, "path", None))
+    resolved = resolve_narrators(names, registry, book_slug=book_slug)
 
     # Step 4: Build chain parts
     parts = build_chain_parts(isnad_text, resolved)
