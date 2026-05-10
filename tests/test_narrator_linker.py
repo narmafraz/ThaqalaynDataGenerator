@@ -338,3 +338,47 @@ class TestLinkVerseNarrators:
         assert 1 in canonical_ids
         # Unknown narrator gets skipped (None filtered out)
         assert len(canonical_ids) == 1
+
+
+class TestEndingPhraseLongestMatch:
+    """The chain-end regex must prefer the longer alternative when one is a
+    prefix of another, otherwise the trailing characters leak into the last
+    extracted narrator name.
+
+    Regression: "أَنَّهُ" used to match as "أَنَّ" + leftover "هُ", baking
+    the trailing هُ into the previous narrator.
+    """
+
+    def test_anna_hu_consumed_whole(self):
+        """For text ending in "...أَنَّهُ ...", extraction should stop at
+        the full "أَنَّهُ" boundary, not at "أَنَّ"."""
+        verse = _make_verse(
+            "مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ أَنَّهُ matn-text-here"
+        )
+        chain_text = extract_isnad_text(verse)
+        assert chain_text is not None
+        # The "هُ" must NOT remain as a leading character of the matn.
+        assert not verse.text[0].lstrip().startswith("هُ"), (
+            f"verse.text[0] starts with leftover 'هُ': {verse.text[0]!r}"
+        )
+
+    def test_fi_qawlihi_consumed_before_fi(self):
+        """Sanity check that the existing "فِي قَوْلِهِ" before "فِي"
+        ordering still wins (we reordered the same group)."""
+        verse = _make_verse(
+            "مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ فِي قَوْلِهِ tafsir-text"
+        )
+        chain_text = extract_isnad_text(verse)
+        assert chain_text is not None
+        # Matn should start with "tafsir", not with leftover Arabic from
+        # a too-early "فِي" stop.
+        assert verse.text[0].lstrip().startswith("tafsir"), verse.text[0]
+
+    def test_anna_still_terminates_chain(self):
+        """The shorter "أَنَّ" alternative still works when no هُ follows."""
+        verse = _make_verse(
+            "مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ أَنَّ matn-text"
+        )
+        chain_text = extract_isnad_text(verse)
+        assert chain_text is not None
+        assert "أَنَّ" in chain_text

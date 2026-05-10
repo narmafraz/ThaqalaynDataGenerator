@@ -31,15 +31,21 @@ REGISTRY_FILENAME = "canonical_narrators.json"
 #   - آ أ إ ٱ → ا (all hamza-alef variants → plain alef)
 #   - ة → ه (teh marbuta → heh)
 #   - ؤ → و, ئ → ي
+#   - Persian yeh ی → ي, Persian kaf ک → ك
+#   - Arabic punctuation (، ؛ ؟) → ASCII (, ; ?)
 # So patterns here use the COLLAPSED forms: "صلي" not "صلى", "اله" not "آله",
-# "ابي" not "أبي". Building patterns with the original Arabic forms WILL NOT
-# match against post-normalize text.
+# "ابي" not "أبي", "," not "،". Building patterns with the original Arabic
+# forms WILL NOT match against post-normalize text.
 #
 # Patterns are anchored at end-of-string with optional leading whitespace.
+# _strip_honorific_suffix loops over this list until no pattern fires, so a
+# layered tail like " (عليه السلام) : أنه" is peeled one decoration per pass.
 _HONORIFIC_SUFFIX_PATTERNS = [
     re.compile(p) for p in (
         # Parenthetical forms — registry's traditional style (post-normalize)
         r"\s*\(\s*ع\.?\s*\)\s*$",
+        r"\s*\(\s*ره\s*\)\s*$",
+        r"\s*\(\s*ص\s*\)\s*$",
         r"\s*\(\s*عليه السلام\s*\)\s*$",
         r"\s*\(\s*عليها السلام\s*\)\s*$",
         r"\s*\(\s*عليهم السلام\s*\)\s*$",
@@ -67,8 +73,25 @@ _HONORIFIC_SUFFIX_PATTERNS = [
         r"\s+رضي الله عنه\s*$",
         r"\s+رضي الله عنها\s*$",
         r"\s+رحمه الله\s*$",
-        # Trailing standalone "ع" abbreviation (after parenthetical strip)
+        r"\s+رحمه الله تعالي\s*$",
+        # Tahdhib's "may Allah strengthen him" preamble decoration
+        r"\s+ايده الله\s*$",
+        r"\s+ايده الله تعالي\s*$",
+        # Trailing standalone "ع"/"ره"/"ص" abbreviations (after parenthetical strip)
         r"\s+ع\s*$",
+        r"\s+ره\s*$",
+        r"\s+ص\s*$",
+        # Trailing particles that the splitter's NARRATORS_TEXT_PATTERN can
+        # leak into a name — strict whitespace anchoring keeps this off the
+        # interior of real names.  "قال" deliberately stripped only at end of
+        # string (the start-of-string variant is kept off the leading-verb list
+        # because "قال علي" could be a real attribution; trailing "قال" after
+        # a name is not).
+        r"\s+انه\s*$",
+        r"\s+قال\s*$",
+        # Trailing punctuation. Arabic ، ؛ ؟ have already become , ; ? via
+        # ARABIC_PUNCTUATION_MAP in normalize_arabic.
+        r"\s*[:,;.?\-–—]\s*$",
     )
 ]
 
@@ -110,15 +133,25 @@ def _strip_honorific_suffix(text: str) -> str:
     Handles both parenthetical (registry) and inline (AI pipeline) forms.
     Returns the input unchanged if no honorific is present. Operates on
     the *post-normalize_arabic* string (no tashkeel, normalized letters).
+
+    Loops over the pattern list until a full pass produces no change, so
+    layered tails such as "(عليه السلام) : انه" peel one decoration per
+    iteration. All patterns are end-anchored with optional leading
+    whitespace, so iteration converges.
     """
     if not text:
         return text
     result = text
-    for pattern in _HONORIFIC_SUFFIX_PATTERNS:
-        new_result = pattern.sub("", result)
-        if new_result != result:
-            result = new_result.rstrip()
-            # Don't keep iterating once we find a match — guards against double-strip
+    # Hard cap on iterations as a defensive bound — in practice we converge
+    # within a handful of passes (typical depth is 1-3).
+    for _ in range(10):
+        prev = result
+        for pattern in _HONORIFIC_SUFFIX_PATTERNS:
+            new_result = pattern.sub("", result)
+            if new_result != result:
+                result = new_result.rstrip()
+                break
+        if result == prev:
             break
     return result
 

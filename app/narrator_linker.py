@@ -52,9 +52,14 @@ SKIP_PREFIX_PATTERN = re.compile(
 )
 
 NARRATORS_TEXT_PATTERN = re.compile(
+    # Longer alternatives must come first — Python's re takes the leftmost
+    # alternation match, not the longest. Without this ordering, "أَنَّهُ"
+    # would match as "أَنَّ" + leftover "هُ", and the trailing هُ would be
+    # baked into the last narrator name. Same logic for the "فِي قَوْلِهِ"
+    # vs "فِي قَوْلِ" vs "فِي" triplet which was already ordered correctly.
     r"(.*?) (قَالَ|فِي هَذِهِ الْآيَةِ|يَرْفَعُهُ قَالَ|رَفَعَهُ قَالَ|"
-    r"فَكَانَ مِنْ سُؤَالِهِ أَنْ قَالَ|فِي قَوْلِ|فِي قَوْلِهِ|فِي|"
-    r"أَنَّ|يَقُولُ|فَقَالَ|مِثْلَهُ)"
+    r"فَكَانَ مِنْ سُؤَالِهِ أَنْ قَالَ|فِي قَوْلِهِ|فِي قَوْلِ|فِي|"
+    r"أَنَّهُ|أَنَّ|يَقُولُ|فَقَالَ|مِثْلَهُ)"
 )
 
 NARRATORS_TEXT_FAILOVER_PATTERN = re.compile(r"(.*?\( عليهم? السلام \))")
@@ -72,9 +77,12 @@ NARRATOR_SPLIT_PATTERN_UNDIACRITIZED = re.compile(
 )
 
 NARRATORS_TEXT_PATTERN_UNDIACRITIZED = re.compile(
+    # See NARRATORS_TEXT_PATTERN for the alternation-ordering rule. Note
+    # that "ان" / "انه" share the same first two letters; "انه" must come
+    # first so it consumes the trailing ه instead of leaving it on the name.
     r"(.*?) (قال|في هذه الاية|يرفعه قال|رفعه قال|"
-    r"فكان من سؤاله ان قال|في قول|في قوله|في|"
-    r"ان|يقول|فقال|مثله)"
+    r"فكان من سؤاله ان قال|في قوله|في قول|في|"
+    r"انه|ان|يقول|فقال|مثله)"
 )
 
 NARRATORS_TEXT_FAILOVER_PATTERN_UNDIACRITIZED = re.compile(

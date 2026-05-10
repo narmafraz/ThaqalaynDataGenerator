@@ -334,3 +334,109 @@ class TestCanonicalLookupKey:
         finally:
             os.unlink(path)
 
+
+class TestTrailingJunkStripping:
+    """Trailing punctuation, particles, and layered honorifics — Class 3 fixes.
+
+    The splitter's NARRATORS_TEXT_PATTERN can leak trailing particles/colons
+    into the last extracted name (e.g. "...عليه السلام :"). Stripping these
+    in canonical_lookup_key lets such names resolve to the right canonical id.
+    """
+
+    def test_strips_trailing_colon(self):
+        from app.narrator_registry import canonical_lookup_key
+        a = "أَبِي عَبْدِ اللَّهِ عَلَيْهِ السَّلَامُ :"
+        b = "أَبِي عَبْدِ اللَّهِ"
+        assert canonical_lookup_key(a) == canonical_lookup_key(b)
+
+    def test_strips_trailing_arabic_comma(self):
+        # ARABIC COMMA (،) becomes ASCII , via normalize_arabic, then stripped.
+        from app.narrator_registry import canonical_lookup_key
+        a = "ابن أبي عمير،"
+        b = "ابن أبي عمير"
+        assert canonical_lookup_key(a) == canonical_lookup_key(b)
+
+    def test_strips_trailing_anna_hu(self):
+        from app.narrator_registry import canonical_lookup_key
+        a = "أَبِي عَبْدِ اللَّهِ عَلَيْهِ السَّلَامُ أَنَّهُ"
+        b = "أَبِي عَبْدِ اللَّهِ"
+        assert canonical_lookup_key(a) == canonical_lookup_key(b)
+
+    def test_strips_trailing_qala(self):
+        from app.narrator_registry import canonical_lookup_key
+        a = "أبي عبد الله عليه السلام قال"
+        b = "أبي عبد الله"
+        assert canonical_lookup_key(a) == canonical_lookup_key(b)
+
+    def test_does_not_strip_qala_in_middle(self):
+        """`قال` only strips when it's the trailing token, not when it's in
+        the middle of a name."""
+        from app.narrator_registry import canonical_lookup_key
+        # Hypothetical name with "قال" not at end — should be untouched.
+        result = canonical_lookup_key("قال علي بن زيد")
+        assert "قال علي بن زيد" in result
+
+    def test_strips_layered_decorations(self):
+        """Loop should peel each tail layer in turn:
+        "( عليه السلام ) : أنه" → "(عليه السلام) :" → "(عليه السلام)" → ""
+        """
+        from app.narrator_registry import canonical_lookup_key
+        layered = "أَبِي جَعْفَرٍ ( عليه السلام ) : أنه"
+        clean = "أَبِي جَعْفَرٍ"
+        assert canonical_lookup_key(layered) == canonical_lookup_key(clean)
+
+    def test_strips_inline_ayyadahu_allah(self):
+        """Tahdhib's "may Allah strengthen him" honorific."""
+        from app.narrator_registry import canonical_lookup_key
+        a = "اَلشَّيْخُ أَيَّدَهُ اللَّهُ تَعَالَى"
+        b = "الشيخ"
+        assert canonical_lookup_key(a) == canonical_lookup_key(b)
+
+    def test_strips_abbreviated_paren_honorifics(self):
+        """Abbreviated forms (ع), (ره), (ص) common in older typesetting."""
+        from app.narrator_registry import canonical_lookup_key
+        for ab in ("(ع)", "(ره)", "(ص)"):
+            a = f"محمد بن علي {ab}"
+            b = "محمد بن علي"
+            assert canonical_lookup_key(a) == canonical_lookup_key(b), ab
+
+    def test_strips_inline_rahimahu_allah_taala(self):
+        from app.narrator_registry import canonical_lookup_key
+        a = "أبي رحمه الله تعالى"
+        b = "أبي"
+        assert canonical_lookup_key(a) == canonical_lookup_key(b)
+
+    def test_persian_yeh_normalises(self):
+        """Persian yeh ی and Arabic yeh ي should produce the same key."""
+        from app.narrator_registry import canonical_lookup_key
+        persian = "حدثنی محمد بن الحسن"
+        arabic = "حدثني محمد بن الحسن"
+        assert canonical_lookup_key(persian) == canonical_lookup_key(arabic)
+
+    def test_persian_kaf_normalises(self):
+        from app.narrator_registry import canonical_lookup_key
+        persian = "محمد بن یعقوب الکلینی"
+        arabic = "محمد بن يعقوب الكليني"
+        assert canonical_lookup_key(persian) == canonical_lookup_key(arabic)
+
+    def test_resolve_handles_imam_with_trailing_colon(self):
+        """End-to-end: a registry entry stored under the canonical form should
+        resolve when the chain emits "...:"."""
+        from app.narrator_registry import NarratorRegistry
+        narrators = {
+            "13": {
+                "canonical_name_ar": "أَبِي عَبْدِ اللَّهِ ( عليه السلام )",
+                "canonical_name_en": "Imam Ja'far al-Sadiq",
+                "role": "imam",
+                "variants_ar": [],
+                "disambiguation_context": None,
+            },
+        }
+        path = _create_registry_file(narrators)
+        try:
+            r = NarratorRegistry(path)
+            assert r.resolve("أَبِي عَبْدِ اللَّهِ عَلَيْهِ السَّلَامُ :") == 13
+            assert r.resolve("أَبِي عَبْدِ اللَّهِ عَلَيْهِ السَّلَامُ أَنَّهُ") == 13
+        finally:
+            os.unlink(path)
+

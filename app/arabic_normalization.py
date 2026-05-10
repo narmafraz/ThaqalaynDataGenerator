@@ -80,6 +80,15 @@ YEH_HAMZA_MAP = {
     "\u0626": "\u064A",  # YEH WITH HAMZA ABOVE -> YEH
 }
 
+# Persian-style letters that some sources (notably rafed.net's Persian rendering)
+# emit instead of standard Arabic equivalents. Folding them at normalize time
+# lets registry lookups match the same name regardless of which encoding the
+# upstream source used.
+PERSIAN_LETTER_MAP = {
+    "\u06CC": "\u064A",  # FARSI YEH -> ARABIC YEH (\u06CC -> \u064A)
+    "\u06A9": "\u0643",  # KEHEH (Persian kaf) -> ARABIC KAF (\u06A9 -> \u0643)
+}
+
 # Combined normalization map for all letter forms
 LETTER_NORM_MAP = {}
 LETTER_NORM_MAP.update(HAMZA_MAP)
@@ -87,6 +96,7 @@ LETTER_NORM_MAP.update(TEH_MARBUTA_MAP)
 LETTER_NORM_MAP.update(ALEF_MAKSURA_MAP)
 LETTER_NORM_MAP.update(WAW_HAMZA_MAP)
 LETTER_NORM_MAP.update(YEH_HAMZA_MAP)
+LETTER_NORM_MAP.update(PERSIAN_LETTER_MAP)
 
 # Build translation table for str.translate()
 _LETTER_NORM_TABLE = str.maketrans(LETTER_NORM_MAP)
@@ -125,6 +135,8 @@ def normalize_letters(text: str) -> str:
     - Alef maksura (ى) -> ي
     - Waw with hamza (ؤ) -> و
     - Yeh with hamza (ئ) -> ي
+    - Persian yeh (ی, U+06CC) -> Arabic yeh (ي, U+064A)
+    - Persian kaf / keheh (ک, U+06A9) -> Arabic kaf (ك, U+0643)
     """
     return text.translate(_LETTER_NORM_TABLE)
 
