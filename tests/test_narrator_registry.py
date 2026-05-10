@@ -426,6 +426,39 @@ class TestTrailingJunkStripping:
         arabic = "محمد بن يعقوب الكليني"
         assert canonical_lookup_key(persian) == canonical_lookup_key(arabic)
 
+    def test_generic_ckey_blocks_fallback(self):
+        """Entries whose canonical_lookup_key falls in _GENERIC_CKEYS must
+        not be resolvable via the canonical-key fallback. They remain
+        resolvable via exact and normalized lookups.
+
+        Regression: bare "الشيخ" was mis-linking to a registry entry whose
+        canonical form is "الشَّيْخِ ( عليه السلام )" — a real but more
+        specific narrator. Adding "الشيخ" to _GENERIC_CKEYS blocks the
+        fallback while preserving the exact-match path."""
+        from app.narrator_registry import NarratorRegistry, _GENERIC_CKEYS
+        narrators = {
+            "9999": {
+                "canonical_name_ar": "الشَّيْخِ ( عليه السلام )",
+                "canonical_name_en": "the Sheikh (peace be upon him)",
+                "role": "narrator",
+                "variants_ar": [],
+                "disambiguation_context": None,
+            },
+        }
+        path = _create_registry_file(narrators)
+        try:
+            r = NarratorRegistry(path)
+            assert "الشيخ" in _GENERIC_CKEYS
+            # Exact form resolves fine
+            assert r.resolve("الشَّيْخِ ( عليه السلام )") == 9999
+            # Bare forms must NOT match
+            assert r.resolve("الشيخ") is None
+            assert r.resolve("الشَّيْخُ") is None
+            assert r.resolve("أَخْبَرَنِي اَلشَّيْخُ") is None
+            assert r.resolve("الشيخ أيده الله تعالى") is None
+        finally:
+            os.unlink(path)
+
     def test_resolve_handles_imam_with_trailing_colon(self):
         """End-to-end: a registry entry stored under the canonical form should
         resolve when the chain emits "...:"."""

@@ -18,6 +18,24 @@ logger = logging.getLogger(__name__)
 REGISTRY_FILENAME = "canonical_narrators.json"
 
 
+# Canonical-keys that are too underspecified to be safe as a fallback lookup.
+# When canonical_lookup_key(name) yields one of these, we skip canonical-key
+# indexing for that variant — exact and normalized matches still apply, but
+# any honorific-stripped or verb-stripped candidate that collapses down to
+# this generic form returns None (kind="plain") instead of mis-linking to a
+# real-but-different narrator.
+#
+# "الشيخ" — common in Tahdhib + al-Istibsar where Tusi refers editorially
+# to his teacher al-Mufid (not in the registry). Until al-Mufid has his own
+# entry, bare "الشيخ" candidates should not resolve to entry 2709 (a
+# different narrator referred to as "الشَّيْخِ ( عليه السلام )" in al-Kafi).
+# That al-Kafi reference still resolves via exact match on the parenthetical
+# form, since the form has tokens beyond just "الشيخ".
+_GENERIC_CKEYS = {
+    "الشيخ",
+}
+
+
 # Honorific suffixes to strip from a narrator name when building the canonical
 # lookup key. The registry was built from legacy parsing (parenthetical form)
 # while the AI pipeline emits the inline form with full diacritics. After
@@ -273,8 +291,11 @@ class NarratorRegistry:
         # names with verb-prefix or honorific-suffix can resolve to a registry
         # entry whose own canonical form happens to be a "clean" name (no
         # honorific or verb to strip).
+        #
+        # Skip the canonical-key index for ckeys in _GENERIC_CKEYS — those
+        # are too underspecified to be safe as a fallback.
         ckey = canonical_lookup_key(name_ar)
-        if ckey:
+        if ckey and ckey not in _GENERIC_CKEYS:
             if ckey not in self._by_canonical_key:
                 self._by_canonical_key[ckey] = []
             if canonical_id not in self._by_canonical_key[ckey]:
