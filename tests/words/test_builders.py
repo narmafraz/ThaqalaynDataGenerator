@@ -8,6 +8,9 @@ camel_tools = pytest.importorskip("camel_tools")
 
 from app.words.builders import (
     WordPageBuilder,
+    _build_definition_from_wiktextract,
+    _build_etymology_from_wiktextract,
+    _build_ipa_from_wiktextract,
     _build_normalized_index,
     _build_normalized_list_index,
     _extract_clitics,
@@ -300,6 +303,140 @@ class TestRootToSlug:
     def test_empty_returns_none(self):
         assert root_to_slug("") is None
         assert root_to_slug(None) is None
+
+
+class TestWiktextractExtractors:
+    def test_definition_basic(self):
+        entries = [{
+            "pos": "verb",
+            "senses": [
+                {"glosses": ["to say"], "examples": [
+                    {"text": "قَالَ", "english": "He said"},
+                    {"text": "قُلْتُ", "english": "I said"},
+                    {"text": "extra", "english": None},  # should be capped
+                ]},
+                {"glosses": ["to tell"], "tags": ["transitive"]},
+            ],
+        }]
+        result = _build_definition_from_wiktextract(entries)
+        assert result["source"] == "wiktextract"
+        assert len(result["senses"]) == 2
+        first = result["senses"][0]
+        assert first["pos"] == "verb"
+        assert first["gloss"] == "to say"
+        assert len(first["examples"]) == 2  # capped at _MAX_EXAMPLES_PER_SENSE
+        assert first["examples"][0]["text"] == "قَالَ"
+        assert first["examples"][0]["english"] == "He said"
+        # Sense 2 has tags + no examples
+        second = result["senses"][1]
+        assert second["gloss"] == "to tell"
+        assert second["tags"] == ["transitive"]
+        assert "examples" not in second
+
+    def test_definition_joins_subglosses(self):
+        entries = [{
+            "pos": "verb",
+            "senses": [{"glosses": ["to advocate", "to propound"]}],
+        }]
+        result = _build_definition_from_wiktextract(entries)
+        assert result["senses"][0]["gloss"] == "to advocate; to propound"
+
+    def test_definition_merges_multiple_entries(self):
+        entries = [
+            {"pos": "verb", "senses": [{"glosses": ["to say"]}]},
+            {"pos": "noun", "senses": [{"glosses": ["saying"]}]},
+        ]
+        result = _build_definition_from_wiktextract(entries)
+        assert len(result["senses"]) == 2
+        poss = {s["pos"] for s in result["senses"]}
+        assert poss == {"verb", "noun"}
+
+    def test_definition_empty_returns_none(self):
+        assert _build_definition_from_wiktextract([]) is None
+        # entries with no glosses
+        entries = [{"pos": "verb", "senses": [{"glosses": []}]}]
+        assert _build_definition_from_wiktextract(entries) is None
+
+    def test_etymology_basic(self):
+        entries = [{"etymology_text": "From PIE root *bʰeh₂-."}]
+        result = _build_etymology_from_wiktextract(entries)
+        assert result["source"] == "wiktextract"
+        assert "PIE root" in result["text"]
+
+    def test_etymology_dedupes_across_entries(self):
+        entries = [
+            {"etymology_text": "From PIE root *bʰeh₂-."},
+            {"etymology_text": "From PIE root *bʰeh₂-."},  # dup
+            {"etymology_text": "Alternative etymology."},
+        ]
+        result = _build_etymology_from_wiktextract(entries)
+        # Two unique etymologies joined.
+        assert result["text"].count("PIE root") == 1
+        assert "Alternative" in result["text"]
+
+    def test_etymology_missing_returns_none(self):
+        assert _build_etymology_from_wiktextract([]) is None
+        assert _build_etymology_from_wiktextract([{"pos": "verb"}]) is None
+
+    def test_ipa_basic(self):
+        entries = [
+            {"ipa": ["/qaːla/", "/qaːl/"]},
+            {"ipa": ["/qaːla/", "/ɡaːl/"]},  # /qaːla/ is dup
+        ]
+        result = _build_ipa_from_wiktextract(entries)
+        assert result == ["/qaːla/", "/qaːl/", "/ɡaːl/"]
+
+    def test_ipa_missing_returns_none(self):
+        assert _build_ipa_from_wiktextract([]) is None
+        assert _build_ipa_from_wiktextract([{"pos": "verb"}]) is None
+
+
+class TestBuildLemmaWithWiktContent:
+    @pytest.fixture
+    def builder_with_wikt(self):
+        corpus = {"قَالَ": {"count": 5, "paths": ["/books/x:1"]}}
+        # Full slim keyed on undiacritized lex form.
+        wikt_full = {
+            "قال": [{
+                "pos": "verb",
+                "senses": [{"glosses": ["to say"]}],
+                "etymology_text": "From Proto-Semitic.",
+                "ipa": ["/qaːla/"],
+            }],
+        }
+        return WordPageBuilder(
+            corpus_surfaces=corpus,
+            wiktextract_full=wikt_full,
+        )
+
+    def test_lemma_definition_populated(self, builder_with_wikt):
+        page = builder_with_wikt.build_lemma("قَالَ")
+        assert page["definition"] is not None
+        assert page["definition"]["source"] == "wiktextract"
+
+    def test_lemma_etymology_populated(self, builder_with_wikt):
+        page = builder_with_wikt.build_lemma("قَالَ")
+        assert page["etymology"] is not None
+        assert "Proto-Semitic" in page["etymology"]["text"]
+
+    def test_lemma_ipa_populated(self, builder_with_wikt):
+        page = builder_with_wikt.build_lemma("قَالَ")
+        assert page["ipa"] == ["/qaːla/"]
+
+    def test_lemma_translations_still_null(self, builder_with_wikt):
+        # Wiktextract Arabic-side entries don't carry foreign-language
+        # translations; the LLM phase handles those.
+        page = builder_with_wikt.build_lemma("قَالَ")
+        assert page["translations"] is None
+
+    def test_no_wikt_full_leaves_fields_null(self):
+        builder = WordPageBuilder(
+            corpus_surfaces={"قَالَ": {"count": 1, "paths": []}},
+        )
+        page = builder.build_lemma("قَالَ")
+        assert page["definition"] is None
+        assert page["etymology"] is None
+        assert page["ipa"] is None
 
 
 class TestBuildRoot:

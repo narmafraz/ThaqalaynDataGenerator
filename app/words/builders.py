@@ -218,17 +218,23 @@ class WordPageBuilder:
         qac_lemma_index: Optional[Dict[str, Dict]] = None,
         wiktextract_summary: Optional[Dict[str, Dict]] = None,
         lanes_arabic_index: Optional[Dict[str, List[str]]] = None,
+        wiktextract_full: Optional[Dict[str, List[Dict]]] = None,
     ):
         self.corpus_surfaces = corpus_surfaces or {}
         self.qac_lemma_index = qac_lemma_index or {}
         self.wiktextract_summary = wiktextract_summary or {}
         self.lanes_arabic_index = lanes_arabic_index or {}
+        # Optional: the full slim Wiktextract dump (word → [entry, ...]).
+        # When provided, build_lemma() populates definition/etymology/ipa
+        # from it instead of leaving them as null.
+        self.wiktextract_full = wiktextract_full or {}
         # Normalized-form reverse indexes for fuzzy lookups across the
         # three external sources (each uses a slightly different
         # diacritization convention, so we also look up by the
         # alif/ya-unified, diacritic-stripped key).
         self._qac_normalized = _build_normalized_index(self.qac_lemma_index)
         self._wikt_normalized = _build_normalized_index(self.wiktextract_summary)
+        self._wikt_full_normalized = _build_normalized_index(self.wiktextract_full)
         self._lanes_normalized = _build_normalized_list_index(self.lanes_arabic_index)
         # Corpus normalized index — different sources diacritize lemmas
         # differently, and even within the corpus the same word may
@@ -237,6 +243,9 @@ class WordPageBuilder:
         self._corpus_normalized = _build_normalized_corpus_index(
             self.corpus_surfaces
         )
+        # Track lemma → matched Wiktextract entries so the build script
+        # can write a corpus-filtered slim file post-build.
+        self.wikt_matched_lemmas: Dict[str, List[Dict]] = {}
 
     # ---- surface page -----------------------------------------------------
 
@@ -366,6 +375,17 @@ class WordPageBuilder:
             })
 
         root_slug = root_to_slug(root)
+
+        # Merge Wiktextract-derived content where we have data on disk.
+        # Falls back to None when the lemma isn't in Wiktionary's Arabic
+        # entries (~24% of our lemmas) — those go to the LLM phase later.
+        wikt_entries = self._lookup_wiktextract_full(key, gen_lemma)
+        if wikt_entries:
+            self.wikt_matched_lemmas[key] = wikt_entries
+        definition = _build_definition_from_wiktextract(wikt_entries)
+        etymology = _build_etymology_from_wiktextract(wikt_entries)
+        ipa = _build_ipa_from_wiktextract(wikt_entries)
+
         return {
             "lemma": lemma,
             "slug": key,
@@ -381,9 +401,13 @@ class WordPageBuilder:
                 "wiktextract": self._lookup_wiktextract(key, gen_lemma),
                 "lanes": self._lookup_lanes(key, gen_lemma),
             },
+            # Multilingual translations (10 non-English target languages)
+            # still need LLM — Wiktionary's Arabic-side entries don't
+            # carry foreign-language translations.
             "translations": None,
-            "definition": None,
-            "etymology": None,
+            "definition": definition,
+            "etymology": etymology,
+            "ipa": ipa,
         }
 
     # ---- root page --------------------------------------------------------
@@ -486,6 +510,36 @@ class WordPageBuilder:
                 "sense_count": entry.get("sense_count", 0),
             }
         return {"found": False}
+
+    def _lookup_wiktextract_full(
+        self, lemma_diac: str, lemma_lex: str
+    ) -> List[Dict]:
+        """Return the full list of Wiktextract entries for a lemma.
+
+        Same key conventions as :meth:`_lookup_wiktextract` (the summary
+        version) — Wiktionary headwords are typically undiacritized, so
+        try ``lex`` first, then the diacritized form, then normalized
+        fallback.
+
+        Returns an empty list when no entries found OR no full dump was
+        provided to the builder.
+        """
+        if not self.wiktextract_full:
+            return []
+        for key in (lemma_lex, lemma_diac):
+            if not key:
+                continue
+            entries = self.wiktextract_full.get(key)
+            if entries:
+                return entries
+        for key in (lemma_lex, lemma_diac):
+            if not key:
+                continue
+            n = normalize_for_match(key)
+            entries = self._wikt_full_normalized.get(n)
+            if entries:
+                return entries
+        return []
 
     def _lookup_lanes(self, lemma_diac: str, lemma_lex: str) -> Dict:
         """Look up lemma in the Arabic-keyed Lane's index."""
@@ -609,6 +663,125 @@ def _build_normalized_corpus_index(
     for bucket in out.values():
         bucket["paths"] = sorted(set(bucket["paths"]))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Wiktextract → lemma-page content extraction
+# ---------------------------------------------------------------------------
+
+# Cap on examples kept per sense — Wiktextract often has 5+ examples per
+# sense; the surplus blows up file size without much UI value. The full
+# unfiltered list remains in the WordSources slim if a reader wants more.
+_MAX_EXAMPLES_PER_SENSE = 2
+
+
+def _build_definition_from_wiktextract(
+    entries: List[Dict],
+) -> Optional[Dict]:
+    """Build the lemma page's ``definition`` field from Wiktextract entries.
+
+    Output shape:
+        {
+          "source": "wiktextract",
+          "senses": [
+            {"pos": "verb", "gloss": "to say", "tags": [], "examples": [...]},
+            {"pos": "verb", "gloss": "to tell", ...},
+            {"pos": "noun", "gloss": "saying", ...},
+          ]
+        }
+
+    All senses from all entries are concatenated, each tagged with the
+    parent entry's POS so the UI can group them. Empty senses are
+    dropped. Examples are capped (see :data:`_MAX_EXAMPLES_PER_SENSE`).
+
+    Returns ``None`` when there are no usable senses.
+    """
+    if not entries:
+        return None
+    senses: List[Dict] = []
+    for entry in entries:
+        entry_pos = entry.get("pos") or ""
+        for sense in entry.get("senses") or []:
+            glosses = sense.get("glosses") or []
+            if not glosses:
+                continue
+            # Wiktextract sometimes stores multiple sub-glosses under one
+            # sense (e.g., ["to say", "speak"]) — join with semicolons so
+            # they render as one paragraph but the structure is intact.
+            gloss_text = "; ".join(g for g in glosses if g)
+            if not gloss_text:
+                continue
+            sense_entry: Dict = {
+                "pos": entry_pos or None,
+                "gloss": gloss_text,
+            }
+            tags = sense.get("tags") or []
+            if tags:
+                sense_entry["tags"] = tags
+            examples = []
+            for ex in (sense.get("examples") or [])[:_MAX_EXAMPLES_PER_SENSE]:
+                if not ex.get("text"):
+                    continue
+                ex_out = {"text": ex["text"]}
+                if ex.get("english"):
+                    ex_out["english"] = ex["english"]
+                examples.append(ex_out)
+            if examples:
+                sense_entry["examples"] = examples
+            senses.append(sense_entry)
+    if not senses:
+        return None
+    return {"source": "wiktextract", "senses": senses}
+
+
+def _build_etymology_from_wiktextract(
+    entries: List[Dict],
+) -> Optional[Dict]:
+    """Build the lemma page's ``etymology`` field.
+
+    Wiktextract usually stores etymology once per entry (not per sense).
+    When multiple entries exist (different POS), we keep one entry per
+    unique etymology_text. Returns ``None`` if no entry has etymology.
+    """
+    if not entries:
+        return None
+    seen_text: set = set()
+    texts: List[str] = []
+    for entry in entries:
+        et = entry.get("etymology_text")
+        if et and et not in seen_text:
+            seen_text.add(et)
+            texts.append(et)
+    if not texts:
+        return None
+    return {
+        "source": "wiktextract",
+        # Join with a separator so the UI shows distinct etymologies
+        # explicitly. Most lemmas have one; verbs occasionally pair with
+        # a noun entry that shares the etymology.
+        "text": "\n\n".join(texts),
+    }
+
+
+def _build_ipa_from_wiktextract(
+    entries: List[Dict],
+) -> Optional[List[str]]:
+    """Return the deduplicated IPA pronunciation list from Wiktextract.
+
+    The Wiktextract slim already extracts an ``ipa`` list per entry
+    (during the download step). Here we union them across entries and
+    drop duplicates while preserving first-seen order.
+    """
+    if not entries:
+        return None
+    seen: set = set()
+    out: List[str] = []
+    for entry in entries:
+        for ipa in entry.get("ipa") or []:
+            if ipa not in seen:
+                seen.add(ipa)
+                out.append(ipa)
+    return out or None
 
 
 def _lookup_with_fallback(

@@ -49,7 +49,7 @@ LEMMA_REQUIRED_FIELDS = {
     "lemma", "slug", "root", "root_slug", "root_link",
     "pos", "pos_camel", "paradigm",
     "frequency_in_corpus", "cross_references",
-    "translations", "definition", "etymology",
+    "translations", "definition", "etymology", "ipa",
 }
 ROOT_REQUIRED_FIELDS = {
     "root", "slug", "lemmas", "lemma_count", "total_frequency",

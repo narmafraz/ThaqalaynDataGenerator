@@ -57,15 +57,27 @@ logger = logging.getLogger(__name__)
 
 WORD_SOURCES = (PROJECT_ROOT / ".." / "ThaqalaynWordSources").resolve()
 WORDS_OUT = (PROJECT_ROOT / ".." / "ThaqalaynWords").resolve()
+WIKT_CACHE = (PROJECT_ROOT / "tmp" / "wiktextract_cache").resolve()
 
 CORPUS_PATH = WORD_SOURCES / "extracted" / "corpus_surface_set.json"
 QAC_PATH = WORD_SOURCES / "sources" / "quranic-arabic-corpus" / "lemma_index.json"
 WIKT_PATH = WORD_SOURCES / "sources" / "wiktextract-arabic" / "summary_index.json"
 LANES_ORTH_PATH = WORD_SOURCES / "sources" / "lanes-lexicon" / "orth_index.json"
+# The full slim is gitignored (221 MB > GitHub 100 MB file limit). Build
+# script reads it when present; missing → just leaves definition/etymology/
+# ipa as null, same as before this integration.
+WIKT_FULL_PATH = WIKT_CACHE / "wiktextract_arabic_lemmas.json"
 
 
-def load_sources() -> WordPageBuilder:
-    """Load all source indexes and instantiate a builder."""
+def load_sources(load_wikt_full: bool = True) -> WordPageBuilder:
+    """Load all source indexes and instantiate a builder.
+
+    When ``load_wikt_full`` is True (default) and the gitignored full
+    Wiktextract slim is available locally, it's loaded too so the
+    builder can populate definition/etymology/ipa fields. The summary
+    index is always loaded regardless (cheap, drives the found/hit-rate
+    cross-ref column).
+    """
     logger.info("Loading source indexes ...")
     with open(CORPUS_PATH, encoding="utf-8") as f:
         corpus = json.load(f)
@@ -82,7 +94,22 @@ def load_sources() -> WordPageBuilder:
     logger.info("Building Arabic-keyed Lane's index ...")
     lanes_ar = build_lanes_arabic_index(lanes_orth)
     logger.info("  lanes (Arabic)=%d", len(lanes_ar))
-    return WordPageBuilder(corpus, qac, wikt, lanes_ar)
+
+    wikt_full: Optional[Dict] = None
+    if load_wikt_full:
+        if WIKT_FULL_PATH.exists():
+            logger.info("Loading Wiktextract full slim (~221 MB) ...")
+            with open(WIKT_FULL_PATH, encoding="utf-8") as f:
+                wikt_full = json.load(f)
+            logger.info("  wikt_full=%d entries", len(wikt_full))
+        else:
+            logger.info("  wikt_full: not present at %s — lemma "
+                        "definition/etymology/ipa will be null",
+                        WIKT_FULL_PATH)
+
+    return WordPageBuilder(
+        corpus, qac, wikt, lanes_ar, wiktextract_full=wikt_full
+    )
 
 
 def pick_surfaces(
@@ -239,6 +266,25 @@ def main():
             write_page(out_dir / "roots", slug_text, root_page)
         written_roots += 1
 
+    # ----- Write the corpus-filtered Wiktextract slim ----------------
+    # Only the lemmas we actually used. Small enough (typically 30-40 MB)
+    # to commit to WordSources, vs the 221 MB full slim that exceeds
+    # GitHub's per-file limit.
+    if builder.wikt_matched_lemmas and not args.dry_run:
+        corpus_slim_path = (
+            WORD_SOURCES / "sources" / "wiktextract-arabic" /
+            "wiktextract_corpus_lemmas.json"
+        )
+        corpus_slim_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(corpus_slim_path, "w", encoding="utf-8") as f:
+            json.dump(builder.wikt_matched_lemmas, f,
+                      ensure_ascii=False, separators=(",", ":"))
+        size_mb = corpus_slim_path.stat().st_size / 1_000_000
+        logger.info("Wrote corpus-filtered Wiktextract slim: %s "
+                    "(%.1f MB, %d lemmas)",
+                    corpus_slim_path, size_mb,
+                    len(builder.wikt_matched_lemmas))
+
     logger.info("---")
     logger.info("Done.")
     logger.info("  Surfaces written: %d (no_morph: %d)", written_surfaces, no_morph)
@@ -249,6 +295,10 @@ def main():
         logger.info("    QAC: %d (%.1f%%)", qac_hits, 100 * qac_hits / written_lemmas)
         logger.info("    Wiktextract: %d (%.1f%%)", wikt_hits, 100 * wikt_hits / written_lemmas)
         logger.info("    Lane's: %d (%.1f%%)", lanes_hits, 100 * lanes_hits / written_lemmas)
+    if builder.wikt_matched_lemmas:
+        match_pct = 100 * len(builder.wikt_matched_lemmas) / max(written_lemmas, 1)
+        logger.info("  Wikt content merged: %d lemmas (%.1f%%)",
+                    len(builder.wikt_matched_lemmas), match_pct)
 
 
 if __name__ == "__main__":
