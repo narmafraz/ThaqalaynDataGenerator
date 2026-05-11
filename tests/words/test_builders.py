@@ -16,6 +16,7 @@ from app.words.builders import (
     build_lanes_arabic_index,
     canonical_diacritized_lemma,
     perseus_bw_to_arabic,
+    root_to_slug,
 )
 
 
@@ -261,3 +262,66 @@ class TestBuildLemma:
         assert refs["wiktextract"]["found"] is True
         assert refs["lanes"]["found"] is True
         assert "n1" in refs["lanes"]["entry_ids"]
+
+    def test_lemma_has_root_link(self, builder_with_data):
+        page = builder_with_data.build_lemma("قَالَ")
+        # Root link / slug should be set when root is known.
+        assert page["root"] is not None
+        assert page["root_slug"] is not None
+        assert page["root_link"] is not None
+        assert page["root_link"].startswith("/words/roots/")
+        # Slug should have no `.` or `#` (URL-safe).
+        assert "." not in page["root_slug"]
+        assert "#" not in page["root_slug"]
+
+    def test_paradigm_has_no_redundant_diacritized(self, builder_with_data):
+        page = builder_with_data.build_lemma("قَالَ")
+        for entry in page["paradigm"]:
+            # We dropped paradigm[].diacritized — only `form` remains.
+            assert "diacritized" not in entry
+
+
+class TestRootToSlug:
+    def test_basic_root(self):
+        assert root_to_slug("ك.ت.ب") == "ك-ت-ب"
+
+    def test_hollow_root_uses_underscore(self):
+        # Weak/hollow radical # → _
+        assert root_to_slug("ق.#.ل") == "ق-_-ل"
+
+    def test_no_dots_or_hashes_in_output(self):
+        s = root_to_slug("ق.#.ل")
+        assert "." not in s
+        assert "#" not in s
+
+    def test_foreign_returns_none(self):
+        assert root_to_slug("FOREIGN") is None
+
+    def test_empty_returns_none(self):
+        assert root_to_slug("") is None
+        assert root_to_slug(None) is None
+
+
+class TestBuildRoot:
+    def test_basic(self, builder_with_data):
+        lemmas = [
+            {"slug": "قَالَ", "pos": "V", "frequency": 7066},
+            {"slug": "أَقَالَ", "pos": "V", "frequency": 123},
+            {"slug": "قَوْل", "pos": "N", "frequency": 200},
+        ]
+        page = builder_with_data.build_root("ق.#.ل", lemmas)
+        assert page["root"] == "ق.#.ل"
+        assert page["slug"] == "ق-_-ل"
+        assert page["lemmas"] == lemmas  # caller-supplied order preserved
+        assert page["lemma_count"] == 3
+        assert page["total_frequency"] == 7066 + 123 + 200
+        # LLM-fillable fields are null
+        assert page["translations"] is None
+        assert page["definition"] is None
+        assert page["etymology"] is None
+
+    def test_empty_lemmas(self, builder_with_data):
+        page = builder_with_data.build_root("ك.ت.ب", [])
+        assert page["lemma_count"] == 0
+        assert page["total_frequency"] == 0
+        assert page["lemmas"] == []

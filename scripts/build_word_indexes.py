@@ -85,6 +85,7 @@ def build_lemmas_index(words_dir: Path) -> List[Dict]:
         entries.append({
             "slug": data.get("slug"),
             "root": data.get("root"),
+            "root_slug": data.get("root_slug"),
             "pos": data.get("pos"),
             "frequency": data.get("frequency_in_corpus", 0),
             "paradigm_size": len(paradigm),
@@ -94,6 +95,30 @@ def build_lemmas_index(words_dir: Path) -> List[Dict]:
             "has_lanes": bool(refs.get("lanes", {}).get("found")),
         })
     entries.sort(key=lambda e: (-(e["frequency"] or 0), e["slug"] or ""))
+    return entries
+
+
+def build_roots_index(words_dir: Path) -> List[Dict]:
+    """Walk roots/ and produce a flat index entry per file."""
+    roots_dir = words_dir / "roots"
+    if not roots_dir.is_dir():
+        # Backward-compat — caller may have output predating roots/.
+        return []
+    entries: List[Dict] = []
+    for p in roots_dir.glob("*.json"):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.warning("Skipping %s: %s", p.name, e)
+            continue
+        entries.append({
+            "slug": data.get("slug"),
+            "root": data.get("root"),
+            "lemma_count": data.get("lemma_count", 0),
+            "total_frequency": data.get("total_frequency", 0),
+        })
+    entries.sort(key=lambda e: (-(e["total_frequency"] or 0), e["slug"] or ""))
     return entries
 
 
@@ -108,24 +133,32 @@ def main():
 
     surfaces = build_surfaces_index(words_dir)
     lemmas = build_lemmas_index(words_dir)
+    roots = build_roots_index(words_dir)
     logger.info("  surfaces: %d", len(surfaces))
     logger.info("  lemmas: %d", len(lemmas))
+    logger.info("  roots: %d", len(roots))
 
     index_dir = words_dir / "index"
     index_dir.mkdir(parents=True, exist_ok=True)
 
     surfaces_out = index_dir / "surfaces.json"
     lemmas_out = index_dir / "lemmas.json"
+    roots_out = index_dir / "roots.json"
     with open(surfaces_out, "w", encoding="utf-8") as f:
         json.dump({"total": len(surfaces), "surfaces": surfaces},
                   f, ensure_ascii=False, separators=(",", ":"))
     with open(lemmas_out, "w", encoding="utf-8") as f:
         json.dump({"total": len(lemmas), "lemmas": lemmas},
                   f, ensure_ascii=False, separators=(",", ":"))
+    with open(roots_out, "w", encoding="utf-8") as f:
+        json.dump({"total": len(roots), "roots": roots},
+                  f, ensure_ascii=False, separators=(",", ":"))
     logger.info("Wrote %s (%d KB)",
                 surfaces_out, surfaces_out.stat().st_size // 1024)
     logger.info("Wrote %s (%d KB)",
                 lemmas_out, lemmas_out.stat().st_size // 1024)
+    logger.info("Wrote %s (%d KB)",
+                roots_out, roots_out.stat().st_size // 1024)
 
 
 if __name__ == "__main__":

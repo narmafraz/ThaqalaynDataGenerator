@@ -46,8 +46,13 @@ SURFACE_REQUIRED_FIELDS = {
     "morphology", "lemma_link",
 }
 LEMMA_REQUIRED_FIELDS = {
-    "lemma", "slug", "root", "pos", "pos_camel", "paradigm",
+    "lemma", "slug", "root", "root_slug", "root_link",
+    "pos", "pos_camel", "paradigm",
     "frequency_in_corpus", "cross_references",
+    "translations", "definition", "etymology",
+}
+ROOT_REQUIRED_FIELDS = {
+    "root", "slug", "lemmas", "lemma_count", "total_frequency",
     "translations", "definition", "etymology",
 }
 
@@ -152,6 +157,64 @@ def check_link_integrity(words_dir: Path) -> Tuple[int, int, int]:
     return checked, broken, no_link
 
 
+def check_root_link_integrity(words_dir: Path) -> Tuple[int, int, int]:
+    """Verify every lemma's root_link points to a real root file.
+
+    Returns (checked, broken, no_link).
+    """
+    lemmas_dir = words_dir / "lemmas"
+    roots_dir = words_dir / "roots"
+
+    if not roots_dir.is_dir():
+        return 0, 0, 0
+    existing_roots = {p.stem for p in roots_dir.glob("*.json")}
+
+    checked = 0
+    broken = 0
+    no_link = 0
+    for p in lemmas_dir.glob("*.json"):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        checked += 1
+        link = data.get("root_link")
+        if not link:
+            no_link += 1
+            continue
+        slug = link.rsplit("/", 1)[-1]
+        if safe_filename(slug) not in existing_roots:
+            broken += 1
+    return checked, broken, no_link
+
+
+def check_root_file(p: Path) -> List[str]:
+    """Return a list of issue codes for one root file."""
+    issues: List[str] = []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return ["bad_json"]
+    missing = ROOT_REQUIRED_FIELDS - data.keys()
+    if missing:
+        issues.append(f"missing_fields:{','.join(sorted(missing))}")
+    slug = data.get("slug")
+    if slug and safe_filename(slug) + ".json" != p.name:
+        issues.append("slug_filename_mismatch")
+    # lemma_count must match len(lemmas)
+    declared = data.get("lemma_count", 0)
+    actual = len(data.get("lemmas") or [])
+    if declared != actual:
+        issues.append("lemma_count_mismatch")
+    # total_frequency must match sum
+    total = sum(l.get("frequency", 0) or 0 for l in (data.get("lemmas") or []))
+    if total != data.get("total_frequency", 0):
+        issues.append("total_frequency_mismatch")
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
@@ -200,12 +263,32 @@ def main():
     for issue, n in l_issues.most_common():
         logger.info("    %s: %d", issue, n)
 
-    logger.info("Checking surface→lemma link integrity ...")
-    checked, broken, no_link = check_link_integrity(words_dir)
-    logger.info("  checked: %d, broken: %d, no_link: %d",
-                checked, broken, no_link)
+    roots_dir = words_dir / "roots"
+    r_count = 0
+    r_issues: Counter = Counter()
+    if roots_dir.is_dir():
+        r_count, r_issues = walk_and_check(roots_dir, check_root_file)
+        logger.info("  roots: %d files", r_count)
+        for issue, n in r_issues.most_common():
+            logger.info("    %s: %d", issue, n)
 
-    total_issues = sum(s_issues.values()) + sum(l_issues.values()) + broken
+    logger.info("Checking surface→lemma link integrity ...")
+    s_checked, s_broken, s_no_link = check_link_integrity(words_dir)
+    logger.info("  checked: %d, broken: %d, no_link: %d",
+                s_checked, s_broken, s_no_link)
+
+    logger.info("Checking lemma→root link integrity ...")
+    rl_checked, rl_broken, rl_no_link = check_root_link_integrity(words_dir)
+    logger.info("  checked: %d, broken: %d, no_link: %d",
+                rl_checked, rl_broken, rl_no_link)
+
+    total_issues = (
+        sum(s_issues.values())
+        + sum(l_issues.values())
+        + sum(r_issues.values())
+        + s_broken
+        + rl_broken
+    )
     logger.info("---")
     logger.info("Total issue rows: %d", total_issues)
 

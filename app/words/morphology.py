@@ -96,29 +96,43 @@ def analyze(surface_form: str) -> List[Dict]:
 
 
 def get_best_analysis(surface_form: str) -> Optional[Dict]:
-    """Return the most-frequent analysis for a surface form.
+    """Return the most-probable analysis for a surface form.
 
-    Simple disambiguation: when multiple analyses exist, prefer the one
-    with the highest ``pos_freq`` (POS-frequency log-probability) which
-    CAMeL Tools provides directly on each analysis dict. Falls back to
-    the first analysis if frequencies are equal.
+    Disambiguation by descending preference:
 
-    Args:
-        surface_form: Arabic token.
-
-    Returns:
-        Single analysis dict or None if no analyses found.
+    1. **Diacritization match** — if any analysis's ``diac`` equals the
+       input surface form, prefer that one. The analyzer often returns
+       several lex candidates for an ambiguous surface; the one whose
+       ``diac`` exactly reproduces the input is the most-faithful read.
+    2. **lex_logprob** — log probability of (surface, lex, pos), populated
+       in the calima-msa-r13 database. Higher (closer to 0) = more
+       probable. We tried ``pos_freq`` first but it is ``None`` for every
+       analysis in this DB build — see the disambiguator note in
+       :func:`canonical_diacritized_lemma`.
+    3. **pos_lex_logprob** — fallback log probability when lex_logprob
+       is also missing.
+    4. Insertion order — the analyzer's natural ordering as last resort.
     """
     analyses = analyze(surface_form)
     if not analyses:
         return None
-    # Prefer highest pos_freq (log-prob, closer to 0 = more common)
-    def _freq_key(a):
+    # 1. exact diacritization match (best signal we have)
+    target_diac = slug(surface_form)
+    exact_diac = [a for a in analyses if slug(a.get("diac", "")) == target_diac]
+    pool = exact_diac if exact_diac else analyses
+
+    def _logprob(a, key):
+        v = a.get(key)
         try:
-            return float(a.get("pos_freq", "-99"))
+            return float(v)
         except (TypeError, ValueError):
-            return -99.0
-    return max(analyses, key=_freq_key)
+            return float("-inf")
+
+    # 2/3. score by lex_logprob with pos_lex_logprob tiebreaker
+    return max(
+        pool,
+        key=lambda a: (_logprob(a, "lex_logprob"), _logprob(a, "pos_lex_logprob")),
+    )
 
 
 def extract_lemma(surface_form: str) -> Optional[str]:

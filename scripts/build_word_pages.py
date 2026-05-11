@@ -165,12 +165,14 @@ def main():
     if not args.dry_run:
         (out_dir / "surfaces").mkdir(parents=True, exist_ok=True)
         (out_dir / "lemmas").mkdir(parents=True, exist_ok=True)
+        (out_dir / "roots").mkdir(parents=True, exist_ok=True)
 
     # Stats
     written_surfaces = 0
     written_lemmas = 0
-    skipped_lemmas: Set[str] = set()
     seen_lemmas: Set[str] = set()
+    # root → list of {slug, pos, frequency} for root-page assembly.
+    lemmas_by_root: Dict[str, List[Dict]] = {}
     no_morph = 0
     qac_hits = 0
     wikt_hits = 0
@@ -207,14 +209,41 @@ def main():
         if refs.get("lanes", {}).get("found"):
             lanes_hits += 1
 
+        # Bucket for root assembly (skip lemmas with no/foreign root).
+        lemma_root = lemma_page.get("root")
+        if lemma_root and lemma_root != "FOREIGN":
+            lemmas_by_root.setdefault(lemma_root, []).append({
+                "slug": lemma_page["slug"],
+                "pos": lemma_page.get("pos"),
+                "frequency": lemma_page.get("frequency_in_corpus", 0),
+            })
+
         if not args.dry_run:
             write_page(out_dir / "lemmas", lemma_slug, lemma_page)
         written_lemmas += 1
+
+    # ----- Build root pages from the accumulated lemmas_by_root --------
+    from app.words.builders import root_to_slug
+    written_roots = 0
+    for root, lemmas in lemmas_by_root.items():
+        # Sort lemmas within a root by descending corpus frequency
+        # so the root page's UI defaults are sensible.
+        lemmas_sorted = sorted(
+            lemmas, key=lambda l: -(l.get("frequency") or 0)
+        )
+        root_page = builder.build_root(root, lemmas_sorted)
+        slug_text = root_to_slug(root)
+        if not slug_text:
+            continue
+        if not args.dry_run:
+            write_page(out_dir / "roots", slug_text, root_page)
+        written_roots += 1
 
     logger.info("---")
     logger.info("Done.")
     logger.info("  Surfaces written: %d (no_morph: %d)", written_surfaces, no_morph)
     logger.info("  Unique lemmas written: %d", written_lemmas)
+    logger.info("  Roots written: %d", written_roots)
     logger.info("  Cross-ref hits:")
     if written_lemmas:
         logger.info("    QAC: %d (%.1f%%)", qac_hits, 100 * qac_hits / written_lemmas)

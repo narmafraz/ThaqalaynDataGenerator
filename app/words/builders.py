@@ -63,6 +63,33 @@ def _get_bw2ar():
     return CharMapper.builtin_mapper("bw2ar")
 
 
+def root_to_slug(root: Optional[str]) -> Optional[str]:
+    """Convert a CAMeL root (``ق.#.ل``) to a URL-safe slug (``ق-_-ل``).
+
+    Transformations:
+
+    - ``.`` (CAMeL's radical separator) → ``-`` (URL-friendly, avoids
+      router-extension-detection edge cases).
+    - ``#`` (CAMeL's weak/hollow-radical placeholder) → ``_``. ``_`` is
+      URL-safe in path segments AND never appears in CAMeL root
+      strings (Arabic letters + ``.`` + ``#`` only), so it can't
+      collide with a real root.
+
+    Returns ``None`` for empty/None input. CAMeL's "FOREIGN" sentinel
+    root (used for unknown tokens) maps to ``None`` so we don't write
+    a root page for it.
+
+    Examples:
+        ``ق.#.ل`` (root q-w-l, "say") → ``ق-_-ل``
+        ``ك.ت.ب`` (root k-t-b, "write") → ``ك-ت-ب``
+    """
+    if not root:
+        return None
+    if root == "FOREIGN":
+        return None
+    return root.replace(".", "-").replace("#", "_")
+
+
 def perseus_bw_to_arabic(bw: str) -> str:
     """Convert a Perseus-encoded Buckwalter string to NFC Arabic.
 
@@ -251,7 +278,6 @@ class WordPageBuilder:
                 canonical_diacritized_lemma(lex, pos_camel) if lex else None
             )
             morph = {
-                "lex": lex,
                 "lemma_slug": lemma_slug,
                 "root": analysis.get("root") or None,
                 "pos": POS_TRANSLATION_TO_OURS.get(pos_camel),
@@ -331,7 +357,6 @@ class WordPageBuilder:
             paradigm.append({
                 "role": entry.get("role"),
                 "form": form_key,
-                "diacritized": entry.get("diacritized"),
                 "in_corpus": in_corpus,
                 "count": count,
                 "asp": entry.get("asp"),
@@ -340,10 +365,13 @@ class WordPageBuilder:
                 "num": entry.get("num"),
             })
 
+        root_slug = root_to_slug(root)
         return {
             "lemma": lemma,
             "slug": key,
             "root": root,
+            "root_slug": root_slug,
+            "root_link": f"/words/roots/{root_slug}" if root_slug else None,
             "pos": pos_label,
             "pos_camel": pos_camel,
             "paradigm": paradigm,
@@ -353,6 +381,48 @@ class WordPageBuilder:
                 "wiktextract": self._lookup_wiktextract(key, gen_lemma),
                 "lanes": self._lookup_lanes(key, gen_lemma),
             },
+            "translations": None,
+            "definition": None,
+            "etymology": None,
+        }
+
+    # ---- root page --------------------------------------------------------
+
+    def build_root(self, root: str, lemmas: List[Dict]) -> Dict:
+        """Build a root-page dict.
+
+        Args:
+            root: The CAMeL root string (e.g., ``ق.#.ل``).
+            lemmas: List of lemma summary dicts. Each must have at least
+                ``slug``, ``pos``, ``frequency_in_corpus``. Ordering is
+                preserved as supplied — caller decides sort.
+
+        Output shape:
+            {
+              "root": "ق.#.ل",
+              "slug": "ق-#-ل",
+              "lemmas": [
+                {"slug": "قالَ", "pos": "V", "frequency": 7066},
+                {"slug": "أَقالَ", "pos": "V", "frequency": 123},
+                ...
+              ],
+              "lemma_count": 18,
+              "total_frequency": 7204,
+              "translations": null,
+              "definition": null,
+              "etymology": null,
+            }
+        """
+        total = sum(l.get("frequency", 0) or 0 for l in lemmas)
+        return {
+            "root": root,
+            "slug": root_to_slug(root),
+            "lemmas": lemmas,
+            "lemma_count": len(lemmas),
+            "total_frequency": total,
+            # Future LLM-filled fields — the root carries a shared
+            # semantic gloss across all its lemmas (e.g. "speech /
+            # saying" for ق-و-ل).
             "translations": None,
             "definition": None,
             "etymology": None,
