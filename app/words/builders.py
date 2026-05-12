@@ -63,6 +63,18 @@ def _get_bw2ar():
     return CharMapper.builtin_mapper("bw2ar")
 
 
+# Same Arabic-diacritic set as the scraper's strip_diacritics — kept in
+# sync. Used to derive the hawramani lookup key from a lemma's NFC slug.
+_ARABIC_DIACRITICS = set("ًٌٍَُِّْٰـ")
+
+
+def strip_arabic_diacritics(s: Optional[str]) -> str:
+    """Remove Arabic diacritic marks while preserving alif/ya/hamza variants."""
+    if not s:
+        return ""
+    return "".join(c for c in s if c not in _ARABIC_DIACRITICS)
+
+
 def root_to_slug(root: Optional[str]) -> Optional[str]:
     """Convert a CAMeL root (``ق.#.ل``) to a URL-safe slug (``ق-_-ل``).
 
@@ -220,6 +232,7 @@ class WordPageBuilder:
         lanes_arabic_index: Optional[Dict[str, List[str]]] = None,
         wiktextract_full: Optional[Dict[str, List[Dict]]] = None,
         lanes_entries: Optional[Dict[str, Dict]] = None,
+        hawramani_entries: Optional[Dict[str, Dict]] = None,
     ):
         self.corpus_surfaces = corpus_surfaces or {}
         self.qac_lemma_index = qac_lemma_index or {}
@@ -233,6 +246,13 @@ class WordPageBuilder:
         # n-prefixed IDs that appear in cross_references.lanes.entry_ids).
         # When provided, build_lemma() populates lanes_definition.
         self.lanes_entries = lanes_entries or {}
+        # Optional: structured hawramani classical-lexicon entries keyed
+        # by fetched_slug (the diacritic-stripped Arabic word that we
+        # used to fetch the page). When provided, build_lemma() populates
+        # classical_definitions with content from 38+ classical lexicons
+        # including al-Mufradat (Raghib), Lisan al-Arab, Taj al-Arus,
+        # Mufradat (Farahi), Misbah al-Munir, etc.
+        self.hawramani_entries = hawramani_entries or {}
         # Normalized-form reverse indexes for fuzzy lookups across the
         # three external sources (each uses a slightly different
         # diacritization convention, so we also look up by the
@@ -399,6 +419,14 @@ class WordPageBuilder:
             self.lanes_entries, lanes_entry_ids
         )
 
+        # Merge hawramani's multi-lexicon classical-Arabic-lexicon
+        # content (al-Mufradat, Lisan al-Arab, Taj al-Arus, etc.). The
+        # lookup key is the diacritic-stripped lemma form, matching
+        # the scraper's URL slug.
+        classical_definitions = _build_classical_definitions_from_hawramani(
+            self.hawramani_entries, key, gen_lemma,
+        )
+
         return {
             "lemma": lemma,
             "slug": key,
@@ -422,6 +450,7 @@ class WordPageBuilder:
             "etymology": etymology,
             "ipa": ipa,
             "lanes_definition": lanes_definition,
+            "classical_definitions": classical_definitions,
         }
 
     # ---- root page --------------------------------------------------------
@@ -695,6 +724,91 @@ def _build_normalized_corpus_index(
     for bucket in out.values():
         bucket["paths"] = sorted(set(bucket["paths"]))
     return out
+
+
+# ---------------------------------------------------------------------------
+# hawramani classical lexicons → lemma-page content extraction
+# ---------------------------------------------------------------------------
+
+
+def _build_classical_definitions_from_hawramani(
+    hawramani_entries: Dict[str, Dict],
+    lemma_diac: str,
+    lemma_lex: str,
+) -> Optional[Dict]:
+    """Build the ``classical_definitions`` field from hawramani data.
+
+    Looks up the lemma's diacritic-stripped form in the hawramani index
+    (keyed by ``fetched_slug``). For the matching page, picks the
+    matching headword block (preferring the headword whose stripped form
+    matches the lemma; otherwise the first non-empty block) and emits
+    one entry per lexicon.
+
+    Output shape:
+        {
+          "source": "hawramani",
+          "url": "https://arabiclexicon.hawramani.com/{slug}/",
+          "headword_ar": "قال",
+          "entries": [
+            {"lexicon_id": "dictionary_31", "lexicon_en": ..., "lexicon_ar": ...,
+             "permalink": ..., "body_html": "..."},
+            ...
+          ]
+        }
+
+    Returns ``None`` when no entries are found.
+    """
+    if not hawramani_entries:
+        return None
+    # Try multiple key forms — the scraper uses stripped-diacritics
+    # form so check that first, then raw diacritized as fallback.
+    keys_to_try = []
+    for k in (lemma_diac, lemma_lex):
+        if not k:
+            continue
+        stripped = strip_arabic_diacritics(k)
+        if stripped and stripped not in keys_to_try:
+            keys_to_try.append(stripped)
+        if k not in keys_to_try:
+            keys_to_try.append(k)
+    page = None
+    matched_key = None
+    for k in keys_to_try:
+        page = hawramani_entries.get(k)
+        if page:
+            matched_key = k
+            break
+    if not page:
+        return None
+    headwords = page.get("headwords") or []
+    if not headwords:
+        return None
+
+    # Pick the headword block whose Arabic form most closely matches our
+    # lemma. Preference order:
+    #   1. headword whose stripped form == our lemma_diac stripped form
+    #   2. first headword with non-empty entries
+    target_stripped = strip_arabic_diacritics(lemma_diac)
+    chosen: Optional[Dict] = None
+    for hw in headwords:
+        hw_stripped = strip_arabic_diacritics(hw.get("headword_ar", ""))
+        if hw_stripped == target_stripped and hw.get("entries"):
+            chosen = hw
+            break
+    if chosen is None:
+        for hw in headwords:
+            if hw.get("entries"):
+                chosen = hw
+                break
+    if chosen is None:
+        return None
+
+    return {
+        "source": "hawramani",
+        "url": page.get("url"),
+        "headword_ar": chosen.get("headword_ar"),
+        "entries": list(chosen.get("entries") or []),
+    }
 
 
 # ---------------------------------------------------------------------------

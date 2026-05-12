@@ -8,6 +8,7 @@ camel_tools = pytest.importorskip("camel_tools")
 
 from app.words.builders import (
     WordPageBuilder,
+    _build_classical_definitions_from_hawramani,
     _build_definition_from_wiktextract,
     _build_etymology_from_wiktextract,
     _build_ipa_from_wiktextract,
@@ -22,6 +23,7 @@ from app.words.builders import (
     canonical_diacritized_lemma,
     perseus_bw_to_arabic,
     root_to_slug,
+    strip_arabic_diacritics,
 )
 
 
@@ -452,6 +454,122 @@ class TestLanesExtractors:
         builder = WordPageBuilder()
         result = builder._lookup_lanes("xxx", "xxx")
         assert result == {"found": False}
+
+
+class TestStripArabicDiacritics:
+    def test_basic(self):
+        # قَالَ → قال
+        assert strip_arabic_diacritics("قَالَ") == "قال"
+
+    def test_preserves_alif_variants(self):
+        # We strip diacritics but NOT alif/ya/hamza unification
+        assert strip_arabic_diacritics("أَرَادَ") == "أراد"  # hamza preserved
+        assert strip_arabic_diacritics("إِبْرَاهِيم") == "إبراهيم"
+
+    def test_empty(self):
+        assert strip_arabic_diacritics("") == ""
+        assert strip_arabic_diacritics(None) == ""
+
+
+class TestClassicalDefinitionsFromHawramani:
+    @pytest.fixture
+    def hawramani_data(self):
+        return {
+            "قال": {
+                "fetched_slug": "قال",
+                "url": "https://arabiclexicon.hawramani.com/قال/",
+                "headwords": [
+                    {
+                        "headword_ar": "قال",
+                        "summary": "Entries on قال in 2 dictionaries",
+                        "entries": [
+                            {"lexicon_id": "dictionary_31",
+                             "lexicon_en": "Al-Rāghib, Mufradāt",
+                             "lexicon_ar": "المفردات",
+                             "permalink": "https://x/#1",
+                             "body_html": "<p>قال body</p>"},
+                            {"lexicon_id": "dictionary_1",
+                             "lexicon_en": "Ibn Manẓūr, Lisān",
+                             "lexicon_ar": "لسان العرب",
+                             "permalink": "https://x/#2",
+                             "body_html": "<p>lisan body</p>"},
+                        ],
+                    },
+                    # second headword with different stripped form — won't match
+                    {"headword_ar": "قِيلَ", "summary": "...",
+                     "entries": [{"lexicon_id": "dictionary_1",
+                                  "lexicon_en": "x", "lexicon_ar": "",
+                                  "permalink": "", "body_html": "qīla body"}]},
+                ],
+            },
+        }
+
+    def test_basic_lookup(self, hawramani_data):
+        result = _build_classical_definitions_from_hawramani(
+            hawramani_data, "قَالَ", "قال",
+        )
+        assert result is not None
+        assert result["source"] == "hawramani"
+        assert result["url"] == "https://arabiclexicon.hawramani.com/قال/"
+        assert result["headword_ar"] == "قال"  # matched stripped form
+        assert len(result["entries"]) == 2
+        assert result["entries"][0]["lexicon_id"] == "dictionary_31"
+
+    def test_no_match_returns_none(self, hawramani_data):
+        result = _build_classical_definitions_from_hawramani(
+            hawramani_data, "xxxnotfound", "xxxnotfound",
+        )
+        assert result is None
+
+    def test_empty_index_returns_none(self):
+        assert _build_classical_definitions_from_hawramani({}, "قَالَ", "قال") is None
+
+    def test_picks_headword_block_matching_stripped_form(self, hawramani_data):
+        # When the page has multiple headword blocks, prefer the one
+        # whose stripped form matches our lemma's stripped form.
+        result = _build_classical_definitions_from_hawramani(
+            hawramani_data, "قَالَ", "قال",
+        )
+        # قَالَ.strip = قال — should match the "قال" block, not "قِيلَ".
+        assert result["headword_ar"] == "قال"
+        # The "قِيلَ" block has only one entry; "قال" has two.
+        assert len(result["entries"]) == 2
+
+
+class TestBuildLemmaWithHawramaniContent:
+    def test_lemma_classical_definitions_populated(self):
+        corpus = {"قَالَ": {"count": 1, "paths": []}}
+        hawramani = {
+            "قال": {
+                "fetched_slug": "قال",
+                "url": "https://arabiclexicon.hawramani.com/قال/",
+                "headwords": [
+                    {"headword_ar": "قال", "summary": "x",
+                     "entries": [{"lexicon_id": "dictionary_31",
+                                  "lexicon_en": "Mufradāt",
+                                  "lexicon_ar": "المفردات",
+                                  "permalink": "https://x/#1",
+                                  "body_html": "<p>body</p>"}]},
+                ],
+            },
+        }
+        builder = WordPageBuilder(
+            corpus_surfaces=corpus,
+            hawramani_entries=hawramani,
+        )
+        page = builder.build_lemma("قَالَ")
+        cd = page["classical_definitions"]
+        assert cd is not None
+        assert cd["source"] == "hawramani"
+        assert len(cd["entries"]) == 1
+        assert cd["entries"][0]["lexicon_id"] == "dictionary_31"
+
+    def test_lemma_classical_definitions_null_without_data(self):
+        builder = WordPageBuilder(
+            corpus_surfaces={"قَالَ": {"count": 1, "paths": []}},
+        )
+        page = builder.build_lemma("قَالَ")
+        assert page["classical_definitions"] is None
 
 
 class TestBuildLemmaWithLanesContent:
