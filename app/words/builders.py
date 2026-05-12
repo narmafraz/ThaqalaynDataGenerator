@@ -219,6 +219,7 @@ class WordPageBuilder:
         wiktextract_summary: Optional[Dict[str, Dict]] = None,
         lanes_arabic_index: Optional[Dict[str, List[str]]] = None,
         wiktextract_full: Optional[Dict[str, List[Dict]]] = None,
+        lanes_entries: Optional[Dict[str, Dict]] = None,
     ):
         self.corpus_surfaces = corpus_surfaces or {}
         self.qac_lemma_index = qac_lemma_index or {}
@@ -228,6 +229,10 @@ class WordPageBuilder:
         # When provided, build_lemma() populates definition/etymology/ipa
         # from it instead of leaving them as null.
         self.wiktextract_full = wiktextract_full or {}
+        # Optional: structured Lane's entries keyed by entry_id (the
+        # n-prefixed IDs that appear in cross_references.lanes.entry_ids).
+        # When provided, build_lemma() populates lanes_definition.
+        self.lanes_entries = lanes_entries or {}
         # Normalized-form reverse indexes for fuzzy lookups across the
         # three external sources (each uses a slightly different
         # diacritization convention, so we also look up by the
@@ -386,6 +391,14 @@ class WordPageBuilder:
         etymology = _build_etymology_from_wiktextract(wikt_entries)
         ipa = _build_ipa_from_wiktextract(wikt_entries)
 
+        # Merge Lane's Lexicon structured entries where available. These
+        # provide classical English-language definitions covering ~67% of
+        # our lemmas and complement Wiktextract (which leans modern).
+        lanes_entry_ids = self._find_lanes_entry_ids(key, gen_lemma)
+        lanes_definition = _build_lanes_definition(
+            self.lanes_entries, lanes_entry_ids
+        )
+
         return {
             "lemma": lemma,
             "slug": key,
@@ -408,6 +421,7 @@ class WordPageBuilder:
             "definition": definition,
             "etymology": etymology,
             "ipa": ipa,
+            "lanes_definition": lanes_definition,
         }
 
     # ---- root page --------------------------------------------------------
@@ -542,23 +556,41 @@ class WordPageBuilder:
         return []
 
     def _lookup_lanes(self, lemma_diac: str, lemma_lex: str) -> Dict:
-        """Look up lemma in the Arabic-keyed Lane's index."""
-        # Direct match first.
+        """Look up lemma in the Arabic-keyed Lane's index.
+
+        Returns ``{found, entry_ids, search_url}``. ``search_url`` is a
+        generic WordPress-search link on lanelexicon.com that opens a
+        results page for the lemma (no stable per-entry deep linking is
+        available on any Lane's viewer).
+        """
+        entry_ids = self._find_lanes_entry_ids(lemma_diac, lemma_lex)
+        if entry_ids:
+            search_url = _build_lanes_search_url(lemma_diac or lemma_lex)
+            return {
+                "found": True,
+                "entry_ids": entry_ids,
+                "search_url": search_url,
+            }
+        return {"found": False}
+
+    def _find_lanes_entry_ids(
+        self, lemma_diac: str, lemma_lex: str
+    ) -> List[str]:
+        """Resolve entry-id list for a lemma (direct or normalized)."""
         for key in (lemma_diac, lemma_lex):
             if not key:
                 continue
             entry_ids = self.lanes_arabic_index.get(key)
             if entry_ids:
-                return {"found": True, "entry_ids": entry_ids}
-        # Normalized fallback.
+                return entry_ids
         for key in (lemma_diac, lemma_lex):
             if not key:
                 continue
             n = normalize_for_match(key)
             entry_ids = self._lanes_normalized.get(n)
             if entry_ids:
-                return {"found": True, "entry_ids": entry_ids}
-        return {"found": False}
+                return entry_ids
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -663,6 +695,82 @@ def _build_normalized_corpus_index(
     for bucket in out.values():
         bucket["paths"] = sorted(set(bucket["paths"]))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Lane's Lexicon → lemma-page content extraction
+# ---------------------------------------------------------------------------
+
+import urllib.parse as _urllib_parse
+
+
+def _build_lanes_search_url(lemma_or_lex: str) -> Optional[str]:
+    """Return the lanelexicon.com WordPress-search URL for a lemma.
+
+    No Lane's viewer offers stable per-entry-id deep linking, so we
+    fall back to a search URL on lanelexicon.com that takes the user
+    to a results page for the lemma. The lemma is percent-encoded.
+    """
+    if not lemma_or_lex:
+        return None
+    return (
+        "https://lanelexicon.com/?s="
+        + _urllib_parse.quote(lemma_or_lex, safe="")
+    )
+
+
+def _build_lanes_definition(
+    lanes_entries: Dict[str, Dict],
+    entry_ids: List[str],
+) -> Optional[Dict]:
+    """Build a lemma page's ``lanes_definition`` field from Lane's entries.
+
+    Given the list of Lane's entry IDs that match a lemma (provided by
+    :meth:`WordPageBuilder._find_lanes_entry_ids`), pulls each entry's
+    structured body from ``lanes_entries`` and returns a payload the UI
+    can render.
+
+    Output shape:
+        {
+          "source": "lanes",
+          "entries": [
+            {
+              "entry_id": "n42874",
+              "headword_ar": "قَالَ",
+              "root": "qwl",
+              "body": [<segments — italic_en / arabic / text / quote /
+                       page_break>],
+              "source_refs": ["S", "K", ...]
+            },
+            ...
+          ]
+        }
+
+    Returns ``None`` when the lemma has no Lane's entries OR none of its
+    entry IDs are present in the supplied index (e.g., when the
+    structured index file is missing — same fallback behavior as the
+    Wiktextract path).
+
+    Body segments are NOT truncated or capped — full content preserved
+    per user direction.
+    """
+    if not entry_ids or not lanes_entries:
+        return None
+    entries: List[Dict] = []
+    for eid in entry_ids:
+        entry = lanes_entries.get(eid)
+        if not entry:
+            continue
+        entries.append({
+            "entry_id": eid,
+            "headword_ar": entry.get("headword_ar") or None,
+            "root": entry.get("root") or None,
+            "body": entry.get("body") or [],
+            "source_refs": entry.get("source_refs") or [],
+        })
+    if not entries:
+        return None
+    return {"source": "lanes", "entries": entries}
 
 
 # ---------------------------------------------------------------------------

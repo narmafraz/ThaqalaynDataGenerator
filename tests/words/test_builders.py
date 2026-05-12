@@ -11,6 +11,8 @@ from app.words.builders import (
     _build_definition_from_wiktextract,
     _build_etymology_from_wiktextract,
     _build_ipa_from_wiktextract,
+    _build_lanes_definition,
+    _build_lanes_search_url,
     _build_normalized_index,
     _build_normalized_list_index,
     _extract_clitics,
@@ -389,6 +391,115 @@ class TestWiktextractExtractors:
     def test_ipa_missing_returns_none(self):
         assert _build_ipa_from_wiktextract([]) is None
         assert _build_ipa_from_wiktextract([{"pos": "verb"}]) is None
+
+
+class TestLanesExtractors:
+    def test_search_url_basic(self):
+        url = _build_lanes_search_url("قَالَ")
+        assert url is not None
+        assert url.startswith("https://lanelexicon.com/?s=")
+        # Arabic must be percent-encoded
+        assert "قَالَ" not in url
+
+    def test_search_url_empty(self):
+        assert _build_lanes_search_url("") is None
+        assert _build_lanes_search_url(None) is None
+
+    def test_definition_basic(self):
+        lanes_entries = {
+            "n1": {
+                "headword_ar": "قَالَ",
+                "root": "qwl",
+                "body": [{"kind": "italic_en", "text": "He said"}],
+                "source_refs": ["S", "K"],
+            },
+        }
+        result = _build_lanes_definition(lanes_entries, ["n1"])
+        assert result["source"] == "lanes"
+        assert len(result["entries"]) == 1
+        first = result["entries"][0]
+        assert first["entry_id"] == "n1"
+        assert first["headword_ar"] == "قَالَ"
+        assert first["source_refs"] == ["S", "K"]
+        assert len(first["body"]) == 1
+
+    def test_definition_multiple_entries(self):
+        lanes_entries = {
+            "n1": {"headword_ar": "قَالَ", "body": [], "source_refs": []},
+            "n2": {"headword_ar": "قَالَ", "body": [], "source_refs": []},
+        }
+        result = _build_lanes_definition(lanes_entries, ["n1", "n2"])
+        assert len(result["entries"]) == 2
+        assert [e["entry_id"] for e in result["entries"]] == ["n1", "n2"]
+
+    def test_definition_missing_entries_returns_none(self):
+        # No entry_ids
+        assert _build_lanes_definition({"n1": {}}, []) is None
+        # entry_ids that don't exist in the index
+        assert _build_lanes_definition({"n1": {}}, ["n99"]) is None
+        # No index provided
+        assert _build_lanes_definition({}, ["n1"]) is None
+
+    def test_lanes_lookup_includes_search_url(self):
+        # WordPageBuilder._lookup_lanes should include search_url when found.
+        builder = WordPageBuilder(lanes_arabic_index={"قال": ["n1"]})
+        result = builder._lookup_lanes("قال", "قال")
+        assert result["found"] is True
+        assert result["entry_ids"] == ["n1"]
+        assert result["search_url"].startswith("https://lanelexicon.com/?s=")
+
+    def test_lanes_lookup_no_search_url_when_not_found(self):
+        builder = WordPageBuilder()
+        result = builder._lookup_lanes("xxx", "xxx")
+        assert result == {"found": False}
+
+
+class TestBuildLemmaWithLanesContent:
+    @pytest.fixture
+    def builder_with_lanes(self):
+        corpus = {"قَالَ": {"count": 1, "paths": []}}
+        return WordPageBuilder(
+            corpus_surfaces=corpus,
+            lanes_arabic_index={"قال": ["n1", "n2"]},
+            lanes_entries={
+                "n1": {
+                    "headword_ar": "قَالَ",
+                    "root": "qwl",
+                    "body": [
+                        {"kind": "italic_en", "text": "He said; uttered"},
+                        {"kind": "text", "text": "(S, K)"},
+                    ],
+                    "source_refs": ["S", "K"],
+                },
+                "n2": {
+                    "headword_ar": "قَالَ",
+                    "root": "qyl",
+                    "body": [{"kind": "italic_en", "text": "He napped"}],
+                    "source_refs": ["Mgh"],
+                },
+            },
+        )
+
+    def test_lemma_lanes_definition_populated(self, builder_with_lanes):
+        page = builder_with_lanes.build_lemma("قَالَ")
+        ld = page["lanes_definition"]
+        assert ld is not None
+        assert ld["source"] == "lanes"
+        # Both entries from cross_references should be merged.
+        assert len(ld["entries"]) == 2
+
+    def test_lemma_lanes_definition_null_without_index(self):
+        # Lane's cross-ref found but no structured index → null definition
+        builder = WordPageBuilder(
+            corpus_surfaces={"قَالَ": {"count": 1, "paths": []}},
+            lanes_arabic_index={"قال": ["n1"]},
+            lanes_entries={},
+        )
+        page = builder.build_lemma("قَالَ")
+        assert page["lanes_definition"] is None
+        # But the cross-ref still reports found + search URL.
+        assert page["cross_references"]["lanes"]["found"] is True
+        assert page["cross_references"]["lanes"]["search_url"] is not None
 
 
 class TestBuildLemmaWithWiktContent:

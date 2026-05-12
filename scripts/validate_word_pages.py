@@ -50,6 +50,7 @@ LEMMA_REQUIRED_FIELDS = {
     "pos", "pos_camel", "paradigm",
     "frequency_in_corpus", "cross_references",
     "translations", "definition", "etymology", "ipa",
+    "lanes_definition",
 }
 ROOT_REQUIRED_FIELDS = {
     "root", "slug", "lemmas", "lemma_count", "total_frequency",

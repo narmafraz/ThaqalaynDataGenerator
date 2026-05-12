@@ -63,6 +63,9 @@ CORPUS_PATH = WORD_SOURCES / "extracted" / "corpus_surface_set.json"
 QAC_PATH = WORD_SOURCES / "sources" / "quranic-arabic-corpus" / "lemma_index.json"
 WIKT_PATH = WORD_SOURCES / "sources" / "wiktextract-arabic" / "summary_index.json"
 LANES_ORTH_PATH = WORD_SOURCES / "sources" / "lanes-lexicon" / "orth_index.json"
+LANES_ENTRIES_PATH = (
+    WORD_SOURCES / "sources" / "lanes-lexicon" / "lanes_entries.json"
+)
 # The full slim is gitignored (221 MB > GitHub 100 MB file limit). Build
 # script reads it when present; missing → just leaves definition/etymology/
 # ipa as null, same as before this integration.
@@ -107,8 +110,23 @@ def load_sources(load_wikt_full: bool = True) -> WordPageBuilder:
                         "definition/etymology/ipa will be null",
                         WIKT_FULL_PATH)
 
+    lanes_entries: Optional[Dict] = None
+    if LANES_ENTRIES_PATH.exists():
+        logger.info("Loading Lane's structured entries ...")
+        with open(LANES_ENTRIES_PATH, encoding="utf-8") as f:
+            lanes_entries = json.load(f)
+        logger.info("  lanes_entries=%d entries", len(lanes_entries))
+    else:
+        logger.info(
+            "  lanes_entries: not present at %s — lanes_definition "
+            "field will be null. Run: python "
+            "scripts/build_lanes_structured.py", LANES_ENTRIES_PATH,
+        )
+
     return WordPageBuilder(
-        corpus, qac, wikt, lanes_ar, wiktextract_full=wikt_full
+        corpus, qac, wikt, lanes_ar,
+        wiktextract_full=wikt_full,
+        lanes_entries=lanes_entries,
     )
 
 
