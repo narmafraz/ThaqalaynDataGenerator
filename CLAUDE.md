@@ -31,13 +31,18 @@ uv sync --all-extras
 > **See also:** [`../Thaqalayn/docs/COMMANDS.md`](../Thaqalayn/docs/COMMANDS.md) — comprehensive ecosystem-wide command reference (scrapers, AI pipeline, monitoring, salvage, deployment). The notes below cover this repo's specifics.
 
 ```bash
-# Using PowerShell script (sets up environment automatically)
+# Hadith pipeline (Quran + Al-Kafi + ThaqalaynAPI books + narrators + AI merge)
 ./add_data.ps1
 
 # Or manually with uv
 export PYTHONPATH="$PWD:$PWD/app"
 export DESTINATION_DIR="../ThaqalaynData/"
 uv run python app/main_add.py
+
+# ThaqalaynWords pipeline (surfaces/lemmas/roots/index — separate from
+# add_data.ps1 because the word build is slow and word data changes rarely).
+# Run after a builders.py change or when the corpus grows.
+./regen_words.ps1
 ```
 
 The main generation pipeline (`app/main_add.py`) runs these steps in order:
