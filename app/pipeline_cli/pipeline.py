@@ -491,7 +491,11 @@ async def call_llm(
     Returns the same dict format regardless of backend:
         {result, cost, output_tokens, elapsed, stop_reason, num_turns, ...}
     """
-    if backend == "openai":
+    # "spark" is an alias for "openai" — both use the OpenAI-compatible SDK
+    # path. When the model name starts with qwen36-*, call_openai auto-detects
+    # the Spark base_url; explicit `--backend spark` makes that intent obvious
+    # without changing behaviour. See `is_spark_model()` in openai_backend.py.
+    if backend in ("openai", "spark"):
         from app.pipeline_cli.openai_backend import call_openai
         return await call_openai(
             system_prompt, user_message,
@@ -966,7 +970,7 @@ async def process_verse_phased(
         # (invalid topic enums, surah-name Quran refs) — see
         # PHASE4_OPENWEIGHT_BENCHMARK.md Phase 1 section.
         p1_kwargs = {}
-        if config.backend == "openai":
+        if config.backend in ("openai", "spark"):
             from app.pipeline_cli.openai_backend import is_spark_model
             if is_spark_model(config.phase1_model):
                 from app.pipeline_cli.phased_prompts import build_phase1_schema
@@ -1664,8 +1668,10 @@ def main():
     parser.add_argument("--attempt-quarantined", action="store_true", help="Include quarantined verses in queue (default: skip them)")
     parser.add_argument("--quarantined-only", action="store_true", help="Build queue from quarantine/ directory only (excludes unprocessed corpus items). Implies --attempt-quarantined.")
     parser.add_argument("--v3", action="store_true", help="Use v3 format (compact word_analysis with translations) instead of v4 word_tags")
-    parser.add_argument("--backend", default="claude", choices=["claude", "openai"],
-                        help="LLM backend: 'claude' (claude -p, default) or 'openai' (OpenAI API)")
+    parser.add_argument("--backend", default="claude", choices=["claude", "openai", "spark"],
+                        help="LLM backend: 'claude' (claude -p, default), 'openai' (OpenAI API), or "
+                             "'spark' (DGX Spark via OpenAI-compatible vLLM endpoint — same code path "
+                             "as 'openai' but clearer intent when using qwen36-* models).")
     parser.add_argument("--openai-model", default="gpt-4.1-mini",
                         help="OpenAI model when --backend=openai (default: gpt-4.1-mini)")
     parser.add_argument("--phased", action="store_true",
