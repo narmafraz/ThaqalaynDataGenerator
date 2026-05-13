@@ -143,6 +143,39 @@ def build_phase1_user_message(request: PipelineRequest) -> str:
    abrogation, ahlulbayt_virtues, anger_control, backbiting, barzakh, charity, community, companions, consultation, death_dying, dhikr, divine_attributes, divine_decree, divine_justice, divine_knowledge, etiquette, etiquette_of_dua, events, fasting, fasting_rulings, financial_law, forbidding_evil, friendship, ghadir, gratitude, hadith_sciences, hajj, halal_haram, honesty, hospitality, humility, ignorance, imamate, imams_biography, inheritance, intercession, judicial_rulings, justice_system, karbala, kinship, leadership, marriage_family_law, miracles, mosque_etiquette, neighbors, night_prayer, occasions_of_revelation, oppression, orphans, paradise_hell, parenting, patience, poverty_wealth, prayer_rulings, prophethood, prophetic_character, prophets, quran_interpretation_method, quran_recitation, quran_virtues, reasoning, reckoning, religious_authority, repentance, resurrection, rights_of_others, rights_of_rulers, ritual_purity, salat, scholars_virtues, seeking_forgiveness, seeking_knowledge, seeking_refuge, signs_of_end, sincerity, specific_supplications, spousal_rights, sunnah, tafsir_specific_verse, tawhid, teaching, times_for_dua, trade_ethics, trust, usury, womens_rights, work_livelihood, zakat_khums
    CRITICAL: Use ONLY keys from the list above. Do NOT use tag names (theology, ethics, etc.) as topics — those are different fields.""")
 
+    # Few-shot examples for chunk segmentation. Per SPARK_OPTIMIZATION_LOG.md
+    # Round B (2026-05-13), adding these examples lifted Phase 1 chunk-count
+    # parity vs the gpt-5.4 baseline from 57% → 67% on Qwen 3.6 (and also
+    # fixed a 1-verse parse error). Effect on gpt-5.4 itself: noise (gpt-5.4
+    # was already doing fine-grained chunking).
+    parts.append("""
+
+FEW-SHOT EXAMPLES (illustrating the expected chunking granularity):
+
+Example 1 — short isnad + body, 2 chunks:
+Input Arabic: "محمد بن يحيى، عن أحمد بن محمد، عن أبي عبد الله عليه السلام قال: الصلاة عمود الدين."
+Expected chunks:
+  [
+    {"chunk_type": "isnad", "arabic_text": "<diacritized isnad>", "translations": {"en": "Muhammad ibn Yahya narrated from Ahmad ibn Muhammad, from Abu Abdillah (peace be upon him) who said:"}},
+    {"chunk_type": "body", "arabic_text": "<diacritized matn>", "translations": {"en": "Salat is the pillar of religion."}}
+  ]
+
+Example 2 — isnad + body + Quran quote + closing, 4 chunks:
+Input Arabic: "روى محمد بن الفضيل عن أبي عبد الله عليه السلام قال: إذا طلق الرجل امرأته قبل أن يدخل بها فلها نصف مهرها، فمتاع بالمعروف على الموسع قدره وعلى المقتر قدره، وليس لها عدة تتزوج من شاءت من ساعتها."
+Expected chunks:
+  [
+    {"chunk_type": "isnad", "arabic_text": "<diacritized isnad>", "translations": {"en": "Muhammad ibn al-Fudayl narrated from Abu Abdillah (peace be upon him) who said:"}},
+    {"chunk_type": "body", "arabic_text": "<diacritized body up to the Quran quote>", "translations": {"en": "If a man divorces his wife before consummating the marriage, she is entitled to half of her dowry."}},
+    {"chunk_type": "quran_quote", "arabic_text": "فَمَتَاعٌ بِالْمَعْرُوفِ عَلَى الْمُوسِعِ قَدَرُهُ وَعَلَى الْمُقْتِرِ قَدَرُهُ", "translations": {"en": "Then provision should be made in a fair manner, according to the means of the wealthy and according to the means of the poor."}},
+    {"chunk_type": "closing", "arabic_text": "<diacritized closing>", "translations": {"en": "And there is no waiting period for her; she may marry whomever she wishes immediately."}}
+  ]
+
+CHUNKING RULES (reinforce):
+- Always separate isnad from matn into their own chunks
+- Always make Quran verses (recognised by phrasing or known formulae) into their own chunk_type=quran_quote
+- Closing formulae (e.g. independent legal-ruling statements after the main narration) get their own chunk_type=closing
+- Prefer more chunks at finer boundaries over fewer big chunks""")
+
     return "\n".join(parts)
 
 
@@ -173,15 +206,31 @@ def build_phase1_schema(topic_taxonomy: Optional[dict] = None) -> dict:
     if topic_taxonomy is None:
         topic_taxonomy = load_topic_taxonomy()
 
-    # Extract the closed set of topic keys from the taxonomy. Falls back to
-    # the inline list in build_phase1_user_message if taxonomy not available.
+    # Extract the closed set of topic keys from the taxonomy. The taxonomy
+    # shape is {"taxonomy": {<L1_key>: {"topics": {<L2_key>: ...}, ...}, ...}}.
+    # Falls back to the inline list below if anything is unexpected.
     topic_keys: list[str] = []
-    if topic_taxonomy and topic_taxonomy.get("taxonomy"):
-        for l1 in topic_taxonomy["taxonomy"]:
-            for l2 in l1.get("subtopics", []) or l1.get("level_2", []) or []:
-                key = l2.get("key") if isinstance(l2, dict) else l2
-                if isinstance(key, str):
-                    topic_keys.append(key)
+    try:
+        taxonomy_root = (topic_taxonomy or {}).get("taxonomy", {})
+        if isinstance(taxonomy_root, dict):
+            for l1_value in taxonomy_root.values():
+                if not isinstance(l1_value, dict):
+                    continue
+                l2_dict = l1_value.get("topics") or l1_value.get("subtopics") or {}
+                if isinstance(l2_dict, dict):
+                    for l2_key in l2_dict.keys():
+                        if isinstance(l2_key, str):
+                            topic_keys.append(l2_key)
+                elif isinstance(l2_dict, list):
+                    for item in l2_dict:
+                        if isinstance(item, dict):
+                            key = item.get("key") or item.get("id")
+                            if isinstance(key, str):
+                                topic_keys.append(key)
+                        elif isinstance(item, str):
+                            topic_keys.append(item)
+    except (AttributeError, TypeError):
+        topic_keys = []
     if not topic_keys:
         # Inline fallback matching the prompt
         topic_keys = [
@@ -210,6 +259,10 @@ def build_phase1_schema(topic_taxonomy: Optional[dict] = None) -> dict:
             "work_livelihood", "zakat_khums",
         ]
 
+    # NOTE: tried adding `description` strings to schema properties in Round C
+    # (SPARK_OPTIMIZATION_LOG.md 2026-05-13). Confirmed no measurable effect on
+    # Qwen 3.6 + vLLM 0.1.dev1+gbfde49e28 — descriptions are NOT used as
+    # decode-time conditioning hints for this stack. Keeping the schema lean.
     return {
         "type": "object",
         "properties": {

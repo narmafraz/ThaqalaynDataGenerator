@@ -20,7 +20,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
-BENCH_DIR = REPO_ROOT / "benchmark" / "phase1_qwen"
+import argparse
+_cli = argparse.ArgumentParser()
+_cli.add_argument("--bench-dir", default="benchmark/phase1_qwen")
+_args = _cli.parse_args()
+BENCH_DIR = REPO_ROOT / _args.bench_dir
 RESULTS_DIR = BENCH_DIR / "results"
 SOURCE_DATA_DIR = REPO_ROOT.parent / "ThaqalaynDataSources"
 BASELINE_DIR = SOURCE_DATA_DIR / "ai-content" / "corpus" / "responses"

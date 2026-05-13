@@ -350,17 +350,24 @@ async def _translate_chunks_per_language(
             en_text, LANG_FULL_NAMES[lang],
             arabic_context=arabic_text if chunk_idx == 0 else "",
         )
+        # max_tokens=600 chosen per SPARK_OPTIMIZATION_LOG.md Round D:
+        # tighter budget halves the `}`-loop wasted-token problem and reduces
+        # parse failures (single-language chunk translations are ~150-400
+        # tokens; 600 is enough for the longest, tight enough to clip degenerate
+        # outputs early).
         cr = await _call_with_retry(
             PER_LANG_SYSTEM_PROMPT, user, chunk_schema,
-            "chunk_translation", max_tokens=2048,
+            "chunk_translation", max_tokens=600,
         )
         return ("chunk", chunk_idx, lang, cr)
 
     async def call_meta_lang(lang: str) -> tuple:
         user = _per_lang_meta_user(en_summary, en_seo, LANG_FULL_NAMES[lang])
+        # max_tokens=400 per Round D — summary+seo_question in one language
+        # is consistently ~100-200 tokens.
         cr = await _call_with_retry(
             PER_LANG_SYSTEM_PROMPT, user, meta_schema,
-            "meta_translation", max_tokens=1024,
+            "meta_translation", max_tokens=400,
         )
         return ("meta", None, lang, cr)
 
