@@ -518,6 +518,44 @@ async def call_llm(
         )
 
 
+def _ensure_model_provenance_sidecar(responses_dir: str, models: list) -> None:
+    """Write a single model_provenance.json next to responses/ describing each
+    non-canonical model used in this output dir.
+
+    Keeping this as a sidecar (rather than embedding in every response file)
+    avoids ~24 MB of duplicated repro info on a 48K-verse corpus run. Anyone
+    inspecting a response's `ai_attribution.model` can look up the same dir's
+    `model_provenance.json` for the upstream HF repo, quantization, vLLM
+    image and serving config.
+
+    Cheap to call repeatedly — idempotent merge-write.
+    """
+    from app.pipeline_cli.openai_backend import get_model_provenance
+    parent = os.path.dirname(os.path.abspath(responses_dir))
+    path = os.path.join(parent, "model_provenance.json")
+    existing: dict = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            existing = {}
+    changed = False
+    for m in models:
+        if not m or m in existing:
+            continue
+        prov = get_model_provenance(m)
+        if prov:
+            existing[m] = prov
+            changed = True
+    if changed:
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, ensure_ascii=False, indent=2)
+        except OSError as e:
+            logger.warning("Could not write model_provenance.json: %s", e)
+
+
 def quarantine_verse(verse_id: str, error: str, responses_dir: str) -> None:
     """Move a failed verse to the quarantine directory."""
     quarantine_dir = os.path.join(os.path.dirname(responses_dir), "quarantine")
@@ -1111,6 +1149,14 @@ async def process_verse_phased(
         phase4_actual_model = full_result.pop("_phase4_actual_model", None) or config.phase4_model
 
         attribution_model_str = f"phased_{phase1_actual_model}+{phase4_actual_model}"
+
+        # Ensure the model_provenance.json sidecar exists for this output dir.
+        # It maps each model name we used → repro info (HF repo, quantization,
+        # inference backend). Written once per run rather than embedded in
+        # every response file (would be 24 MB of duplication on 48K verses).
+        _ensure_model_provenance_sidecar(
+            responses_dir, [phase1_actual_model, phase4_actual_model],
+        )
 
         # ── Validate using existing infrastructure ────────────────────
         errors = validate_result(full_result)
@@ -1744,6 +1790,17 @@ def main():
     # Phased pipeline defaults to OpenAI backend unless explicitly set to claude
     if args.phased and args.backend == "claude" and "--backend" not in sys.argv:
         args.backend = "openai"
+
+    # When --backend spark, default both phase models to qwen36-fast (the
+    # production-validated Spark alias). User can still override either with
+    # an explicit --phase1-model / --phase4-model. We detect "didn't pass"
+    # by checking sys.argv directly so this works even when the default
+    # equals what the user typed.
+    if args.backend == "spark":
+        if "--phase1-model" not in sys.argv:
+            args.phase1_model = "qwen36-fast"
+        if "--phase4-model" not in sys.argv:
+            args.phase4_model = "qwen36-fast"
 
     # Determine model based on backend
     gen_model = args.model

@@ -107,6 +107,62 @@ def is_spark_model(model: str) -> bool:
     return model.startswith(SPARK_MODEL_PREFIX)
 
 
+# Reproduction info for models that don't have a canonical public identifier
+# in their served name. vLLM's --served-model-name is just an alias — to
+# reproduce someone needs the upstream Hugging Face repo, the inference
+# backend image, and the serving config. We attach this to ai_attribution so
+# a future reader can find the actual model from the JSON alone.
+#
+# Look up by both the canonical name (qwen36-35b-heretic) and any aliases
+# (qwen36-fast, qwen36-deep) so the table works regardless of which name
+# the request used or the server echoed back.
+MODEL_PROVENANCE: dict[str, dict] = {
+    # 35B-A3B MoE (heretic-tuned, NVFP4) — the production model
+    "qwen36-35b-heretic": {
+        "hf_repo": "AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4",
+        "drafter_hf_repo": "z-lab/Qwen3.6-35B-A3B-DFlash",
+        "base_model": "Qwen/Qwen3.6-35B-A3B",
+        "quantization": "NVFP4",
+        "inference_backend": "vllm via ghcr.io/aeon-7/vllm-spark-omni-q36:v1.2",
+        "hardware": "NVIDIA DGX Spark (GB10, SM_121)",
+        "reasoning_parser": "qwen3 (thinking disabled via chat_template_kwargs)",
+        "notes": "Served with --enable-prefix-caching, --quantization compressed-tensors, "
+                 "--speculative-config dflash, --max-num-seqs 16, --max-model-len 65536. "
+                 "VLLM_NVFP4_GEMM_BACKEND=marlin required for SM_121.",
+    },
+    # The 27B is documented but crash-loops on the v1.2 image (Marlin tile
+    # constraint — size_n=96 not divisible by tile_n_size=64). Kept for
+    # future reference if the image is fixed.
+    "qwen36-27b": {
+        "hf_repo": "sakamakismile/Qwen3.6-27B-NVFP4",
+        "base_model": "Qwen/Qwen3.6-27B",
+        "quantization": "NVFP4",
+        "inference_backend": "vllm via ghcr.io/aeon-7/vllm-spark-omni-q36:v1.2",
+        "hardware": "NVIDIA DGX Spark (GB10, SM_121)",
+        "notes": "BROKEN on v1.2 image — Marlin kernel tile-size constraint. Awaiting image fix.",
+    },
+}
+
+# Aliases that route to the same underlying weights
+_MODEL_ALIASES = {
+    "qwen36-fast": "qwen36-35b-heretic",  # T=0 alias
+    "qwen36-deep": "qwen36-35b-heretic",  # T=0.7 alias (same weights)
+}
+
+
+def get_model_provenance(model: str) -> Optional[dict]:
+    """Return reproduction info for a model, or None if not tracked.
+
+    Looks up `model` directly first, then via the alias map. Returns a copy
+    so callers can't mutate the canonical table.
+    """
+    if not model:
+        return None
+    key = _MODEL_ALIASES.get(model, model)
+    entry = MODEL_PROVENANCE.get(key)
+    return dict(entry) if entry else None
+
+
 def archive_raw_response(
     raw_archive_dir: Optional[str],
     verse_id: Optional[str],
