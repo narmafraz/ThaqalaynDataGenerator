@@ -251,14 +251,33 @@ def _per_lang_chunk_schema() -> dict:
     }
 
 
-def _per_lang_meta_schema() -> dict:
+def _per_lang_meta_schema(num_key_terms: int = 0) -> dict:
+    """Schema for the per-language meta call. Optionally includes a
+    positional array of key_terms translations.
+
+    We use a positional array (rather than an object keyed by the Arabic
+    terms) because vLLM's strict json_schema corrupts non-ASCII property
+    names — Arabic UTF-8 keys come back as `?` placeholders. The caller
+    zips the returned `key_terms_values` array back onto the original
+    Arabic keys in order.
+    """
+    properties: dict = {
+        "summary": {"type": "string"},
+        "seo_question": {"type": "string"},
+    }
+    required = ["summary", "seo_question"]
+    if num_key_terms > 0:
+        properties["key_terms_values"] = {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": num_key_terms,
+            "maxItems": num_key_terms,
+        }
+        required.append("key_terms_values")
     return {
         "type": "object",
-        "properties": {
-            "summary": {"type": "string"},
-            "seo_question": {"type": "string"},
-        },
-        "required": ["summary", "seo_question"],
+        "properties": properties,
+        "required": required,
         "additionalProperties": False,
     }
 
@@ -275,13 +294,40 @@ def _per_lang_chunk_user(en_text: str, lang_name: str, arabic_context: str = "")
     return "\n".join(parts)
 
 
-def _per_lang_meta_user(en_summary: str, en_seo: str, lang_name: str) -> str:
-    return (
-        f"Translate the following English texts into {lang_name}.\n"
-        'Output JSON of the form: {"summary": "...", "seo_question": "..."}\n\n'
-        f"English summary: {en_summary}\n"
-        f"English SEO question: {en_seo}"
-    )
+def _per_lang_meta_user(
+    en_summary: str, en_seo: str, en_key_terms: dict, lang_name: str
+) -> str:
+    """Build the per-language meta translation prompt.
+
+    If `en_key_terms` is non-empty, also asks the model for a positional
+    array of translated definitions. The keys are Arabic and stay attached
+    on our side; the model only translates the English definitions.
+    """
+    parts = [f"Translate the following English texts into {lang_name}."]
+    if en_key_terms:
+        parts.append(
+            'Output JSON of the form: {"summary": "...", "seo_question": "...", '
+            '"key_terms_values": ["<translated def 1>", "<translated def 2>", ...]}.'
+        )
+        parts.append(
+            "For key_terms_values: translate ONLY the English definition for each entry. "
+            "Do NOT include the Arabic term in the output string. Preserve order."
+        )
+    else:
+        parts.append('Output JSON of the form: {"summary": "...", "seo_question": "..."}.')
+    parts.append("")
+    parts.append(f"English summary: {en_summary}")
+    parts.append(f"English SEO question: {en_seo}")
+    if en_key_terms:
+        parts.append("")
+        parts.append(
+            f"Key terms to translate ({len(en_key_terms)} entries, return values in same order):"
+        )
+        for i, (ar_term, en_def) in enumerate(en_key_terms.items(), 1):
+            # Arabic term given for context (so the model can disambiguate
+            # polysemous English definitions); the output should NOT include it.
+            parts.append(f"  {i}. [Arabic: {ar_term}] {en_def}")
+    return "\n".join(parts)
 
 
 async def _translate_chunks_per_language(
@@ -307,9 +353,12 @@ async def _translate_chunks_per_language(
     en_trans = result.get("translations", {}).get("en", {})
     en_summary = en_trans.get("summary", "")
     en_seo = en_trans.get("seo_question", "")
+    en_key_terms = en_trans.get("key_terms", {}) or {}
+    ar_key_term_keys = list(en_key_terms.keys())  # preserved order
+    num_key_terms = len(ar_key_term_keys)
 
     chunk_schema = _per_lang_chunk_schema()
-    meta_schema = _per_lang_meta_schema()
+    meta_schema = _per_lang_meta_schema(num_key_terms=num_key_terms)
     sem = asyncio.Semaphore(PER_LANG_WORKERS)
 
     async def _call_with_retry(system, user, schema, name, max_tokens):
@@ -362,12 +411,14 @@ async def _translate_chunks_per_language(
         return ("chunk", chunk_idx, lang, cr)
 
     async def call_meta_lang(lang: str) -> tuple:
-        user = _per_lang_meta_user(en_summary, en_seo, LANG_FULL_NAMES[lang])
-        # max_tokens=400 per Round D — summary+seo_question in one language
-        # is consistently ~100-200 tokens.
+        user = _per_lang_meta_user(en_summary, en_seo, en_key_terms, LANG_FULL_NAMES[lang])
+        # max_tokens scales with key_terms — base 400 for summary+seo plus
+        # ~50 tokens per key_term translation. With up to ~8 key terms that's
+        # +400; cap at 1024 to allow generous headroom.
+        meta_max_tokens = min(1024, 400 + 50 * num_key_terms)
         cr = await _call_with_retry(
             PER_LANG_SYSTEM_PROMPT, user, meta_schema,
-            "meta_translation", max_tokens=400,
+            "meta_translation", max_tokens=meta_max_tokens,
         )
         return ("meta", None, lang, cr)
 
@@ -421,7 +472,22 @@ async def _translate_chunks_per_language(
                 translations[lang] = {}
             translations[lang]["summary"] = parsed.get("summary", "")
             translations[lang]["seo_question"] = parsed.get("seo_question", "")
-            translations[lang].setdefault("key_terms", {})
+            # Reattach Arabic keys to the positional translated values.
+            # vLLM's strict schema corrupts non-ASCII property names, so the
+            # model returns just the values; we keep the keys on our side.
+            kt_values = parsed.get("key_terms_values", []) or []
+            if ar_key_term_keys and len(kt_values) == len(ar_key_term_keys):
+                translations[lang]["key_terms"] = dict(
+                    zip(ar_key_term_keys, kt_values)
+                )
+            else:
+                if ar_key_term_keys and kt_values:
+                    logger.warning(
+                        "Phase4(per-lang) %s key_terms length mismatch: "
+                        "expected %d, got %d — leaving key_terms empty for this lang",
+                        lang, len(ar_key_term_keys), len(kt_values),
+                    )
+                translations[lang].setdefault("key_terms", {})
             result["translations"] = translations
 
     _fill_empty_translations(result)
