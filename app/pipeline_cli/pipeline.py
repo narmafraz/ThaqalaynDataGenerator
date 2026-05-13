@@ -234,6 +234,7 @@ class PipelineConfig:
     skip_scholarly: bool = False
     phase1_model: str = "gpt-5.4"
     phase4_model: str = "gpt-4.1-mini"
+    phase3_model: str = "sonnet"  # Claude by default — Phase 3 is scholarly
     # Derived paths (set by run_pipeline)
     stats_dir: str = ""
     logs_dir: str = ""
@@ -1100,7 +1101,8 @@ async def process_verse_phased(
         # ── Phase 3: Scholarly enrichment (optional) ──────────────────
         if not config.skip_scholarly:
             from app.pipeline_cli.scholarly_phase import enrich_scholarly
-            logger.info("P3-SCHOLARLY %s...", verse_id)
+            logger.info("P3-SCHOLARLY %s (%s/%s)...",
+                        verse_id, config.backend, config.phase3_model)
             async with semaphore:
                 if shutdown_event.is_set():
                     return VerseResult(verse_id=verse_id, status="skipped")
@@ -1109,8 +1111,8 @@ async def process_verse_phased(
                     arabic_text=request.arabic_text,
                     book_name=request.book_name,
                     chapter_title=request.chapter_title,
-                    backend="claude",
-                    model="sonnet",
+                    backend=config.backend,
+                    model=config.phase3_model,
                     verse_id=verse_id,
                     raw_archive_dir=os.path.join(
                         os.path.dirname(responses_dir), "raw_responses"
@@ -1741,6 +1743,10 @@ def main():
                         help="Model for Phase 4 translation (with --phased, default: gpt-4.1-mini). "
                              "Set via PHASE4_OPENWEIGHT_BENCHMARK.md (2026-05-12): gpt-5.4-mini gave no "
                              "quality lift over gpt-4.1-mini at ~5× the output cost.")
+    parser.add_argument("--phase3-model", default="sonnet",
+                        help="Model for Phase 3 scholarly enrichment (default: sonnet via claude -p). "
+                             "Phase 3 still runs only when --skip-scholarly is absent. "
+                             "When --backend spark, defaults to qwen36-fast.")
     parser.add_argument("--skip-merge", action="store_true",
                         help="Skip merging AI content into ThaqalaynData after run")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
@@ -1778,6 +1784,7 @@ def main():
         rt_config = PipelineConfig(
             workers=args.workers,
             phase4_model=args.phase4_model,
+            phase3_model=args.phase3_model,
             responses_dir=args.responses_dir,
             max_verses=args.max_verses,
         )
@@ -1801,6 +1808,8 @@ def main():
             args.phase1_model = "qwen36-fast"
         if "--phase4-model" not in sys.argv:
             args.phase4_model = "qwen36-fast"
+        if "--phase3-model" not in sys.argv:
+            args.phase3_model = "qwen36-fast"
 
     # Determine model based on backend
     gen_model = args.model
@@ -1830,6 +1839,7 @@ def main():
         skip_scholarly=args.skip_scholarly,
         phase1_model=args.phase1_model,
         phase4_model=args.phase4_model,
+        phase3_model=args.phase3_model,
     )
 
     # Load verse paths

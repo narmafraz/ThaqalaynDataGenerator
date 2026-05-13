@@ -322,7 +322,7 @@ python -m app.pipeline_cli.pipeline --phased --book al-kafi --workers 20
 # Phased with custom Phase 1 model, skip scholarly phase
 python -m app.pipeline_cli.pipeline --phased --phase1-model gpt-4.1-mini --skip-scholarly --book al-kafi
 
-# DGX Spark / Qwen 3.6 for Phase 4 (free, ~$270 saved on 48K verses)
+# DGX Spark / Qwen 3.6 hybrid (Phase 1 OpenAI, Phase 4 Spark)
 # Auto-detects Spark from qwen36-* model name; sets json_schema response_format,
 # enables thinking-disable, uses per-language calls (PHASE4_OPENWEIGHT_BENCHMARK.md).
 # `--backend spark` is an alias for `--backend openai` (same code path; the OpenAI
@@ -330,10 +330,12 @@ python -m app.pipeline_cli.pipeline --phased --phase1-model gpt-4.1-mini --skip-
 python -m app.pipeline_cli.pipeline --phased --skip-scholarly --backend spark \
     --phase1-model gpt-5.4 --phase4-model qwen36-fast --book X --workers 8
 
-# All-Spark (saves ~$1,300 on 48K verses, ~17 days wall time, Phase 1 chunk
-# under-segmentation caveat — see PHASE4_OPENWEIGHT_BENCHMARK.md)
-python -m app.pipeline_cli.pipeline --phased --skip-scholarly --backend spark \
-    --phase1-model qwen36-fast --phase4-model qwen36-fast --book X --workers 8
+# All-Spark with Phase 3 scholarly enrichment ON (zero OpenAI cost, ~14-17 days
+# wall time on 48K-verse remainder). When --backend spark, all 3 phase models
+# default to qwen36-fast. Phase 3 adds named compilers, theological vocabulary,
+# extra Quran refs — see Thaqalayn/docs/SPARK_OPTIMIZATION_LOG.md.
+python -m app.pipeline_cli.pipeline --phased --backend spark \
+    --book X --workers 8
 
 # Override Spark endpoint:
 SPARK_BASE_URL=http://192.168.0.66:8000/v1 python -m app.pipeline_cli.pipeline ...

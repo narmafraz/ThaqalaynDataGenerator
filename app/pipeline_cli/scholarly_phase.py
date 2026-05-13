@@ -105,6 +105,38 @@ def _extract_json(raw: str) -> dict:
     return json.loads(text)
 
 
+def _spark_scholarly_schema() -> dict:
+    """Strict JSON schema for Phase 3 on Spark/Qwen.
+
+    Enforces shape so vLLM emits valid JSON during decode. Use only when
+    calling the Spark backend — OpenAI/Claude paths use the existing
+    text-extraction parser to preserve current behaviour.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "enriched_summary": {"type": "string"},
+            "additional_quran_refs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "ref": {
+                            "type": "string",
+                            "pattern": "^[0-9]{1,3}:[0-9]{1,3}$",
+                        },
+                        "relationship": {"type": "string"},
+                    },
+                    "required": ["ref", "relationship"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["enriched_summary", "additional_quran_refs"],
+        "additionalProperties": False,
+    }
+
+
 async def enrich_scholarly(
     result: dict,
     arabic_text: str,
@@ -150,10 +182,25 @@ async def enrich_scholarly(
     )
 
     # Call LLM via the appropriate backend
-    if backend == "openai":
-        from app.pipeline_cli.openai_backend import call_openai
+    if backend in ("openai", "spark"):
+        from app.pipeline_cli.openai_backend import call_openai, is_spark_model
 
-        cr = await call_openai(system, user, model=model)
+        # On Spark we attach a strict JSON schema so vLLM enforces output
+        # structure during decode (matches the Phase 1 + Phase 4 approach).
+        # OpenAI path keeps the existing free-form output + extract_json so we
+        # don't disturb pre-Spark behaviour.
+        kwargs = {}
+        if is_spark_model(model):
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "phase3_scholarly",
+                    "schema": _spark_scholarly_schema(),
+                    "strict": True,
+                },
+            }
+            kwargs["max_output_tokens"] = 1024  # summary + a few refs, tight
+        cr = await call_openai(system, user, model=model, **kwargs)
     else:
         from app.pipeline_cli.pipeline import call_claude
 
