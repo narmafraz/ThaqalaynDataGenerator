@@ -233,7 +233,7 @@ class PipelineConfig:
     phased: bool = False
     skip_scholarly: bool = False
     phase1_model: str = "gpt-5.4"
-    phase4_model: str = "gpt-5-mini"
+    phase4_model: str = "gpt-4.1-mini"
     # Derived paths (set by run_pipeline)
     stats_dir: str = ""
     logs_dir: str = ""
@@ -497,6 +497,11 @@ async def call_llm(
             system_prompt, user_message,
             model=model,
             max_retries=max_retries,
+            response_format=kwargs.get("response_format"),
+            extra_body=kwargs.get("extra_body"),
+            base_url=kwargs.get("base_url"),
+            timeout=kwargs.get("timeout"),
+            max_output_tokens=kwargs.get("max_output_tokens", 40000),
         )
     else:
         # Default: claude -p
@@ -956,6 +961,25 @@ async def process_verse_phased(
         system_prompt = build_phase1_system_prompt(topic_taxonomy=taxonomy)
         user_message = build_phase1_user_message(request)
 
+        # On Spark/Qwen we attach a strict JSON schema so vLLM enforces output
+        # structure during decode. Fixes the al-khisal class of failures
+        # (invalid topic enums, surah-name Quran refs) — see
+        # PHASE4_OPENWEIGHT_BENCHMARK.md Phase 1 section.
+        p1_kwargs = {}
+        if config.backend == "openai":
+            from app.pipeline_cli.openai_backend import is_spark_model
+            if is_spark_model(config.phase1_model):
+                from app.pipeline_cli.phased_prompts import build_phase1_schema
+                p1_kwargs["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "phase1_response",
+                        "schema": build_phase1_schema(topic_taxonomy=taxonomy),
+                        "strict": True,
+                    },
+                }
+                p1_kwargs["max_output_tokens"] = 12000
+
         async with semaphore:
             if shutdown_event.is_set():
                 return VerseResult(verse_id=verse_id, status="skipped")
@@ -965,6 +989,7 @@ async def process_verse_phased(
             cr = await call_llm(
                 system_prompt, user_message,
                 model=config.phase1_model, backend=config.backend,
+                **p1_kwargs,
             )
 
         if "error" in cr:
@@ -1649,8 +1674,10 @@ def main():
                         help="Skip Phase 3 scholarly enrichment (with --phased)")
     parser.add_argument("--phase1-model", default="gpt-5.4",
                         help="Model for Phase 1 core generation (with --phased, default: gpt-5.4)")
-    parser.add_argument("--phase4-model", default="gpt-5.4-mini",
-                        help="Model for Phase 4 translation (with --phased, default: gpt-5.4-mini)")
+    parser.add_argument("--phase4-model", default="gpt-4.1-mini",
+                        help="Model for Phase 4 translation (with --phased, default: gpt-4.1-mini). "
+                             "Set via PHASE4_OPENWEIGHT_BENCHMARK.md (2026-05-12): gpt-5.4-mini gave no "
+                             "quality lift over gpt-4.1-mini at ~5× the output cost.")
     parser.add_argument("--skip-merge", action="store_true",
                         help="Skip merging AI content into ThaqalaynData after run")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")

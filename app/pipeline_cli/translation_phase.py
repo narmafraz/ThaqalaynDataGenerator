@@ -225,6 +225,205 @@ RULES:
     return system, "\n".join(user_parts)
 
 
+PER_LANG_WORKERS = 16  # Spark max-num-seqs ceiling
+PER_LANG_SYSTEM_PROMPT = """You are a professional translator specializing in Islamic religious texts.
+Preserve Islamic terminology (salat, wudu, zakat) unless the target language has established equivalents.
+Transliterate narrator names — do not translate proper nouns.
+Preserve honorifics (peace be upon him, etc.) in each language's convention.
+Be faithful — do not add commentary.
+For Chinese: do not use spaces between words.
+Output valid JSON only."""
+
+LANG_FULL_NAMES = {
+    "ur": "Urdu", "tr": "Turkish", "fa": "Farsi/Persian",
+    "id": "Indonesian", "bn": "Bengali", "es": "Spanish",
+    "fr": "French", "de": "German", "ru": "Russian",
+    "zh": "Chinese (Simplified)",
+}
+
+
+def _per_lang_chunk_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+        "additionalProperties": False,
+    }
+
+
+def _per_lang_meta_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "seo_question": {"type": "string"},
+        },
+        "required": ["summary", "seo_question"],
+        "additionalProperties": False,
+    }
+
+
+def _per_lang_chunk_user(en_text: str, lang_name: str, arabic_context: str = "") -> str:
+    parts = []
+    if arabic_context:
+        parts.append(
+            f"Original Arabic (for context, translate from the English):\n{arabic_context}\n"
+        )
+    parts.append(f"Translate the following English passage into {lang_name}.")
+    parts.append('Output JSON of the form: {"text": "..."}')
+    parts.append(f"\nEnglish: {en_text}")
+    return "\n".join(parts)
+
+
+def _per_lang_meta_user(en_summary: str, en_seo: str, lang_name: str) -> str:
+    return (
+        f"Translate the following English texts into {lang_name}.\n"
+        'Output JSON of the form: {"summary": "...", "seo_question": "..."}\n\n'
+        f"English summary: {en_summary}\n"
+        f"English SEO question: {en_seo}"
+    )
+
+
+async def _translate_chunks_per_language(
+    result: dict,
+    model: str,
+    arabic_text: str,
+    verse_id: Optional[str],
+    raw_archive_dir: Optional[str],
+) -> dict:
+    """Spark-optimised path: N×10 small per-(chunk,lang) calls + 10 meta calls.
+
+    See PHASE4_OPENWEIGHT_BENCHMARK.md round 4 — this approach hits 99.5%
+    parse rate and ~2.4× faster wall time than the batched approach on
+    Spark Qwen 3.6 with strict JSON-schema response_format.
+
+    The cost is 10× the prompt tokens (system prompt repeated per call),
+    but on Spark electricity is the only cost so this is irrelevant.
+    """
+    import asyncio
+    from app.pipeline_cli.openai_backend import call_openai, archive_raw_response
+
+    chunks = result.get("chunks", [])
+    en_trans = result.get("translations", {}).get("en", {})
+    en_summary = en_trans.get("summary", "")
+    en_seo = en_trans.get("seo_question", "")
+
+    chunk_schema = _per_lang_chunk_schema()
+    meta_schema = _per_lang_meta_schema()
+    sem = asyncio.Semaphore(PER_LANG_WORKERS)
+
+    async def _call_with_retry(system, user, schema, name, max_tokens):
+        """One call, one retry on parse failure. Qwen occasionally emits
+        valid JSON followed by a `}` loop that consumes max_tokens; a fresh
+        call usually succeeds."""
+        for attempt in range(2):
+            async with sem:
+                cr = await call_openai(
+                    system, user, model=model,
+                    max_output_tokens=max_tokens,
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {"name": name, "schema": schema, "strict": True},
+                    },
+                )
+            if "error" in cr:
+                if attempt == 0:
+                    continue
+                return cr
+            # Try to parse — if fail, retry once
+            try:
+                json.loads(_strip_code_fences(cr.get("result", "")))
+                return cr
+            except (json.JSONDecodeError, ValueError):
+                if attempt == 0:
+                    logger.info("Phase4(per-lang) retry: parse fail on %s", name)
+                    continue
+                return cr
+        return cr
+
+    async def call_chunk_lang(chunk_idx: int, lang: str) -> tuple:
+        en_text = ""
+        ct = chunks[chunk_idx].get("translations", {}) or {}
+        if isinstance(ct, dict):
+            en_text = ct.get("en", "") or ""
+        user = _per_lang_chunk_user(
+            en_text, LANG_FULL_NAMES[lang],
+            arabic_context=arabic_text if chunk_idx == 0 else "",
+        )
+        cr = await _call_with_retry(
+            PER_LANG_SYSTEM_PROMPT, user, chunk_schema,
+            "chunk_translation", max_tokens=2048,
+        )
+        return ("chunk", chunk_idx, lang, cr)
+
+    async def call_meta_lang(lang: str) -> tuple:
+        user = _per_lang_meta_user(en_summary, en_seo, LANG_FULL_NAMES[lang])
+        cr = await _call_with_retry(
+            PER_LANG_SYSTEM_PROMPT, user, meta_schema,
+            "meta_translation", max_tokens=1024,
+        )
+        return ("meta", None, lang, cr)
+
+    tasks = []
+    for lang in NON_EN_LANGUAGES:
+        for i in range(len(chunks)):
+            tasks.append(call_chunk_lang(i, lang))
+        tasks.append(call_meta_lang(lang))
+
+    call_results = await asyncio.gather(*tasks)
+
+    total_cost = 0.0
+    total_tokens = 0
+    total_input_tokens = 0
+    total_cache_read = 0
+    n_failed = 0
+
+    for kind, idx, lang, cr in call_results:
+        total_cost += cr.get("cost", 0) or 0
+        total_tokens += cr.get("output_tokens", 0) or 0
+        total_input_tokens += cr.get("input_tokens", 0) or 0
+        total_cache_read += cr.get("cache_read_tokens", 0) or 0
+
+        if "error" in cr:
+            n_failed += 1
+            logger.warning("Phase4(per-lang) %s/%s failed: %s",
+                           kind, lang, cr.get("error", "")[:120])
+            continue
+
+        try:
+            parsed = json.loads(_strip_code_fences(cr.get("result", "")))
+        except (json.JSONDecodeError, ValueError) as e:
+            n_failed += 1
+            archive_raw_response(raw_archive_dir, verse_id,
+                                 f"phase4.{kind}.c{idx}.{lang}",
+                                 cr.get("result", ""))
+            logger.warning("Phase4(per-lang) %s/%s parse fail: %s",
+                           kind, lang, e)
+            continue
+
+        if kind == "chunk":
+            if "translations" not in chunks[idx]:
+                chunks[idx]["translations"] = {}
+            chunks[idx]["translations"][lang] = parsed.get("text", "")
+        elif kind == "meta":
+            translations = result.get("translations", {})
+            if lang not in translations:
+                translations[lang] = {}
+            translations[lang]["summary"] = parsed.get("summary", "")
+            translations[lang]["seo_question"] = parsed.get("seo_question", "")
+            translations[lang].setdefault("key_terms", {})
+            result["translations"] = translations
+
+    _fill_empty_translations(result)
+    result["_phase4_cost"] = total_cost
+    result["_phase4_tokens"] = total_tokens
+    result["_phase4_input_tokens"] = total_input_tokens
+    result["_phase4_cache_read_tokens"] = total_cache_read
+    result["_phase4_calls_failed"] = n_failed
+    result["_phase4_mode"] = "per_language"
+    return result
+
+
 async def translate_chunks(
     result: dict,
     model: str = "gpt-5-mini",
@@ -238,6 +437,10 @@ async def translate_chunks(
     truncation on long verses. The first batch also translates the
     verse-level summary and seo_question.
 
+    For Spark/Qwen models, automatically switches to per-language mode
+    which hits 99.5% reliability on Spark vs ~94% for batched (see
+    PHASE4_OPENWEIGHT_BENCHMARK.md round 4).
+
     Args:
         result: Pipeline result with EN-only translations
         model: OpenAI model to use for translation
@@ -246,7 +449,13 @@ async def translate_chunks(
     Returns:
         Updated result dict with all 11 languages, plus cost metadata
     """
-    from app.pipeline_cli.openai_backend import call_openai
+    from app.pipeline_cli.openai_backend import call_openai, is_spark_model
+
+    # Spark/Qwen path uses per-language calls for better reliability
+    if is_spark_model(model):
+        return await _translate_chunks_per_language(
+            result, model, arabic_text, verse_id, raw_archive_dir,
+        )
 
     chunks = result.get("chunks", [])
     en_trans = result.get("translations", {}).get("en", {})

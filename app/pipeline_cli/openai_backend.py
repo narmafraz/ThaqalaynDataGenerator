@@ -88,7 +88,23 @@ OPENAI_PRICING = {
     # Released 2026-04-24
     "gpt-5.5":      (5.00,  0.50,  30.00),
     "gpt-5.5-pro":  (30.00, 30.00, 180.00),    # no cached rate listed
+    # Qwen models served from the DGX Spark via vLLM — zero $ (electricity is
+    # the user's, not OpenAI's). See PHASE4_OPENWEIGHT_BENCHMARK.md for
+    # quality/throughput data and the integration approach.
+    "qwen36-fast":      (0.0, 0.0, 0.0),
+    "qwen36-deep":      (0.0, 0.0, 0.0),
+    "qwen36-27b":       (0.0, 0.0, 0.0),
+    "qwen36-35b-heretic": (0.0, 0.0, 0.0),
 }
+
+
+# Models served from Spark (OpenAI-compatible base_url, no API key required)
+SPARK_MODEL_PREFIX = "qwen36"
+
+
+def is_spark_model(model: str) -> bool:
+    """Return True if the given model is served via the Spark vLLM endpoint."""
+    return model.startswith(SPARK_MODEL_PREFIX)
 
 
 def archive_raw_response(
@@ -164,14 +180,30 @@ def compute_cost(
     return round(input_cost + cached_cost + output_cost, 6)
 
 
-def _get_client():
-    """Lazy-import and create OpenAI client."""
+def _get_client(base_url: Optional[str] = None, timeout: float = 600.0):
+    """Lazy-import and create OpenAI client.
+
+    Args:
+        base_url: Custom base URL (for vLLM-compatible endpoints e.g. Spark).
+                  When set, OPENAI_API_KEY is not required.
+        timeout: Per-request timeout in seconds.
+    """
     try:
         from openai import AsyncOpenAI
     except ImportError:
         raise ImportError(
             "openai package not installed. Install with: pip install openai\n"
             "Or add to pyproject.toml [project.optional-dependencies] openai group."
+        )
+
+    if base_url:
+        # Custom endpoint (Spark vLLM). API key is unused but the SDK still
+        # requires a non-empty value.
+        return AsyncOpenAI(
+            api_key=os.environ.get("OPENAI_API_KEY", "not-needed"),
+            base_url=base_url,
+            max_retries=3,
+            timeout=timeout,
         )
 
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -189,7 +221,7 @@ def _get_client():
         # the SDK gave up — losing 1-3 hours per stuck call across retries.
         # 600s still leaves ample headroom for legitimate long-reasoning
         # calls (typical Phase 1 finishes 10-30s, worst-case under 5 min).
-        timeout=600.0,
+        timeout=timeout,
     )
 
 
@@ -201,32 +233,60 @@ async def call_openai(
     temperature: float = 0.0,
     max_output_tokens: int = 40000,
     json_mode: bool = False,
+    base_url: Optional[str] = None,
+    response_format: Optional[dict] = None,
+    extra_body: Optional[dict] = None,
+    timeout: Optional[float] = None,
 ) -> dict:
-    """Call OpenAI chat completion API. Returns dict matching call_claude() format.
+    """Call an OpenAI-compatible chat completion API.
+
+    Returns dict matching call_claude() format. Backend identifier is "openai"
+    for the standard path or "spark" when `base_url` points at a vLLM endpoint.
+
+    Args:
+        base_url: Custom OpenAI-compatible endpoint (e.g. Spark vLLM at
+                  http://192.168.0.66:8000/v1). When set, OPENAI_API_KEY is
+                  optional. Also auto-detected from qwen36-* model names.
+        response_format: dict for OpenAI's structured-output mode. For Spark
+                  Qwen with strict schema enforcement use:
+                  {"type": "json_schema",
+                   "json_schema": {"name": ..., "schema": {...}, "strict": True}}
+        extra_body: Passed through to the SDK. Required for Qwen on vLLM:
+                  {"chat_template_kwargs": {"enable_thinking": False}}
+        timeout: Per-request timeout. For long Spark calls bump to 1800s.
 
     Returns:
         {
             "result": str,          # Model response text
-            "cost": float,          # Computed cost in USD
-            "output_tokens": int,   # Output token count
-            "input_tokens": int,    # Input token count (OpenAI-specific bonus)
-            "elapsed": float,       # Wall-clock seconds
-            "model": str,           # Actual model used (may include date suffix)
-            "stop_reason": str,     # "stop", "length", etc.
-            "num_turns": 1,         # Always 1 (no multi-turn)
-            "backend": "openai",    # Backend identifier
+            "cost": float,          # Computed cost in USD ($0 for Spark)
+            "output_tokens": int,
+            "input_tokens": int,
+            "elapsed": float,
+            "model": str,
+            "stop_reason": str,
+            "num_turns": 1,
+            "backend": "openai" | "spark",
         }
     """
-    try:
-        client = _get_client()
-    except (ImportError, ValueError) as e:
-        return {"error": str(e), "elapsed": 0.0, "backend": "openai"}
+    # Auto-detect Spark from model name if base_url not given.
+    if base_url is None and is_spark_model(model):
+        base_url = os.environ.get("SPARK_BASE_URL", "http://192.168.0.66:8000/v1")
 
-    # GPT-5 family and o-series API differences:
+    is_spark = base_url is not None
+    backend_id = "spark" if is_spark else "openai"
+    effective_timeout = timeout if timeout is not None else (1800.0 if is_spark else 600.0)
+
+    try:
+        client = _get_client(base_url=base_url, timeout=effective_timeout)
+    except (ImportError, ValueError) as e:
+        return {"error": str(e), "elapsed": 0.0, "backend": backend_id}
+
+    # GPT-5 family and o-series API differences (Spark/Qwen uses neither path
+    # — Qwen on vLLM uses system role + temperature + max_tokens like gpt-4.1):
     #
     # 1. max_completion_tokens vs max_tokens:
     #    ALL gpt-5*, o3, o4 models require max_completion_tokens.
-    #    gpt-4.1* and gpt-4o* use max_tokens.
+    #    gpt-4.1* / gpt-4o* / qwen36* use max_tokens.
     #
     # 2. Reasoning models (developer role, no temperature):
     #    gpt-5, gpt-5.1, gpt-5.2, gpt-5.3-codex, gpt-5.4, gpt-5.4-pro, o3, o4
@@ -234,7 +294,6 @@ async def call_openai(
     #
     # 3. Standard gpt-5 models (system role, temperature OK):
     #    gpt-5-mini, gpt-5-nano, gpt-5.4-mini, gpt-5.4-nano
-    #    These use the new token param but still support system role + temperature.
     uses_new_token_param = model.startswith(("gpt-5", "o3", "o4"))
 
     _STANDARD_GPT5 = ("gpt-5-mini", "gpt-5-nano", "gpt-5.4-mini", "gpt-5.4-nano")
@@ -267,8 +326,20 @@ async def call_openai(
     if not is_reasoning:
         kwargs["temperature"] = temperature
 
-    if json_mode:
+    # response_format precedence: explicit param > json_mode flag
+    if response_format is not None:
+        kwargs["response_format"] = response_format
+    elif json_mode:
         kwargs["response_format"] = {"type": "json_object"}
+
+    # extra_body for Spark/Qwen thinking-disable flag (and any other vLLM
+    # passthroughs). Auto-inject the thinking-disable when calling Spark
+    # without an explicit extra_body — that's the safe default for structured
+    # output (PHASE4_OPENWEIGHT_BENCHMARK.md).
+    if extra_body is not None:
+        kwargs["extra_body"] = extra_body
+    elif is_spark:
+        kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
 
     for attempt in range(max_retries + 1):
         start = time.time()
@@ -313,7 +384,7 @@ async def call_openai(
                 "model": actual_model,
                 "stop_reason": stop_reason,
                 "num_turns": 1,
-                "backend": "openai",
+                "backend": backend_id,
             }
 
         except Exception as e:
@@ -355,13 +426,13 @@ async def call_openai(
             result = {
                 "error": f"{error_type}: {error_msg}",
                 "elapsed": elapsed,
-                "backend": "openai",
+                "backend": backend_id,
             }
             if timeout_cost > 0:
                 result["timeout_cost_estimate"] = timeout_cost
             return result
 
-    return {"error": "max retries exceeded", "elapsed": 0.0, "backend": "openai"}
+    return {"error": "max retries exceeded", "elapsed": 0.0, "backend": backend_id}
 
 
 def get_available_models() -> list:

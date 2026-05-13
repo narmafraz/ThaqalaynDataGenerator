@@ -146,6 +146,147 @@ def build_phase1_user_message(request: PipelineRequest) -> str:
     return "\n".join(parts)
 
 
+# Closed enum vocabularies for Phase 1, sourced from build_phase1_user_message
+# above. Kept in sync manually; if you edit the prompt, update these too.
+_PHASE1_TAGS_ENUM = [
+    "theology", "ethics", "jurisprudence", "worship", "quran_commentary",
+    "prophetic_tradition", "family", "social_relations", "knowledge", "dua",
+    "afterlife", "history", "economy", "governance",
+]
+_PHASE1_CONTENT_TYPE_ENUM = [
+    "legal_ruling", "ethical_teaching", "narrative", "prophetic_tradition",
+    "quranic_commentary", "supplication", "creedal", "eschatological",
+    "biographical", "theological", "exhortation", "cosmological",
+]
+_PHASE1_CHUNK_TYPE_ENUM = ["isnad", "opening", "body", "quran_quote", "closing"]
+
+
+def build_phase1_schema(topic_taxonomy: Optional[dict] = None) -> dict:
+    """Build a strict JSON schema for Phase 1 output.
+
+    Used when calling vLLM-compatible endpoints (Spark) with
+    `response_format={"type": "json_schema", ...}`. vLLM enforces the schema
+    during decode, which eliminates the enum-violation + ref-format failure
+    modes that broke gpt-4.1-mini on Phase 1 in the al-khisal diagnostic
+    (memory: 5/5 quarantined for invalid topic enums + surah-name Quran refs).
+    """
+    if topic_taxonomy is None:
+        topic_taxonomy = load_topic_taxonomy()
+
+    # Extract the closed set of topic keys from the taxonomy. Falls back to
+    # the inline list in build_phase1_user_message if taxonomy not available.
+    topic_keys: list[str] = []
+    if topic_taxonomy and topic_taxonomy.get("taxonomy"):
+        for l1 in topic_taxonomy["taxonomy"]:
+            for l2 in l1.get("subtopics", []) or l1.get("level_2", []) or []:
+                key = l2.get("key") if isinstance(l2, dict) else l2
+                if isinstance(key, str):
+                    topic_keys.append(key)
+    if not topic_keys:
+        # Inline fallback matching the prompt
+        topic_keys = [
+            "abrogation", "ahlulbayt_virtues", "anger_control", "backbiting",
+            "barzakh", "charity", "community", "companions", "consultation",
+            "death_dying", "dhikr", "divine_attributes", "divine_decree",
+            "divine_justice", "divine_knowledge", "etiquette", "etiquette_of_dua",
+            "events", "fasting", "fasting_rulings", "financial_law",
+            "forbidding_evil", "friendship", "ghadir", "gratitude",
+            "hadith_sciences", "hajj", "halal_haram", "honesty", "hospitality",
+            "humility", "ignorance", "imamate", "imams_biography", "inheritance",
+            "intercession", "judicial_rulings", "justice_system", "karbala",
+            "kinship", "leadership", "marriage_family_law", "miracles",
+            "mosque_etiquette", "neighbors", "night_prayer",
+            "occasions_of_revelation", "oppression", "orphans", "paradise_hell",
+            "parenting", "patience", "poverty_wealth", "prayer_rulings",
+            "prophethood", "prophetic_character", "prophets",
+            "quran_interpretation_method", "quran_recitation", "quran_virtues",
+            "reasoning", "reckoning", "religious_authority", "repentance",
+            "resurrection", "rights_of_others", "rights_of_rulers",
+            "ritual_purity", "salat", "scholars_virtues", "seeking_forgiveness",
+            "seeking_knowledge", "seeking_refuge", "signs_of_end", "sincerity",
+            "specific_supplications", "spousal_rights", "sunnah",
+            "tafsir_specific_verse", "tawhid", "teaching", "times_for_dua",
+            "trade_ethics", "trust", "usury", "womens_rights",
+            "work_livelihood", "zakat_khums",
+        ]
+
+    return {
+        "type": "object",
+        "properties": {
+            "has_chain": {"type": "boolean"},
+            "tags": {
+                "type": "array",
+                "items": {"type": "string", "enum": _PHASE1_TAGS_ENUM},
+                "minItems": 2,
+                "maxItems": 5,
+            },
+            "content_type": {"type": "string", "enum": _PHASE1_CONTENT_TYPE_ENUM},
+            "chunks": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "chunk_type": {"type": "string", "enum": _PHASE1_CHUNK_TYPE_ENUM},
+                        "arabic_text": {"type": "string"},
+                        "translations": {
+                            "type": "object",
+                            "properties": {"en": {"type": "string"}},
+                            "required": ["en"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "required": ["chunk_type", "arabic_text", "translations"],
+                    "additionalProperties": False,
+                },
+            },
+            "translations": {
+                "type": "object",
+                "properties": {
+                    "en": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {"type": "string"},
+                            "seo_question": {"type": "string"},
+                            "key_terms": {
+                                "type": "object",
+                                "additionalProperties": {"type": "string"},
+                            },
+                        },
+                        "required": ["summary", "seo_question", "key_terms"],
+                        "additionalProperties": False,
+                    }
+                },
+                "required": ["en"],
+                "additionalProperties": False,
+            },
+            "related_quran": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "ref": {"type": "string", "pattern": "^[0-9]{1,3}:[0-9]{1,3}$"},
+                        "relationship": {"type": "string"},
+                    },
+                    "required": ["ref", "relationship"],
+                    "additionalProperties": False,
+                },
+            },
+            "topics": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": {"type": "string", "enum": topic_keys},
+            },
+        },
+        "required": [
+            "has_chain", "tags", "content_type", "chunks",
+            "translations", "related_quran", "topics",
+        ],
+        "additionalProperties": False,
+    }
+
+
 def parse_phase1_response(result_dict: dict) -> dict:
     """Normalize a Phase 1 response for downstream processing.
 

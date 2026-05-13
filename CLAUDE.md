@@ -312,7 +312,7 @@ The phased pipeline splits generation into 4 specialized phases for better quali
 - `--phased` — Enable multi-phase pipeline (instead of single-pass)
 - `--skip-scholarly` — Skip Phase 3 (useful for cost-sensitive runs)
 - `--phase1-model MODEL` — Override Phase 1 model (default: gpt-5.4 via batch)
-- `--phase4-model MODEL` — Override Phase 4 model
+- `--phase4-model MODEL` — Override Phase 4 model (default: gpt-4.1-mini — chosen per `Thaqalayn/docs/PHASE4_OPENWEIGHT_BENCHMARK.md` 2026-05-12; gpt-5.4-mini gives no quality lift at ~5× the output cost)
 
 **Example commands:**
 ```bash
@@ -321,6 +321,20 @@ python -m app.pipeline_cli.pipeline --phased --book al-kafi --workers 20
 
 # Phased with custom Phase 1 model, skip scholarly phase
 python -m app.pipeline_cli.pipeline --phased --phase1-model gpt-4.1-mini --skip-scholarly --book al-kafi
+
+# DGX Spark / Qwen 3.6 for Phase 4 (free, ~$270 saved on 48K verses)
+# Auto-detects Spark from qwen36-* model name; sets json_schema response_format,
+# enables thinking-disable, uses per-language calls (PHASE4_OPENWEIGHT_BENCHMARK.md).
+python -m app.pipeline_cli.pipeline --phased --skip-scholarly --backend openai \
+    --phase1-model gpt-5.4 --phase4-model qwen36-fast --book X --workers 8
+
+# All-Spark (saves ~$1,300 on 48K verses, ~17 days wall time, Phase 1 chunk
+# under-segmentation caveat — see PHASE4_OPENWEIGHT_BENCHMARK.md)
+python -m app.pipeline_cli.pipeline --phased --skip-scholarly --backend openai \
+    --phase1-model qwen36-fast --phase4-model qwen36-fast --book X --workers 8
+
+# Override Spark endpoint:
+SPARK_BASE_URL=http://192.168.0.66:8000/v1 python -m app.pipeline_cli.pipeline ...
 
 # Single verse, phased
 python -m app.pipeline_cli.pipeline --phased --single /books/al-kafi:1:1:1:1

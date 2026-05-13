@@ -90,14 +90,22 @@ class TestGetAvailableModels:
         assert len(models) >= 5
 
     def test_model_has_pricing(self):
-        from app.pipeline_cli.openai_backend import get_available_models
+        from app.pipeline_cli.openai_backend import (
+            get_available_models, is_spark_model,
+        )
         models = get_available_models()
         for m in models:
             assert "id" in m
             assert "input_per_mtok" in m
             assert "output_per_mtok" in m
-            assert m["input_per_mtok"] > 0
-            assert m["output_per_mtok"] > 0
+            # Spark-served Qwen models are zero-priced (locally hosted, no API
+            # cost). OpenAI models must have positive pricing.
+            if is_spark_model(m["id"]):
+                assert m["input_per_mtok"] == 0
+                assert m["output_per_mtok"] == 0
+            else:
+                assert m["input_per_mtok"] > 0
+                assert m["output_per_mtok"] > 0
 
     def test_gpt_4_1_mini_in_list(self):
         from app.pipeline_cli.openai_backend import get_available_models
@@ -342,8 +350,14 @@ class TestOpenAIPricing:
     """Verify pricing table is complete and reasonable."""
 
     def test_all_models_have_positive_prices(self):
-        from app.pipeline_cli.openai_backend import OPENAI_PRICING
+        from app.pipeline_cli.openai_backend import OPENAI_PRICING, is_spark_model
         for model_id, (input_price, cached_price, output_price) in OPENAI_PRICING.items():
+            if is_spark_model(model_id):
+                # Spark-served Qwen models are locally hosted, zero $ on inference
+                assert input_price == 0 and cached_price == 0 and output_price == 0, (
+                    f"{model_id} is Spark-served and should have zero prices"
+                )
+                continue
             assert input_price > 0, f"{model_id} has zero input price"
             assert cached_price > 0, f"{model_id} has zero cached_input price"
             assert output_price > 0, f"{model_id} has zero output price"
@@ -355,9 +369,11 @@ class TestOpenAIPricing:
             assert output_price >= input_price, f"{model_id}: output ({output_price}) < input ({input_price})"
 
     def test_nano_cheapest(self):
-        from app.pipeline_cli.openai_backend import OPENAI_PRICING
+        from app.pipeline_cli.openai_backend import OPENAI_PRICING, is_spark_model
         nano_input = OPENAI_PRICING["gpt-5-nano"][0]
         for model_id, (input_price, _, _) in OPENAI_PRICING.items():
+            if is_spark_model(model_id):
+                continue  # Spark models are free, not relevant to OpenAI pricing ladder
             assert input_price >= nano_input, f"{model_id} cheaper than gpt-5-nano"
 
     def test_relative_pricing(self):
