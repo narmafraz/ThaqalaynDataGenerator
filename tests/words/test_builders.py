@@ -208,9 +208,16 @@ class TestBuildSurface:
         assert page["slug"] == "قَالَ"
         assert page["occurrence_count"] == 5
         assert page["occurrence_paths"] == ["/books/x:1", "/books/x:2"]
-        assert page["morphology"] is not None
+        morph = page["morphology"]
+        assert morph is not None
         # Lemma should be derived even when corpus surface count exists.
         assert page["lemma_link"] is not None
+        # Root precomputed in both slug + link form so the UI doesn't
+        # have to duplicate root-to-slug logic.
+        assert morph["root_slug"] is not None
+        assert "." not in morph["root_slug"]
+        assert "#" not in morph["root_slug"]
+        assert page["root_link"] == f"/words/roots/{morph['root_slug']}"
 
     def test_surface_not_in_corpus(self, builder_with_data):
         page = builder_with_data.build_surface("قَالَتْ")
@@ -233,6 +240,7 @@ class TestBuildSurface:
         page = builder_with_data.build_surface("xxxzzzqqq")
         assert page["morphology"] is None
         assert page["lemma_link"] is None
+        assert page["root_link"] is None
 
 
 class TestBuildLemma:

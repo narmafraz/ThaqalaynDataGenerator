@@ -284,19 +284,26 @@ class WordPageBuilder:
               "occurrence_count": int,
               "occurrence_paths": [list of /books/... paths],
               "morphology": {
-                "lemma": "قَالَ",
                 "lemma_slug": "قَالَ",
-                "root": "ل.و.ق" or null,
+                "root": "ق.#.ل" or null,        # raw CAMeL notation
+                "root_slug": "ق-_-ل" or null,    # URL-safe form
                 "pos": "V" or null,
                 "pos_camel": "verb" or null,  # raw CAMeL pos
                 "clitics": {"prc0", "prc1", "prc2", "prc3", "enc0"}  # any present
               } | null,  # null if unanalyzable
               "lemma_link": "/words/lemmas/قَالَ" | null,
+              "root_link":  "/words/roots/ق-_-ل" | null,
             }
 
         ``occurrence_paths`` come from the corpus surface set. If the
         surface isn't in the corpus set we still build a page but with
         zero occurrences.
+
+        Both ``lemma_link`` and ``root_link`` are precomputed so the UI
+        can render them directly without duplicating slug-derivation
+        logic. The morphology block also carries the bare slug forms
+        (``lemma_slug``, ``root_slug``) for callers that need just the
+        identifier.
         """
         key = slug(surface)
         corpus_entry = self.corpus_surfaces.get(key, {})
@@ -304,6 +311,7 @@ class WordPageBuilder:
 
         morph: Optional[Dict] = None
         lemma_slug: Optional[str] = None
+        root_slug_str: Optional[str] = None
         if analysis and _is_useful_analysis(analysis):
             lex = analysis.get("lex")
             pos_camel = analysis.get("pos") or ""
@@ -311,9 +319,12 @@ class WordPageBuilder:
             lemma_slug = (
                 canonical_diacritized_lemma(lex, pos_camel) if lex else None
             )
+            root = analysis.get("root") or None
+            root_slug_str = root_to_slug(root) if root else None
             morph = {
                 "lemma_slug": lemma_slug,
-                "root": analysis.get("root") or None,
+                "root": root,
+                "root_slug": root_slug_str,
                 "pos": POS_TRANSLATION_TO_OURS.get(pos_camel),
                 "pos_camel": pos_camel or None,
                 "clitics": _extract_clitics(analysis),
@@ -326,6 +337,7 @@ class WordPageBuilder:
             "occurrence_paths": corpus_entry.get("paths", []),
             "morphology": morph,
             "lemma_link": f"/words/lemmas/{lemma_slug}" if lemma_slug else None,
+            "root_link": f"/words/roots/{root_slug_str}" if root_slug_str else None,
         }
 
     # ---- lemma page -------------------------------------------------------
