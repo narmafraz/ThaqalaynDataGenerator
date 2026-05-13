@@ -227,6 +227,34 @@ class TestSplitNarratorNames:
         # The prefix "أَخْبَرَنَا" should be stripped
         assert len(result) >= 1
 
+    def test_continuation_with_colon_punctuation(self):
+        """Regression: isnad chunks emitted by Spark/Qwen sometimes have
+        `قَالَ:` (colon) before the continuation `حَدَّثَنِي ...` rather than
+        just whitespace. The old CONTINUE_PATTERN required `\\s*` before
+        حَدَّثَنِي and the final slice was `[:-ending_phrase_len]` (assumes
+        the matched ending is at the very end of isnad_text). Combined,
+        these produced a single 17-word "narrator name" containing the
+        chain particle. See al-tawhid:2:1:10 quarantine.
+
+        Expected: at least 2 narrators (the first patronymic + the
+        continuation patronymic), neither containing "قَالَ" or the
+        honorific "رَضِيَ".
+        """
+        text = (
+            "حَدَّثَنَا جَعْفَرُ بْنُ عَلِيٍّ بْنِ الْحَسَنِ بْنِ عَلِيٍّ "
+            "بْنِ عَبْدِ اللَّهِ بْنِ الْمُغِيرَةِ الْكُوفِيُّ رَضِيَ اللَّهُ "
+            "عَنْهُ، قَالَ: حَدَّثَنِي جَدِّي الْحَسَنُ بْنُ عَلِيٍّ الْكُوفِيُّ"
+        )
+        result = split_narrator_names(text)
+        assert len(result) >= 2, f"expected ≥2 narrators, got {len(result)}: {result}"
+        for name in result:
+            # Chain particle `قَالَ` must not leak into any narrator's name.
+            assert "قَالَ" not in name, f"chain particle قَالَ in name: {name!r}"
+        # First narrator should be the patronymic (Ja'far ibn ...), second
+        # should be the continuation chain (Hassan ibn ... al-Kufi).
+        assert "جَعْفَرُ" in result[0], f"first narrator name unexpected: {result[0]!r}"
+        assert "الْحَسَنُ" in result[1], f"second narrator name unexpected: {result[1]!r}"
+
 
 # ── resolve_narrators tests ────────────────────────────────────────────
 

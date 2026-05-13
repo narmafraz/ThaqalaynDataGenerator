@@ -1224,15 +1224,34 @@ def validate_result(result: dict) -> List[str]:
                 # legitimate full-genealogy kunya names common in al-Amali
                 # responses (e.g. "أَبُو أَحْمَدَ الْعَبَّاسُ بْنُ الْفَضْلِ
                 # بْنِ جَعْفَرٍ الْأنْصَارِيّ" = 9-10 words).
+                #
+                # Patronymic-density exception: names with many `بن`/`ابن`
+                # connectors (e.g. "X بن Y بن Z بن W ...") are legitimate
+                # multi-generation kunyas, sometimes accompanied by an
+                # honorific tail (`رَضِيَ اللَّهُ عَنْهُ`). If `بن`-density
+                # is >= 0.18 of words, treat as a real long name even if
+                # over the word-count threshold. See narrator extractor
+                # fix for al-tawhid:2:1:10 — extracted name is 16 words
+                # but 6 of them are `بن`, clearly a real patronymic.
                 name_ar = narrator.get("name_ar")
                 if isinstance(name_ar, str):
-                    word_count_name = len(name_ar.strip().split())
+                    words = name_ar.strip().split()
+                    word_count_name = len(words)
                     if word_count_name > 14:
-                        errors.append(
-                            f"narrator[{i}] name_ar has {word_count_name} words "
-                            f"(>14 — likely a sentence fragment, not a name): "
-                            f"{name_ar[:60]!r}"
+                        _TASHKEEL = set("ًٌٍَُِّْٰ")
+                        def _strip_diacritics(s: str) -> str:
+                            return "".join(c for c in s if c not in _TASHKEEL)
+                        bin_tokens = sum(
+                            1 for w in words
+                            if _strip_diacritics(w) in ("بن", "ابن", "بنت")
                         )
+                        bin_density = bin_tokens / word_count_name if word_count_name else 0
+                        if bin_density < 0.18:
+                            errors.append(
+                                f"narrator[{i}] name_ar has {word_count_name} words "
+                                f"(>14, بن-density {bin_density:.2f} — likely a "
+                                f"sentence fragment, not a name): {name_ar[:60]!r}"
+                            )
                 # Validate optional canonical_id
                 if "canonical_id" in narrator:
                     cid = narrator["canonical_id"]

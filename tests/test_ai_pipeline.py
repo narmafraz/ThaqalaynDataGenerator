@@ -1143,8 +1143,34 @@ class TestValidateChunks:
             "identity_confidence": "definite", "ambiguity_note": None,
         }]
         errors = validate_result(result)
-        assert any("words (>14 — likely a sentence fragment" in e for e in errors), (
+        assert any(
+            "likely a sentence fragment" in e and "narrator[0] name_ar" in e
+            for e in errors
+        ), (
             f"Expected narrator-name length error: {errors}"
+        )
+
+    def test_narrator_long_patronymic_with_honorific_passes(self):
+        """Legit long multi-generation patronymic + honorific. Was being
+        over-rejected by the bare >14-word check. Now passes via the
+        `بن`-density exception (high `بن` count = real chain of patronymics).
+        Real case from al-tawhid:2:1:10: Ja'far b. Ali b. al-Hasan ... +
+        رَضِيَ اللَّهُ عَنْهُ honorific tail."""
+        result = _make_v4_result()
+        result["isnad_matn"]["has_chain"] = True
+        result["isnad_matn"]["isnad_ar"] = "..."
+        result["isnad_matn"]["narrators"] = [{
+            # 16 words: 6 `بن` tokens / 16 = 0.375 density (well above 0.18).
+            "name_ar": ("جَعْفَرُ بْنُ عَلِيٍّ بْنِ الْحَسَنِ بْنِ عَلِيٍّ "
+                        "بْنِ عَبْدِ اللَّهِ بْنِ الْمُغِيرَةِ الْكُوفِيُّ "
+                        "رَضِيَ اللَّهُ عَنْهُ،"),
+            "name_en": "Ja'far b. Ali b. al-Hasan b. Ali b. Abdullah b. al-Mughirah al-Kufi",
+            "role": "narrator", "position": 1,
+            "identity_confidence": "ambiguous", "ambiguity_note": None,
+        }]
+        errors = validate_result(result)
+        assert not any("likely a sentence fragment" in e for e in errors), (
+            f"Long patronymic with honorific should pass via بن-density check: {errors}"
         )
 
     def test_narrator_name_normal_length_passes(self):

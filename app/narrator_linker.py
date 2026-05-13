@@ -27,8 +27,14 @@ SPAN_PATTERN = re.compile(r"</?span[^>]*>")
 
 # Diacritized patterns (precise, for Al-Kafi and well-diacritized sources)
 NARRATOR_SPLIT_PATTERN = re.compile(
+    # Note `قَالَ[:\s]+حَدَّثَنِي` is a colon-tolerant variant of the bare
+    # ` قَالَ حَدَّثَنِي ` connector. Qwen-emitted isnad chunks often have
+    # `قَالَ: حَدَّثَنِي` (with colon) between chain segments; without this
+    # alternative the second chain segment leaks into the first narrator's
+    # name. See al-tawhid:2:1:10 regression.
     r" (?:عَمَّنْ سَمِعَ|وَ سَمِعْتُ|وَ|جَمِيعاً عَنْ|جَمِيعاً عَنِ|"
-    r"عَنْ|عَنِ|إِلَى|قَالَ حَدَّثَنِي|عَمَّنْ|مِمَّنْ|مِنْهُمْ|"
+    r"عَنْ|عَنِ|إِلَى|قَالَ[:\s]+حَدَّثَنِي|قَالَ حَدَّثَنِي|"
+    r"عَمَّنْ|مِمَّنْ|مِنْهُمْ|"
     r"رَفَعَهُ عَنْ|رَفَعَهُ إِلَى|فِي حَدِيثِ|رَفَعَهُ أَنَّ|رَفَعَهُ) "
 )
 
@@ -70,7 +76,12 @@ NARRATORS_TEXT_PATTERN = re.compile(
 
 NARRATORS_TEXT_FAILOVER_PATTERN = re.compile(r"(.*?\( عليهم? السلام \))")
 
-NARRATORS_TEXT_CONTINUE_PATTERN = re.compile(r"\s*(حَدَّثَنِي)\s")
+# Accept punctuation (`:`, `،`, `;`) between the previous `قَالَ` and the
+# continuation `حَدَّثَنِي`. Qwen-generated isnad chunks frequently have
+# `قَالَ: حَدَّثَنِي ...` with a colon; the prior `\s*`-only pattern missed
+# this and left the second chain segment baked into the first narrator's name.
+# See al-tawhid:2:1:10 regression.
+NARRATORS_TEXT_CONTINUE_PATTERN = re.compile(r"[\s:،;]*(حَدَّثَنِي)\s")
 
 # Undiacritized patterns (for less-diacritized sources like thaqalayn_api, ghbook)
 _UNDIACRITIZED_SPLIT_WORDS = [
@@ -397,23 +408,45 @@ def _trim_ending_phrase(isnad_text: str) -> str:
 
     The original extract_narrators captures text up to an action verb.
     The chain text includes the verb, but splitting should exclude it.
+
+    Bug history: the prior implementation used `isnad_text[:-ending_phrase_len]`
+    which works only when the matched ending phrase is at the very end of the
+    input. For Qwen-emitted isnad chunks the entire isnad (incl. subsequent
+    `قَالَ` boundaries) is one string, so the slice was stripping the wrong
+    bytes and leaking the second chain segment into the first narrator's name.
+    Fixed to slice using `match.start(N)` of the ending-phrase group.
     """
     # Try diacritized pattern
     match = NARRATORS_TEXT_PATTERN.match(isnad_text)
     if match and len(match.groups()) > 1:
-        ending_phrase_len = len(match.groups()[-1]) + 1
-        # Handle continuation patterns
+        last_match = match
+        # Handle continuation patterns (`قَالَ: حَدَّثَنِي ...`). When a
+        # continuation segment exists but doesn't itself end in another
+        # `قَالَ`-class verb (i.e. the segment runs to end-of-input), we
+        # DON'T trim — the full text is all chain content and should be
+        # passed to the splitter intact. Only trim when we found a true
+        # `قَالَ` boundary that ends the chain.
+        had_orphan_continuation = False
         while True:
-            end_index = match.end(0)
+            end_index = last_match.end(0)
             cont_match = NARRATORS_TEXT_CONTINUE_PATTERN.match(isnad_text, end_index)
             if cont_match:
-                match = NARRATORS_TEXT_PATTERN.match(isnad_text, end_index)
-                if match and len(match.groups()) > 1:
-                    ending_phrase_len = len(match.groups()[-1]) + 1
+                next_match = NARRATORS_TEXT_PATTERN.match(isnad_text, end_index)
+                if next_match and len(next_match.groups()) > 1:
+                    last_match = next_match
                     continue
+                # Continuation exists but no further `قَالَ` boundary — the
+                # remainder is chain content; return the full isnad untrimmed.
+                had_orphan_continuation = True
             break
-        if ending_phrase_len > 0:
-            return isnad_text[:-ending_phrase_len]
+        if had_orphan_continuation:
+            return isnad_text
+        # Slice up to the position of the ending phrase (group 2's start) minus
+        # the space that precedes it. last_match.start(2)-1 is the index of
+        # that space; isnad_text[:that] is everything up to but not including it.
+        cut = last_match.start(2) - 1
+        if cut > 0:
+            return isnad_text[:cut]
 
     # Try failover pattern (no ending phrase to trim)
     match = NARRATORS_TEXT_FAILOVER_PATTERN.match(isnad_text)
