@@ -996,6 +996,11 @@ async def process_verse_phased(
                 **p1_kwargs,
             )
 
+        # Capture the server-reported model name (vLLM/OpenAI echo back the
+        # canonical name, e.g. `qwen36-fast` → `qwen36-35b-heretic`). Falls
+        # back to the configured alias if the response didn't include it.
+        phase1_actual_model = cr.get("model") or config.phase1_model
+
         if "error" in cr:
             stats.errors += 1
             logger.error("P1-GEN %s FAILED: %s", verse_id, cr["error"][:100])
@@ -1100,6 +1105,12 @@ async def process_verse_phased(
         stats.total_cache_read_tokens += full_result.pop("_phase4_cache_read_tokens", 0)
         stats.total_cost += p4_cost
         stats.phase4_cost += p4_cost
+        # Server-reported canonical model name for the attribution string
+        # (vLLM/OpenAI echo back the served-model-name, e.g. qwen36-fast →
+        # qwen36-35b-heretic). Falls back to the configured alias.
+        phase4_actual_model = full_result.pop("_phase4_actual_model", None) or config.phase4_model
+
+        attribution_model_str = f"phased_{phase1_actual_model}+{phase4_actual_model}"
 
         # ── Validate using existing infrastructure ────────────────────
         errors = validate_result(full_result)
@@ -1116,7 +1127,7 @@ async def process_verse_phased(
             q_wrapper = {
                 "verse_path": verse_path,
                 "ai_attribution": {
-                    "model": f"phased_{config.phase1_model}+{config.phase4_model}",
+                    "model": attribution_model_str,
                     "generated_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                     "pipeline_version": _PV,
                     "generation_method": "phased_pipeline",
@@ -1150,7 +1161,7 @@ async def process_verse_phased(
         wrapper = {
             "verse_path": verse_path,
             "ai_attribution": {
-                "model": f"phased_{config.phase1_model}+{config.phase4_model}",
+                "model": attribution_model_str,
                 "generated_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 "pipeline_version": PIPELINE_VERSION,
                 "generation_method": "phased_pipeline",

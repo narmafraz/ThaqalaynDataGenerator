@@ -384,12 +384,15 @@ async def _translate_chunks_per_language(
     total_input_tokens = 0
     total_cache_read = 0
     n_failed = 0
+    actual_model: Optional[str] = None  # server-reported canonical name
 
     for kind, idx, lang, cr in call_results:
         total_cost += cr.get("cost", 0) or 0
         total_tokens += cr.get("output_tokens", 0) or 0
         total_input_tokens += cr.get("input_tokens", 0) or 0
         total_cache_read += cr.get("cache_read_tokens", 0) or 0
+        if actual_model is None and cr.get("model"):
+            actual_model = cr.get("model")
 
         if "error" in cr:
             n_failed += 1
@@ -428,6 +431,8 @@ async def _translate_chunks_per_language(
     result["_phase4_cache_read_tokens"] = total_cache_read
     result["_phase4_calls_failed"] = n_failed
     result["_phase4_mode"] = "per_language"
+    if actual_model:
+        result["_phase4_actual_model"] = actual_model
     return result
 
 
@@ -473,6 +478,7 @@ async def translate_chunks(
     total_tokens = 0
     total_input_tokens = 0
     total_cache_read_tokens = 0
+    actual_model: Optional[str] = None
 
     # Split chunks into batches
     batches = []
@@ -504,6 +510,8 @@ async def translate_chunks(
         total_tokens += cr.get("output_tokens", 0)
         total_input_tokens += cr.get("input_tokens", 0)
         total_cache_read_tokens += cr.get("cache_read_tokens", 0)
+        if actual_model is None and cr.get("model"):
+            actual_model = cr.get("model")
 
         # Parse response
         try:
@@ -558,5 +566,7 @@ async def translate_chunks(
     result["_phase4_tokens"] = total_tokens
     result["_phase4_input_tokens"] = total_input_tokens
     result["_phase4_cache_read_tokens"] = total_cache_read_tokens
+    if actual_model:
+        result["_phase4_actual_model"] = actual_model
 
     return result
