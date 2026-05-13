@@ -28,7 +28,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -66,6 +66,68 @@ def build_surfaces_index(words_dir: Path) -> List[Dict]:
     return entries
 
 
+# CAMeL Tools lemma POS → accepted Wiktextract sense POS values. Used by
+# _pick_aligned_gloss to avoid surfacing the wrong-POS gloss when a
+# Wiktionary entry has multiple homographs (e.g. إِلَى is both verb
+# "to promise" and prep "to/toward" — we want the latter for the
+# preposition lemma).
+_POS_FAMILIES: Dict[str, set] = {
+    "verb":       {"verb"},
+    "noun":       {"noun", "name", "proper noun"},
+    "noun_prop":  {"noun", "name", "proper noun"},
+    "noun_quant": {"noun", "num"},
+    "noun_num":   {"noun", "num"},
+    "adj":        {"adj", "adjective"},
+    "adj.act":    {"adj", "adjective", "verb"},  # active participle
+    "adj.pass":   {"adj", "adjective", "verb"},  # passive participle
+    "adv":        {"adv", "adverb"},
+    "prep":       {"prep", "preposition"},
+    "conj":       {"conj", "conjunction"},
+    "part":       {"particle", "part"},
+    "particle":   {"particle", "part"},
+    "pron":       {"pron", "pronoun"},
+    "det":        {"det", "determiner", "article"},
+    "intj":       {"intj", "interjection"},
+    "fut_part":   {"particle", "part"},
+    "neg_part":   {"particle", "part"},
+    "interrog_part": {"particle", "part"},
+    "focus_part": {"particle", "part"},
+    "prog_part":  {"particle", "part"},
+    "voc_part":   {"particle", "part"},
+}
+
+# Content-word POS where we'd rather show senses[0] than nothing if no
+# aligned sense exists. Function words (prep/conj/det/intj/various
+# particles) skip the fallback so we don't surface a verb gloss for a
+# preposition.
+_CONTENT_POS = {
+    "verb", "noun", "noun_prop", "noun_quant", "noun_num",
+    "adj", "adj.act", "adj.pass", "adv",
+}
+
+
+def _pick_aligned_gloss(lemma_pos_camel: str, senses: List[Dict]) -> str:
+    """Return the first sense gloss whose POS is aligned with the lemma's.
+
+    Truncated to 80 chars (with an ellipsis) so the lemmas index stays small.
+    """
+    if not senses:
+        return ""
+    accepted = _POS_FAMILIES.get(lemma_pos_camel, set())
+    aligned: Optional[str] = None
+    for s in senses:
+        sp = (s.get("pos") or "").lower()
+        if accepted and sp in accepted:
+            aligned = s.get("gloss") or ""
+            break
+    if aligned is None:
+        # No POS-aligned sense. Only fall back for content-word lemmas.
+        if lemma_pos_camel not in _CONTENT_POS:
+            return ""
+        aligned = senses[0].get("gloss") or ""
+    return aligned if len(aligned) <= 80 else aligned[:77] + "…"
+
+
 def build_lemmas_index(words_dir: Path) -> List[Dict]:
     """Walk lemmas/ and produce a flat index entry per file."""
     lemmas_dir = words_dir / "lemmas"
@@ -82,11 +144,23 @@ def build_lemmas_index(words_dir: Path) -> List[Dict]:
         paradigm = data.get("paradigm") or []
         in_corpus_count = sum(1 for p in paradigm if p.get("in_corpus"))
         refs = data.get("cross_references") or {}
+        # First English Wiktextract gloss matching the lemma's POS —
+        # used by the UI for inline per-word translation. We require a
+        # POS-aligned sense to avoid e.g. surfacing the verb gloss "to
+        # promise" for the preposition إِلَى. For content-word POS we
+        # fall back to senses[0] if no aligned sense exists (better
+        # than no gloss); for function-word POS we leave gloss empty
+        # rather than show a wrong one.
+        gloss = _pick_aligned_gloss(
+            data.get("pos_camel") or "",
+            (data.get("definition") or {}).get("senses") or [],
+        )
         entries.append({
             "slug": data.get("slug"),
             "root": data.get("root"),
             "root_slug": data.get("root_slug"),
             "pos": data.get("pos"),
+            "gloss": gloss,
             "frequency": data.get("frequency_in_corpus", 0),
             "paradigm_size": len(paradigm),
             "in_corpus_forms": in_corpus_count,
