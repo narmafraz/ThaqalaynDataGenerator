@@ -1098,6 +1098,28 @@ async def process_verse_phased(
             taxonomy=taxonomy,
         )
 
+        # ── Phase 2 (Spark only): fill name_en for unresolved narrators
+        # Phase 2's registry-based resolution leaves name_en empty for
+        # narrators not in the canonical registry. On Spark this is free
+        # to fix — single small batched call per verse. Gated on the Phase
+        # 1 model being a Spark model to keep OpenAI runs unchanged.
+        if config.backend in ("openai", "spark"):
+            from app.pipeline_cli.openai_backend import is_spark_model
+            if is_spark_model(config.phase1_model):
+                from app.pipeline_cli.spark_narrator_filler import (
+                    fill_unresolved_narrators,
+                )
+                async with semaphore:
+                    if not shutdown_event.is_set():
+                        full_result = await fill_unresolved_narrators(
+                            full_result, model=config.phase1_model,
+                        )
+                n_filled = full_result.pop("_phase2_spark_narrator_filled", 0)
+                full_result.pop("_phase2_spark_narrator_calls", None)
+                if n_filled:
+                    logger.info("P2-SPARK %s: filled %d unresolved narrator name_en",
+                                verse_id, n_filled)
+
         # ── Phase 3: Scholarly enrichment (optional) ──────────────────
         if not config.skip_scholarly:
             from app.pipeline_cli.scholarly_phase import enrich_scholarly
