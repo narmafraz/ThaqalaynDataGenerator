@@ -10,7 +10,8 @@ Gated by --skip-scholarly flag. Uses claude -p (the expensive backend).
 
 import json
 import logging
-from typing import Optional
+import re
+from typing import Optional, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +50,18 @@ RULES:
 - Be faithful to Shia scholarly tradition
 - Output valid JSON only"""
 
+    # Layer 1 hallucination prevention: tell the model the compiler/author
+    # so it doesn't guess. Caught a real misattribution in the Phase 3 bench
+    # (al-Kulayni vs al-Saduq for *al-Tawhid*) — see SPARK_OPTIMIZATION_LOG.md
+    # Round H/J.
+    compiler = _lookup_compiler(book_name)
+    book_label = book_name
+    if compiler:
+        book_label = f"{book_name} (compiled by {compiler})"
+
     user_parts = [
         f"Arabic text: {arabic_text}",
-        f"Book: {book_name}",
+        f"Book: {book_label}",
         f"Chapter: {chapter_title}",
         f"Current summary: {en_summary}",
     ]
@@ -66,6 +76,77 @@ RULES:
     )
 
     return system, "\n".join(user_parts)
+
+
+# Known Shia hadith compiler nisbas. The values are normalized lowercase
+# stems used for substring matching against enriched summaries. Listed in
+# rough order of corpus prevalence so the matcher is deterministic when a
+# summary somehow mentions two.
+_COMPILER_NISBAS = [
+    "al-kulayni",      # Usul al-Kafi / al-Kafi
+    "al-saduq",        # al-Tawhid, al-Khisal, al-Amali, Man La Yahduruhu, etc.
+    "ibn babawayh",    # alias for al-Saduq
+    "al-tusi",         # Tahdhib, Istibsar, al-Amali, al-Ghayba
+    "al-mufid",        # al-Amali (al-Mufid), al-Irshad
+    "al-radi",         # Nahj al-Balagha (compiler)
+    "ibn qulawayh",    # Kamil al-Ziyarat
+    "al-numani",       # Kitab al-Ghayba (al-Numani)
+    "al-mufaddal",     # narrator/compiler in some sources
+    "al-himyari",      # Qurb al-Isnad
+    "ibn shahrashub",
+]
+
+
+def _detect_compiler_mismatch(enriched_summary: str,
+                              actual_compiler: Optional[str]) -> List[Tuple[str, str]]:
+    """Scan the enriched summary for compiler nisba mentions and return a
+    list of (mentioned_nisba, actual_compiler) tuples for any that don't
+    match the book's actual compiler.
+
+    Empty list = clean, no mismatches detected.
+
+    Cheap regex pass; runs after every Phase 3 call regardless of backend
+    (but the Spark path is where hallucinations were observed).
+    """
+    if not enriched_summary or not actual_compiler:
+        return []
+    summary_lc = enriched_summary.lower()
+    actual_lc = actual_compiler.lower()
+    mismatches: List[Tuple[str, str]] = []
+    for nisba in _COMPILER_NISBAS:
+        # Match `al-kulayni`, `al-Kulayni's`, etc. Word-boundary on the
+        # nisba prevents `al-saduq` from matching inside `al-saduqi` if
+        # such a name existed.
+        if re.search(rf"\b{re.escape(nisba)}\b", summary_lc):
+            if nisba not in actual_lc:
+                # `ibn babawayh` is an alias for `al-saduq`; treat as match
+                # if either appears in `actual_compiler`.
+                aliases = {"ibn babawayh": "al-saduq", "al-saduq": "ibn babawayh"}
+                alias = aliases.get(nisba)
+                if alias and alias in actual_lc:
+                    continue
+                mismatches.append((nisba, actual_compiler))
+    return mismatches
+
+
+def _lookup_compiler(book_name: str) -> Optional[str]:
+    """Return the canonical EN compiler/author for a book slug, or None.
+
+    `book_name` is the slug from PipelineRequest (e.g. "al-tawhid"); we look
+    it up in book_registry. Best-effort: if the registry doesn't know the
+    book (older slug variants, special cases) we return None and the prompt
+    falls back to its prior behaviour of not specifying the compiler.
+    """
+    if not book_name:
+        return None
+    try:
+        from app.book_registry import get_book_config
+        cfg = get_book_config(book_name)
+        if cfg and cfg.author:
+            return cfg.author.get("en") or next(iter(cfg.author.values()), None)
+    except (ImportError, AttributeError):
+        pass
+    return None
 
 
 def _extract_json(raw: str) -> dict:
@@ -226,6 +307,27 @@ async def enrich_scholarly(
     enriched = data.get("enriched_summary", "")
     if enriched and isinstance(enriched, str):
         result["translations"]["en"]["summary"] = enriched
+
+        # Layer 2 hallucination guard: scan the enriched summary for known
+        # compiler nisbas and verify the mentioned compiler matches the
+        # actual one for this book. If a mismatch is detected we DON'T
+        # silently rewrite (changing wording risks distorting meaning) — we
+        # attach a structured flag so review tooling can surface it. Layer 1
+        # (prompt-level prevention via _lookup_compiler) should catch most
+        # cases; this is the safety net.
+        actual_compiler = _lookup_compiler(book_name)
+        mismatches = _detect_compiler_mismatch(enriched, actual_compiler)
+        if mismatches:
+            result["_phase3_compiler_mismatches"] = [
+                {"mentioned": m, "actual": a} for m, a in mismatches
+            ]
+            mentioned_str = ", ".join(m for m, _ in mismatches)
+            logger.warning(
+                "Phase 3 compiler mismatch on %s: summary mentions %r but "
+                "book %s is by %s",
+                verse_id or "(unknown)", mentioned_str, book_name,
+                actual_compiler,
+            )
 
     # Merge additional Quran refs (dedup against existing)
     additional = data.get("additional_quran_refs", [])
