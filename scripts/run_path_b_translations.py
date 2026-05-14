@@ -79,11 +79,25 @@ def existing_response_slugs(out_dir: Path) -> set:
     return {p.stem for p in out_dir.glob("*.json")}
 
 
-def make_progress_cb(total: int):
+def make_progress_cb(total: int, out_dir: Optional[Path] = None):
+    """Progress + per-item persistence callback.
+
+    When `out_dir` is given, each completed result is written to disk
+    *as it lands*. This is the resumability contract: if the process is
+    killed mid-run, every item completed so far is already on disk and
+    a re-run skips them. Without per-item persistence we'd lose
+    everything when the process dies before `asyncio.gather` returns.
+    """
     last_print = [time.monotonic()]
     started_at = time.monotonic()
 
-    def cb(done: int, _total: int, _result: dict) -> None:
+    def cb(done: int, _total: int, result: dict) -> None:
+        if out_dir is not None and result is not None:
+            try:
+                persist_result(result, out_dir)
+            except Exception:
+                logger.exception("persist_result failed for %s",
+                                  result.get("slug"))
         now = time.monotonic()
         if now - last_print[0] >= 5.0 or done == total:
             elapsed = now - started_at
@@ -187,7 +201,10 @@ async def run_async(args: argparse.Namespace) -> int:
         logger.info("nothing to do — exiting")
         return 0
 
-    cb = make_progress_cb(len(items))
+    # Persist per-item via the progress callback so a crash mid-run
+    # doesn't throw away completed work. (Earlier versions persisted
+    # only after asyncio.gather returned — fragile for 13K-item runs.)
+    cb = make_progress_cb(len(items), out_dir=out_dir)
     if args.pass_ == "lemma":
         results = await run_lemma_batch(
             items, model=args.model, workers=args.workers, progress_cb=cb,
@@ -198,14 +215,8 @@ async def run_async(args: argparse.Namespace) -> int:
             items, model=args.model, workers=args.workers, progress_cb=cb,
         )
 
-    # Persist each one. Sequential write — async I/O contention buys
-    # nothing here since the calls were the bottleneck.
-    for r in results:
-        if r is None:
-            continue
-        persist_result(r, out_dir)
-    logger.info("persisted %d response files", sum(1 for r in results if r))
-
+    persisted = sum(1 for r in results if r)
+    logger.info("persisted %d response files", persisted)
     summarise(r for r in results if r)
     return 0
 
