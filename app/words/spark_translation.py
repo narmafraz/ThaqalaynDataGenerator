@@ -61,13 +61,46 @@ LANG_FULL_NAMES = {
     "zh": "Chinese (Simplified)",
 }
 
-# Per-language script families. Used by the validator to flag Latin-script
-# garbage in glosses that should be in non-Latin scripts.
+# Per-language script families.
+# Validator uses these to flag cross-script contamination — e.g. a
+# Bengali word landing in the Spanish slot (Qwen Round 3 caught this on
+# the very-frequent surface وَ where the model emitted Bengali এবং
+# instead of "y" for Spanish).
 NON_LATIN_LANGS = {"fa", "ur", "bn", "ru", "zh"}
+LATIN_SCRIPT_LANGS = {"en", "tr", "id", "es", "fr", "de"}
 
-# Latin-script regex: catches A-Z/a-z. Some non-Latin scripts use Latin
-# digits or punctuation, which is fine — we only flag letters.
-_LATIN_LETTER_RE = re.compile(r"[A-Za-z]")
+# Per-language expected primary script. Used by `_has_expected_script`
+# to confirm the gloss contains at least one character from the right
+# script. Bare Arabic-script langs (fa/ur) share Arabic letters with
+# the input but the gloss should still contain *some* of them. Chinese
+# requires CJK ideographs. Bengali requires Bengali script. Cyrillic
+# for Russian.
+_LATIN_LETTER_RE   = re.compile(r"[A-Za-z]")
+_ARABIC_RE         = re.compile(r"[؀-ۿ]")
+_BENGALI_RE        = re.compile(r"[ঀ-৿]")
+_CYRILLIC_RE       = re.compile(r"[Ѐ-ӿ]")
+_CJK_RE            = re.compile(r"[一-鿿㐀-䶿]")
+
+_EXPECTED_SCRIPT_RE: dict[str, "re.Pattern[str]"] = {
+    "en": _LATIN_LETTER_RE,
+    "tr": _LATIN_LETTER_RE,
+    "id": _LATIN_LETTER_RE,
+    "es": _LATIN_LETTER_RE,
+    "fr": _LATIN_LETTER_RE,
+    "de": _LATIN_LETTER_RE,
+    "fa": _ARABIC_RE,
+    "ur": _ARABIC_RE,
+    "bn": _BENGALI_RE,
+    "ru": _CYRILLIC_RE,
+    "zh": _CJK_RE,
+}
+
+# Catches surfaces like ٤٤٩٣ — pure-digit "words" (the corpus picks up
+# footnote/page numbers as surface forms). Digit-only translations are
+# acceptable in any language and don't need a script check.
+_LETTER_ANYWHERE_RE = re.compile(
+    r"[A-Za-z؀-ۿঀ-৿Ѐ-ӿ一-鿿]"
+)
 
 # Per-gloss character limit. The UI's Path C truncated at 80; we hold
 # the same line so existing card layouts don't break.
@@ -245,6 +278,9 @@ def validate_translations(parsed: dict) -> list[str]:
       • All 11 langs present and non-empty
       • Each gloss ≤80 chars
       • Non-Latin-script languages contain no A-Z/a-z characters
+      • Each gloss contains at least one character from its expected
+        primary script (catches cross-language leakage, e.g. Bengali
+        text landing in the Spanish slot — Round 3 found this on وَ)
     """
     issues: list[str] = []
 
@@ -261,6 +297,15 @@ def validate_translations(parsed: dict) -> list[str]:
             issues.append(f"{lang}: gloss exceeds {MAX_GLOSS_CHARS} chars ({len(text)})")
         if lang in NON_LATIN_LANGS and _LATIN_LETTER_RE.search(text):
             issues.append(f"{lang}: contains Latin letters (should be {lang} script)")
+        # Cross-script leak detector — the gloss must contain at least
+        # one character from the expected primary script. Exempt
+        # digit-only outputs (corpus has surface forms like ٤٤٩٣ that
+        # are legitimately translated as the same digit string).
+        expected = _EXPECTED_SCRIPT_RE.get(lang)
+        if (expected is not None
+                and not expected.search(text)
+                and _LETTER_ANYWHERE_RE.search(text)):
+            issues.append(f"{lang}: missing expected script characters (cross-language leak?)")
 
     return issues
 
@@ -330,14 +375,18 @@ async def translate_lemma(
     *,
     model: str = "qwen36-fast",
     semaphore: Optional[asyncio.Semaphore] = None,
+    include_classical: bool = False,
 ) -> dict:
     """Translate one lemma. Returns `{slug, response, parsed, issues, meta}`.
 
     `parsed` is None on parse failure; `issues` lists validation problems.
     `meta` carries `elapsed`/`input_tokens`/`output_tokens` for telemetry.
+
+    `include_classical` is the Round 2 A/B knob — when True the hawramani
+    classical_summary (if present on the item) is appended to the prompt.
     """
     sem = semaphore or asyncio.Semaphore(1)
-    user = build_lemma_user_message(item)
+    user = build_lemma_user_message(item, include_classical=include_classical)
     schema = build_schema()
 
     cr = await _call_with_retry(
@@ -421,6 +470,7 @@ async def run_lemma_batch(
     model: str = "qwen36-fast",
     workers: int = 8,
     progress_cb=None,
+    include_classical: bool = False,
 ) -> list[dict]:
     """Translate a batch of lemmas with bounded concurrency.
 
@@ -433,7 +483,10 @@ async def run_lemma_batch(
 
     async def _one(idx: int, it: dict) -> None:
         nonlocal done
-        r = await translate_lemma(it, model=model, semaphore=sem)
+        r = await translate_lemma(
+            it, model=model, semaphore=sem,
+            include_classical=include_classical,
+        )
         results[idx] = r
         done += 1
         if progress_cb is not None:

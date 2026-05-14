@@ -231,6 +231,35 @@ def test_validate_allows_digits_in_non_latin_lang(valid_payload) -> None:
     assert validate_translations(valid_payload) == []
 
 
+def test_validate_catches_bengali_in_spanish_slot(valid_payload) -> None:
+    """Round 3 found Qwen emitted Bengali 'এবং' in the Spanish slot for وَ."""
+    valid_payload["glosses"]["es"] = "এবং"  # Bengali in es slot
+    issues = validate_translations(valid_payload)
+    assert any("es" in i and "cross-language leak" in i for i in issues)
+
+
+def test_validate_catches_arabic_in_turkish_slot(valid_payload) -> None:
+    """Round 3 found Qwen emitted Arabic 'حبش' for Turkish on وَالْحَبَشَةُ."""
+    valid_payload["glosses"]["tr"] = "حبش"
+    issues = validate_translations(valid_payload)
+    assert any("tr" in i and "cross-language leak" in i for i in issues)
+
+
+def test_validate_allows_digit_only_outputs(valid_payload) -> None:
+    """Surface ٤٤٩٣ legitimately translates to '4493' in all langs.
+    Digit-only outputs must pass the script check (not a leak)."""
+    for lang in valid_payload["glosses"]:
+        valid_payload["glosses"][lang] = "4493"
+    # Bengali/Persian/Urdu may use their own digit chars
+    valid_payload["glosses"]["bn"] = "৪৪৯৩"
+    valid_payload["glosses"]["fa"] = "۴۴۹۳"
+    valid_payload["glosses"]["ur"] = "۴۴۹۳"
+    # Non-Latin langs with Latin digits — also acceptable
+    valid_payload["glosses"]["zh"] = "4493"
+    valid_payload["glosses"]["ru"] = "4493"
+    assert validate_translations(valid_payload) == []
+
+
 def test_validate_rejects_non_dict() -> None:
     assert validate_translations(None) != []  # type: ignore[arg-type]
     assert validate_translations({}) != []

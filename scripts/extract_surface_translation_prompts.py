@@ -71,9 +71,18 @@ def build_clitic_breakdown(clitics: dict) -> str:
 
 def load_lemma_translations_map(
     word_sources_dir: Path,
+    *,
+    round_subdir: Optional[str] = None,
 ) -> Dict[str, dict]:
-    """Walk lemma_responses/*.json, return {slug: glosses_dict}."""
-    responses_dir = word_sources_dir / "translation" / "lemma_responses"
+    """Walk lemma_responses/*.json, return {slug: glosses_dict}.
+
+    `round_subdir` (e.g. "round-2") restricts the walk to a specific
+    experiment-round subdir. Used during the pilot phase to anchor
+    surface prompts against a specific lemma-prompt variant. The
+    production merge step uses the top-level dir (None).
+    """
+    base = word_sources_dir / "translation" / "lemma_responses"
+    responses_dir = base / round_subdir if round_subdir else base
     if not responses_dir.is_dir():
         logger.warning(
             "no lemma_responses dir at %s — surface prompts will have empty "
@@ -234,6 +243,11 @@ def main() -> int:
         "--pilot-set", type=Path, default=None,
         help="Optional pilot_set.json restricting which surface slugs to emit",
     )
+    parser.add_argument(
+        "--round-subdir", default=None,
+        help='Pull lemma anchors from a specific round subdir (e.g. "round-2"). '
+             'Defaults to the top-level lemma_responses dir.',
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -251,7 +265,9 @@ def main() -> int:
         slug_filter = set(pilot.get("surfaces") or [])
         logger.info("pilot filter active: %d surface slugs", len(slug_filter))
 
-    lemma_translations = load_lemma_translations_map(args.word_sources_dir)
+    lemma_translations = load_lemma_translations_map(
+        args.word_sources_dir, round_subdir=args.round_subdir,
+    )
 
     items = walk_surfaces(
         args.words_dir,

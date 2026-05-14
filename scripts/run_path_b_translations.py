@@ -191,6 +191,7 @@ async def run_async(args: argparse.Namespace) -> int:
     if args.pass_ == "lemma":
         results = await run_lemma_batch(
             items, model=args.model, workers=args.workers, progress_cb=cb,
+            include_classical=args.include_classical,
         )
     else:
         results = await run_surface_batch(
@@ -233,6 +234,11 @@ def main() -> int:
     parser.add_argument(
         "--force", action="store_true",
         help="Re-translate items whose response file already exists",
+    )
+    parser.add_argument(
+        "--include-classical", action="store_true",
+        help="Lemma pass only: append hawramani classical_summary to the "
+             "prompt (Round 2 A/B knob). No-op for the surface pass.",
     )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
