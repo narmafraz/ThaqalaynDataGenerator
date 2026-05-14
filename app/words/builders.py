@@ -192,8 +192,28 @@ def canonical_diacritized_lemma(lex: str, pos: str = "verb") -> str:
             if d:
                 return slug(d)
     else:
-        # Nouns/adj: just take the first generated diac.
+        # Nouns/adj: pick the nominative-indefinite-singular form as the
+        # standard citation form. CAMeL Tools' `generate_paradigm`
+        # returns the full case×state×number paradigm but in
+        # NON-DETERMINISTIC ORDER across processes — taking `paradigm[0]`
+        # blindly produced unstable lemma slugs (the same noun would
+        # land under different inflected slugs each rebuild, breaking
+        # cross-build dedup). Filtering on the morphological tags is
+        # both stable and semantically correct: the standard Arabic
+        # citation form for a noun/adjective is the masc-singular
+        # nominative indefinite (e.g. يُسْرٌ, not يُسْرٍ / يُسْراً).
         raw = generate_paradigm(lex, pos=base_pos)
+        for entry in raw:
+            if (
+                entry.get("cas") == "n"
+                and entry.get("stt") == "i"
+                and entry.get("num") == "s"
+            ):
+                d = entry.get("diac")
+                if d:
+                    return slug(d)
+        # No nom-indef-singular found (rare — typically pluralia tantum
+        # or defective nouns). Fall back to any form's diac.
         for entry in raw:
             d = entry.get("diac")
             if d:

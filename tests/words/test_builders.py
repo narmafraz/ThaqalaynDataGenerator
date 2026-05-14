@@ -95,6 +95,25 @@ class TestCanonicalDiacritizedLemma:
         # Returns NFC of input.
         assert result == "xxxنxxx"
 
+    def test_noun_returns_nominative_indefinite_singular(self):
+        # CAMeL Tools' generate_paradigm returns noun forms in
+        # non-deterministic order across processes. The canonical
+        # citation form for an Arabic noun is the masc-singular
+        # nominative indefinite (e.g. يُسْرٌ — not يُسْرٍ / يُسْراً).
+        # Regression test: this used to take paradigm[0] blindly and
+        # produced different slugs each rebuild.
+        result = canonical_diacritized_lemma("يُسْر", "noun")
+        assert result == "يُسْرٌ"
+
+    def test_noun_is_deterministic(self):
+        # Same call should produce the same result regardless of
+        # invocation order (proves we're filtering on tags, not relying
+        # on CAMeL's emission order).
+        first = canonical_diacritized_lemma("لِباس", "noun")
+        second = canonical_diacritized_lemma("لِباس", "noun")
+        assert first == second
+        assert first == "لِباسٌ"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
