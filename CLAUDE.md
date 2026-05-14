@@ -491,6 +491,44 @@ python -m app.pipeline_cli.pipeline batch download-fixes
 
 **Fix batches**: Verses that need fixes after generation download are collected automatically. `submit-fixes` re-prepares the fix prompts and submits a second batch. `download-fixes` applies the corrections.
 
+## Path B — Words project translation pipeline (Spark Qwen36, $0)
+
+Separate from the hadith content pipeline above. Translates every lemma and surface form in the Words project (`ThaqalaynWords/{lemmas,surfaces}/`) into 11 languages using DGX Spark / Qwen 3.6-35B. See:
+- `Thaqalayn/docs/WORDS_PROJECT_PLAN.md` — the plan
+- `Thaqalayn/docs/PATH_B_SPARK_LOG.md` — round-by-round experiment results
+- `app/words/spark_translation.py` — the engine
+- `app/words/clitic_labels.py` — CAMeL clitic-code → prompt label table
+
+**Pipeline stages** (all called by `regen_words.ps1 -IncludeTranslations`):
+
+```bash
+# 1. Extract lemma prompts (one row per lemma in ThaqalaynWords/lemmas/)
+python scripts/extract_lemma_translation_prompts.py
+
+# 2. Spark lemma pass — ~1 h, $0
+python -u scripts/run_path_b_translations.py --pass lemma --workers 8 --include-classical
+
+# 3. Extract corpus context windows (±10 words around each surface,
+#    pulled from ThaqalaynData/books/) — ~10 min, one-time
+python scripts/extract_corpus_contexts.py
+
+# 4. Extract surface prompts (anchored to lemma responses + contexts)
+python scripts/extract_surface_translation_prompts.py \
+    --corpus-contexts ../ThaqalaynWordSources/translation/surface_contexts.json
+
+# 5. Spark surface pass — ~9-11 h, $0
+python -u scripts/run_path_b_translations.py --pass surface --workers 8
+
+# 6. Merge translations back into per-page JSONs
+python scripts/merge_translations_into_pages.py --pass both
+```
+
+**Resumability**: every stage is resumable. Per-slug response files in `ThaqalaynWordSources/translation/{lemma,surface}_responses/{slug}.json` are skipped by the runner on re-run. So a machine sleep / crash / ctrl-C mid-run is recovered by re-issuing the same command.
+
+**Pilot rounds**: pass `--pilot-set ../ThaqalaynWordSources/translation/pilot_set.json --round N` to scope a run to the 100/100 pilot subset and persist outputs under `round-N/` instead of top-level. Used during prompt iteration (Rounds 1-4).
+
+**Validator**: `app.words.spark_translation.validate_translations` flags missing langs, length > 80, Latin chars in non-Latin scripts, and cross-script leaks (added in Round 3 after Qwen put Bengali text in the Spanish slot for surface وَ).
+
 ## API-Only Code (Not Used)
 
 The following functions/modules require an Anthropic API key and are NOT used in the current `claude -p` pipeline:
