@@ -27,6 +27,20 @@ Write-Host ""
 Write-Host "=== ThaqalaynWords regen ===" -ForegroundColor Cyan
 $start = Get-Date
 
+# Clean stale per-page JSONs before rebuilding. build_word_pages.py writes
+# but never deletes, so if a previous build wrote files under slug names
+# the current build no longer produces, those stragglers would persist and
+# accumulate across runs. Index files (index/*.json) are rewritten fully
+# each run so they don't need explicit cleanup.
+$WordsRoot = Resolve-Path "$PSScriptRoot/../ThaqalaynWords"
+foreach ($dir in @("lemmas", "roots", "surfaces")) {
+    $p = Join-Path $WordsRoot $dir
+    if (Test-Path $p) {
+        Write-Host "Cleaning $p ..." -ForegroundColor DarkGray
+        Remove-Item -Recurse -Force "$p\*"
+    }
+}
+
 Write-Host ""
 Write-Host "[1/2] Building surfaces + lemmas + roots ..." -ForegroundColor Yellow
 uv run python .\scripts\build_word_pages.py --full

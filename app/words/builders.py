@@ -192,17 +192,30 @@ def canonical_diacritized_lemma(lex: str, pos: str = "verb") -> str:
             if d:
                 return slug(d)
     else:
-        # Nouns/adj: pick the nominative-indefinite-singular form as the
-        # standard citation form. CAMeL Tools' `generate_paradigm`
-        # returns the full case×state×number paradigm but in
-        # NON-DETERMINISTIC ORDER across processes — taking `paradigm[0]`
-        # blindly produced unstable lemma slugs (the same noun would
-        # land under different inflected slugs each rebuild, breaking
-        # cross-build dedup). Filtering on the morphological tags is
-        # both stable and semantically correct: the standard Arabic
-        # citation form for a noun/adjective is the masc-singular
-        # nominative indefinite (e.g. يُسْرٌ, not يُسْرٍ / يُسْراً).
+        # Nouns/adj: pick the masc-singular nominative-indefinite form
+        # as the standard citation form (e.g. يُسْرٌ, آبِقٌ — not يُسْرٍ,
+        # آبِقَةٌ). CAMeL Tools' `generate_paradigm` returns the full
+        # case×state×number×gender paradigm in NON-DETERMINISTIC ORDER
+        # across processes, so we MUST filter by morphological tags
+        # rather than rely on insertion order — taking `paradigm[0]`
+        # produced unstable lemma slugs (each rebuild remapped nouns
+        # to a different inflection).
+        #
+        # Preference order:
+        #   1. masc + nom + indef + sg  — canonical citation form
+        #   2. any nom + indef + sg     — defective nouns (fem-only, etc.)
+        #   3. any form's diac          — last-resort fallback
         raw = generate_paradigm(lex, pos=base_pos)
+        for entry in raw:
+            if (
+                entry.get("cas") == "n"
+                and entry.get("stt") == "i"
+                and entry.get("num") == "s"
+                and entry.get("gen") == "m"
+            ):
+                d = entry.get("diac")
+                if d:
+                    return slug(d)
         for entry in raw:
             if (
                 entry.get("cas") == "n"
@@ -212,8 +225,6 @@ def canonical_diacritized_lemma(lex: str, pos: str = "verb") -> str:
                 d = entry.get("diac")
                 if d:
                     return slug(d)
-        # No nom-indef-singular found (rare — typically pluralia tantum
-        # or defective nouns). Fall back to any form's diac.
         for entry in raw:
             d = entry.get("diac")
             if d:
