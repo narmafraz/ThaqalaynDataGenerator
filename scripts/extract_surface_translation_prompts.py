@@ -141,6 +141,7 @@ def build_surface_item(
     *,
     lemma_translations_map: Dict[str, dict],
     lemma_context_cache: Dict[str, dict],
+    surface_contexts: Optional[Dict[str, list]],
     words_dir: Path,
     helpers,
 ) -> Optional[dict]:
@@ -177,6 +178,10 @@ def build_surface_item(
         # query these for ±10-word windows, but the surface row itself only
         # needs the first 5 as a lightweight pointer.
         "occurrence_paths": (data.get("occurrence_paths") or [])[:5],
+        # Pre-extracted ±10-word windows, populated only when the caller
+        # passed --corpus-contexts. Read by `build_surface_user_message`
+        # to anchor the prompt with real usage examples (Round 4+).
+        "corpus_contexts": (surface_contexts or {}).get(slug, []),
     }
 
 
@@ -187,6 +192,7 @@ def walk_surfaces(
     words_dir: Path,
     *,
     lemma_translations_map: Dict[str, dict],
+    surface_contexts: Optional[Dict[str, list]],
     helpers,
     slug_filter: Optional[set] = None,
 ) -> List[dict]:
@@ -210,6 +216,7 @@ def walk_surfaces(
             d,
             lemma_translations_map=lemma_translations_map,
             lemma_context_cache=cache,
+            surface_contexts=surface_contexts,
             words_dir=words_dir,
             helpers=helpers,
         )
@@ -248,6 +255,13 @@ def main() -> int:
         help='Pull lemma anchors from a specific round subdir (e.g. "round-2"). '
              'Defaults to the top-level lemma_responses dir.',
     )
+    parser.add_argument(
+        "--corpus-contexts", type=Path, default=None,
+        help="Path to a surface_contexts.json produced by "
+             "extract_corpus_contexts.py. When supplied, each surface's "
+             "row carries pre-extracted ±10-word windows the Spark prompt "
+             "uses as real-usage anchors (Round 4+).",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -269,9 +283,19 @@ def main() -> int:
         args.word_sources_dir, round_subdir=args.round_subdir,
     )
 
+    surface_contexts: Optional[Dict[str, list]] = None
+    if args.corpus_contexts is not None:
+        with open(args.corpus_contexts, "r", encoding="utf-8") as f:
+            surface_contexts = json.load(f)
+        logger.info(
+            "corpus context anchors loaded for %d surfaces",
+            len(surface_contexts),
+        )
+
     items = walk_surfaces(
         args.words_dir,
         lemma_translations_map=lemma_translations,
+        surface_contexts=surface_contexts,
         helpers=helpers,
         slug_filter=slug_filter,
     )
