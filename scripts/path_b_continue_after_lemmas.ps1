@@ -74,9 +74,9 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Stage 4: Spark surface pass (~9-11 h)
-Write-Host "Starting Spark surface pass (~9-11 h) ..." -ForegroundColor Yellow
-& .venv\Scripts\python.exe -u scripts\run_path_b_translations.py --pass surface --workers 8
+# Stage 4: Spark surface pass (~6-9 h at 12 workers)
+Write-Host "Starting Spark surface pass (~6-9 h with 12 workers) ..." -ForegroundColor Yellow
+& .venv\Scripts\python.exe -u scripts\run_path_b_translations.py --pass surface --workers 12
 if ($LASTEXITCODE -ne 0) {
     Write-Host "run_path_b_translations.py --pass surface failed" -ForegroundColor Red
     exit 1
