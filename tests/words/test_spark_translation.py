@@ -296,18 +296,18 @@ def test_translate_lemma_with_mocked_backend(monkeypatch) -> None:
     assert result["meta"]["backend"] == "spark"
 
 
-def test_translate_lemma_persists_raw_even_on_success(monkeypatch) -> None:
-    """Sacred archive rule — ThaqalaynWordSources should never discard
-    the raw LLM response, even when the parsed JSON succeeded. This
-    test locks the fix: `raw` must hold the original response string
-    on success too, not just on parse failure."""
+def test_translate_lemma_drops_raw_on_success(monkeypatch) -> None:
+    """Storage-efficient contract: on successful parse, `raw` is None
+    because the parsed dict carries all semantic content (the raw would
+    only add JSON whitespace). On parse failure we DO keep raw — see
+    next test."""
     raw_emit = '{"glosses": {"en":"to say","fa":"گفتن","ur":"کہنا","tr":"söylemek","id":"berkata","bn":"বলা","es":"decir","fr":"dire","de":"sagen","ru":"сказать","zh":"说"}}'
 
     async def fake_call_openai(system, user, **kw):
         return {
             "result": raw_emit,
             "elapsed": 1.2, "input_tokens": 200, "output_tokens": 220,
-            "cost": 0.0, "stop_reason": "stop", "num_turns": 1,
+            "cost": 0.0, "stop_reason": "stop",
             "model": "qwen36-fast", "backend": "spark",
         }
 
@@ -317,22 +317,22 @@ def test_translate_lemma_persists_raw_even_on_success(monkeypatch) -> None:
 
     r = asyncio.run(translate_lemma({"lemma_ar": "قَالَ", "pos": "V"}))
     assert r["parsed"] is not None  # parse succeeded
-    assert r["raw"] == raw_emit     # but raw is STILL preserved
+    assert r["raw"] is None         # → raw is dropped
     assert r["error"] is None
-    # Full meta dict carries all OpenAI/Spark fields
+    # Meta carries cost + stop_reason for telemetry / OpenAI compatibility
     assert r["meta"]["cost"] == 0.0
     assert r["meta"]["stop_reason"] == "stop"
-    assert r["meta"]["num_turns"] == 1
 
 
-def test_translate_surface_persists_raw_even_on_success(monkeypatch) -> None:
-    raw_emit = '{"glosses": {"en":"and by","fa":"و با","ur":"اور","tr":"ve","id":"dan","bn":"এবং","es":"y","fr":"et","de":"und","ru":"и","zh":"和"}}'
+def test_translate_lemma_preserves_raw_on_parse_failure(monkeypatch) -> None:
+    """When parsing fails, the raw text IS persisted — it's what we'd
+    need to debug the failure."""
+    bad_raw = "{not even close to JSON"
 
     async def fake_call_openai(system, user, **kw):
         return {
-            "result": raw_emit,
-            "elapsed": 1.5, "input_tokens": 300, "output_tokens": 250,
-            "cost": 0.0, "stop_reason": "stop", "num_turns": 1,
+            "result": bad_raw, "elapsed": 0.5,
+            "input_tokens": 10, "output_tokens": 5,
             "model": "qwen36-fast", "backend": "spark",
         }
 
@@ -340,12 +340,9 @@ def test_translate_surface_persists_raw_even_on_success(monkeypatch) -> None:
         "app.pipeline_cli.openai_backend.call_openai", fake_call_openai
     )
 
-    r = asyncio.run(translate_surface({
-        "surface_ar": "وَبِالْعَهْدِ", "lemma_ar": "عَهْد", "pos": "N",
-    }))
-    assert r["parsed"] is not None
-    assert r["raw"] == raw_emit
-    assert r["error"] is None
+    r = asyncio.run(translate_lemma({"lemma_ar": "X", "pos": "V"}))
+    assert r["parsed"] is None
+    assert r["raw"] == bad_raw  # preserved for forensics
 
 
 def test_translate_lemma_records_parse_failure(monkeypatch) -> None:

@@ -416,17 +416,17 @@ async def translate_lemma(
             "output_tokens": cr.get("output_tokens", 0),
             "cost": cr.get("cost", 0.0),
             "stop_reason": cr.get("stop_reason"),
-            "num_turns": cr.get("num_turns", 1),
             "model": cr.get("model", model),
             "backend": cr.get("backend", "spark"),
         },
-        # ALWAYS persist the raw LLM response, not just on parse failure —
-        # ThaqalaynWordSources is the sacred archive; nothing should be
-        # discarded. The parsed dict above is the post-strip-code-fences
-        # JSON, which is what consumers use; `raw` preserves the exact
-        # bytes the model emitted in case of future re-analysis.
-        "raw": cr.get("result", ""),
-        "error": cr.get("error"),  # None on success; populated on call failure
+        # Raw response preserved only on failure. With strict json_schema
+        # mode, a successful raw is just pretty-printed JSON whose dict
+        # serialisation is `parsed` — keeping it would only persist
+        # whitespace (~70 bytes/file × 115K items = ~8 MB of indentation).
+        # For parse failures the raw IS valuable (it's the malformed text
+        # we need to debug), so keep it on the failure path.
+        "raw": cr.get("result", "") if not parsed else None,
+        "error": cr.get("error"),  # None on success; set on call failure
     }
 
 
@@ -468,12 +468,11 @@ async def translate_surface(
             "output_tokens": cr.get("output_tokens", 0),
             "cost": cr.get("cost", 0.0),
             "stop_reason": cr.get("stop_reason"),
-            "num_turns": cr.get("num_turns", 1),
             "model": cr.get("model", model),
             "backend": cr.get("backend", "spark"),
         },
-        # ALWAYS persist raw — see translate_lemma docstring for rationale.
-        "raw": cr.get("result", ""),
+        # Raw preserved only on failure — see translate_lemma rationale.
+        "raw": cr.get("result", "") if not parsed else None,
         "error": cr.get("error"),
     }
 
