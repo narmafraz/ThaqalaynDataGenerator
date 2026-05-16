@@ -46,9 +46,12 @@ if (-not (Test-Path $contextsFile)) {
 } else {
     # Was it created BEFORE the lemma pass started? If yes the file is the
     # 76-item pilot output, not the 102K full-corpus output. Re-extract.
+    # Also skip the re-extract if the file is large (>10 MB), which means
+    # it's already the full-corpus extraction.
     $ctxMtime = (Get-Item $contextsFile).LastWriteTime
-    $earliest = (Get-Date).AddHours(-2)
-    if ($ctxMtime -lt $earliest) {
+    $ctxSize = (Get-Item $contextsFile).Length
+    $earliest = (Get-Date).AddHours(-24)
+    if ($ctxMtime -lt $earliest -and $ctxSize -lt 10485760) {
         Write-Host "surface_contexts.json is stale; re-extracting ..." -ForegroundColor Yellow
         Set-Location "$PSScriptRoot\.."
         & .venv\Scripts\python.exe -u scripts\extract_corpus_contexts.py
