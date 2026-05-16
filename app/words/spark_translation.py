@@ -414,10 +414,19 @@ async def translate_lemma(
             "elapsed": cr.get("elapsed", 0.0),
             "input_tokens": cr.get("input_tokens", 0),
             "output_tokens": cr.get("output_tokens", 0),
+            "cost": cr.get("cost", 0.0),
+            "stop_reason": cr.get("stop_reason"),
+            "num_turns": cr.get("num_turns", 1),
             "model": cr.get("model", model),
             "backend": cr.get("backend", "spark"),
         },
-        "raw": cr.get("result", "") if not parsed else None,
+        # ALWAYS persist the raw LLM response, not just on parse failure —
+        # ThaqalaynWordSources is the sacred archive; nothing should be
+        # discarded. The parsed dict above is the post-strip-code-fences
+        # JSON, which is what consumers use; `raw` preserves the exact
+        # bytes the model emitted in case of future re-analysis.
+        "raw": cr.get("result", ""),
+        "error": cr.get("error"),  # None on success; populated on call failure
     }
 
 
@@ -457,10 +466,15 @@ async def translate_surface(
             "elapsed": cr.get("elapsed", 0.0),
             "input_tokens": cr.get("input_tokens", 0),
             "output_tokens": cr.get("output_tokens", 0),
+            "cost": cr.get("cost", 0.0),
+            "stop_reason": cr.get("stop_reason"),
+            "num_turns": cr.get("num_turns", 1),
             "model": cr.get("model", model),
             "backend": cr.get("backend", "spark"),
         },
-        "raw": cr.get("result", "") if not parsed else None,
+        # ALWAYS persist raw — see translate_lemma docstring for rationale.
+        "raw": cr.get("result", ""),
+        "error": cr.get("error"),
     }
 
 
