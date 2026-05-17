@@ -20,6 +20,7 @@ from app.ai_content_merger import merge_ai_content
 from app.create_indices import create_indices
 from app.link_chapters import link_related_chapters
 from app.lib_db import write_file, shellify_complete_books
+from app.verse_counts import write_manifest as write_verse_counts
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ def init():
     link_related_chapters()
     merge_ai_content(report)
     shellify_complete_books()
+    _write_verse_counts()
     _write_data_version()
     report.print_summary()
 
@@ -50,6 +52,18 @@ def _write_data_version():
     from datetime import datetime, timezone
     version = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     write_file("/index/data_version", {"version": version})
+
+
+def _write_verse_counts():
+    """Rebuild index/verse-counts.json — consumed by the Angular reading-progress tracker.
+
+    Runs after all book parsers + shellify so chapter shells are final on disk.
+    """
+    import os
+    from pathlib import Path
+    dest = Path(os.environ.get("DESTINATION_DIR", "../ThaqalaynData/")).resolve()
+    out = write_verse_counts(dest)
+    logger.info("Wrote verse-counts manifest: %s", out)
 
 def main():
     logger.info("Creating initial data")
