@@ -66,22 +66,17 @@ class TestSetIndex:
         assert nested_book.chapters[0].crumbs == []
 
     def test_verse_count_calculation(self, nested_book):
-        """Verify verse_count is correctly calculated.
-
-        Note: set_index uses indexes[-1] to set verse_start_index for each
-        subchapter, which means the first chapter's verse_start_index is
-        equal to the chapter-depth index (1), not 0. This is a known quirk.
-        The book-level verse_count uses the overall index count.
-        """
+        """Verify verse_count is correctly calculated."""
         set_index(nested_book, [], 0)
 
-        # Book-level verse_count covers all 4 verses
+        # Book has 2 chapters × 2 verses = 4
         assert nested_book.verse_count == 4
-
-        # Each chapter has verses assigned
-        for ch in nested_book.chapters:
-            assert ch.verse_count is not None
-            assert ch.verse_count >= 0
+        # First chapter: starts at 0, has 2 verses
+        assert nested_book.chapters[0].verse_start_index == 0
+        assert nested_book.chapters[0].verse_count == 2
+        # Second chapter: starts after first, has 2 verses
+        assert nested_book.chapters[1].verse_start_index == 2
+        assert nested_book.chapters[1].verse_count == 2
 
     def test_navigation_prev_next(self, nested_book):
         """Test prev/next navigation links between siblings"""
@@ -218,37 +213,194 @@ class TestSequenceErrors:
         assert len(report.sequence_errors) == 0
 
 
-class TestVerseStartIndexBehavior:
-    """Document the verse_start_index off-by-one behavior.
+def _make_book(slug: str = "test") -> Chapter:
+    """Helper: build a top-level book chapter for use in indexing tests."""
+    book = Chapter()
+    book.part_type = PartType.Book
+    book.titles = {"en": "Test"}
+    book.path = f"/books/{slug}"
+    book.crumbs = []
+    book.verse_start_index = 0
+    book.chapters = []
+    return book
 
-    set_index sets subchapter.verse_start_index = indexes[-1] which is the
-    deepest-level index counter. For the first subchapter, this equals 1
-    (the chapter's own index), not 0. This means the first subchapter's
-    verse_count = total_verses - 1 instead of total_verses.
 
-    This is a known quirk documented here so future developers understand
-    the behavior and don't accidentally "fix" it without updating all
-    dependent logic.
+def _make_chapter(title: str, num_verses: int, part_type: PartType = PartType.Chapter) -> Chapter:
+    """Helper: leaf chapter with N hadith verses."""
+    ch = Chapter()
+    ch.part_type = part_type
+    ch.titles = {"en": title}
+    ch.crumbs = []
+    ch.verse_start_index = 0
+    ch.verses = []
+    for _ in range(num_verses):
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = ["text"]
+        ch.verses.append(v)
+    return ch
+
+
+def _make_intermediate(title: str) -> Chapter:
+    """Helper: chapter that contains sub-chapters (no direct verses)."""
+    ch = Chapter()
+    ch.part_type = PartType.Chapter
+    ch.titles = {"en": title}
+    ch.crumbs = []
+    ch.verse_start_index = 0
+    ch.chapters = []
+    return ch
+
+
+class TestVerseStartIndexCorrectness:
+    """Tests for verse_start_index + verse_count correctness across the
+    full set of structural cases the corpus contains:
+
+    - leaf chapter (verses only)
+    - parent → leaf chapters
+    - parent → intermediate → leaf (e.g. al-kafi: vol → book → chapter → verses)
+    - **mixed depth** (e.g. man-la-yahduruhu-al-faqih: some chapters have
+      verses directly while their siblings have sub-chapter children)
+
+    Before the 2026-05-18 fix, the first subchapter at each level was given
+    an incorrect verse_start_index because the code used `indexes[-1]` as a
+    proxy for the cumulative-verse counter — which only works once recursion
+    has descended to the verse depth. Mixed-depth trees broke this assumption
+    in subtler ways (a verse counter at one depth got reused as a chapter
+    counter at the same depth in a sibling subtree).
+
+    The fix introduces a dedicated `verse_counter` distinct from `indexes`.
+    These tests pin the corrected behaviour.
     """
 
-    def test_first_chapter_verse_start_index_is_not_zero(self):
-        """The first subchapter's verse_start_index equals the chapter-depth index,
-        not 0, because indexes[-1] reflects the chapter counter, not the verse counter."""
-        book = Chapter()
-        book.part_type = PartType.Book
-        book.titles = {"en": "Test"}
-        book.path = "/books/test"
-        book.crumbs = []
-        book.verse_start_index = 0
-        book.chapters = []
+    def test_first_chapter_starts_at_zero(self):
+        """The first subchapter's verse_start_index is 0 — no verses came before it."""
+        book = _make_book()
+        book.chapters.append(_make_chapter("Chapter 1", 3))
 
-        ch = Chapter()
-        ch.part_type = PartType.Chapter
-        ch.titles = {"en": "Chapter 1"}
-        ch.crumbs = []
-        ch.verse_start_index = 0
-        ch.verses = []
-        for _ in range(3):
+        set_index(book, [], 0)
+
+        assert book.chapters[0].verse_start_index == 0
+        assert book.chapters[0].verse_count == 3
+        assert book.verse_count == 3
+
+    def test_two_leaf_chapters_chain_cleanly(self):
+        """Second chapter starts where the first one ended."""
+        book = _make_book()
+        book.chapters.append(_make_chapter("Chapter 1", 3))
+        book.chapters.append(_make_chapter("Chapter 2", 5))
+
+        set_index(book, [], 0)
+
+        assert book.chapters[0].verse_start_index == 0
+        assert book.chapters[0].verse_count == 3
+        assert book.chapters[1].verse_start_index == 3
+        assert book.chapters[1].verse_count == 5
+        assert book.verse_count == 8
+
+    def test_intermediate_chapter_aggregates_sub_counts(self):
+        """A chapter containing sub-chapters has verse_count = sum of sub verses."""
+        book = _make_book()
+        section = _make_intermediate("Section 1")
+        section.chapters.append(_make_chapter("Chapter A", 2))
+        section.chapters.append(_make_chapter("Chapter B", 4))
+        book.chapters.append(section)
+
+        set_index(book, [], 0)
+
+        assert section.chapters[0].verse_start_index == 0
+        assert section.chapters[0].verse_count == 2
+        assert section.chapters[1].verse_start_index == 2
+        assert section.chapters[1].verse_count == 4
+        # Intermediate aggregates direct + recursive
+        assert section.verse_start_index == 0
+        assert section.verse_count == 6
+        assert book.verse_count == 6
+
+    def test_mixed_depth_book_first_deeper_subtree_starts_correctly(self):
+        """Reproduction of the man-la-yahduruhu-al-faqih bug.
+
+        Vol 1 has chapters with verses directly (depth=2 leaves).
+        Vol 2 has chapters whose children are chapters with verses (depth=3 leaves).
+        The first chapter of vol 2's first sub-chapter should have
+        verse_start_index = (verses in vol 1), not the chapter counter.
+        """
+        book = _make_book("faqih")
+
+        vol1 = _make_intermediate("Volume 1")
+        vol1.chapters.append(_make_chapter("Prelude", 1))
+        vol1.chapters.append(_make_chapter("Knowledge", 36))
+        # vol 1 total = 37 verses
+        book.chapters.append(vol1)
+
+        vol2 = _make_intermediate("Volume 2")
+        zakat = _make_intermediate("Book of Zakat")
+        zakat.chapters.append(_make_chapter("Chapter on Shyness", 1))
+        zakat.chapters.append(_make_chapter("Chapter on Categories", 43))
+        # zakat total = 44 verses
+        vol2.chapters.append(zakat)
+        book.chapters.append(vol2)
+
+        set_index(book, [], 0)
+
+        # Volume 1 inner cross-checks
+        assert vol1.chapters[0].verse_start_index == 0
+        assert vol1.chapters[0].verse_count == 1
+        assert vol1.chapters[1].verse_start_index == 1
+        assert vol1.chapters[1].verse_count == 36
+        assert vol1.verse_start_index == 0
+        assert vol1.verse_count == 37
+
+        # Volume 2 — this is the previously buggy region
+        assert vol2.verse_start_index == 37
+        assert zakat.verse_start_index == 37
+        # The first chapter under zakat is the one that was reading "1570 / -1569"
+        # in production data; here it should be the cumulative 37 + count 1.
+        assert zakat.chapters[0].verse_start_index == 37
+        assert zakat.chapters[0].verse_count == 1
+        assert zakat.chapters[1].verse_start_index == 38
+        assert zakat.chapters[1].verse_count == 43
+        assert zakat.verse_count == 44
+        assert vol2.verse_count == 44
+
+        assert book.verse_count == 81  # 37 + 44
+
+    def test_verse_index_is_globally_monotonic_in_mixed_depth_book(self):
+        """Across the whole book, verse.index increments 1, 2, 3, ... regardless
+        of where in the tree the verse lives."""
+        book = _make_book("mixed")
+        vol1 = _make_intermediate("V1")
+        vol1.chapters.append(_make_chapter("Prelude", 1))
+        vol1.chapters.append(_make_chapter("Ch", 2))
+        book.chapters.append(vol1)
+        vol2 = _make_intermediate("V2")
+        zakat = _make_intermediate("Zakat")
+        zakat.chapters.append(_make_chapter("Sub", 3))
+        vol2.chapters.append(zakat)
+        book.chapters.append(vol2)
+
+        set_index(book, [], 0)
+
+        # Flatten verses in tree-order
+        verses_in_order = (
+            vol1.chapters[0].verses
+            + vol1.chapters[1].verses
+            + zakat.chapters[0].verses
+        )
+        for i, v in enumerate(verses_in_order, start=1):
+            assert v.index == i, f"verse {i} got index {v.index}"
+
+    def test_heading_verses_do_not_count(self):
+        """PartType.Heading verses are skipped by the counter — they're navigational
+        anchors, not countable units."""
+        book = _make_book()
+        ch = _make_chapter("Mixed", 0)  # no auto-generated verses
+        # Add a heading then two hadith
+        h = Verse()
+        h.part_type = PartType.Heading
+        h.text = ["a section header"]
+        ch.verses.append(h)
+        for _ in range(2):
             v = Verse()
             v.part_type = PartType.Hadith
             v.text = ["text"]
@@ -257,57 +409,91 @@ class TestVerseStartIndexBehavior:
 
         set_index(book, [], 0)
 
-        # The first subchapter's verse_start_index is set to indexes[-1]
-        # At the time, indexes is [1, ...] so verse_start_index = 1, not 0
-        assert ch.verse_start_index == 1
+        assert ch.verse_start_index == 0
+        assert ch.verse_count == 2  # only the 2 hadith
+        assert book.verse_count == 2
 
-        # Therefore verse_count = indexes[depth] - verse_start_index
-        # = 3 - 1 = 2, not 3 (even though there are 3 verses)
-        assert ch.verse_count == 2
-
-        # But the book-level verse_count is correct
-        # It uses indexes[-1] - book.verse_start_index = 3 - 0 = 3
-        assert book.verse_count == 3
-
-    def test_second_chapter_verse_count_correct(self):
-        """The second subchapter's verse_count is correct because verse_start_index
-        aligns properly after the first chapter's verses."""
-        book = Chapter()
-        book.part_type = PartType.Book
-        book.titles = {"en": "Test"}
-        book.path = "/books/test"
-        book.crumbs = []
-        book.verse_start_index = 0
-        book.chapters = []
-
-        for ch_num in range(1, 3):
-            ch = Chapter()
-            ch.part_type = PartType.Chapter
-            ch.titles = {"en": f"Chapter {ch_num}"}
-            ch.crumbs = []
-            ch.verse_start_index = 0
-            ch.verses = []
-            for _ in range(2):
-                v = Verse()
-                v.part_type = PartType.Hadith
-                v.text = ["text"]
-                ch.verses.append(v)
-            book.chapters.append(ch)
+    def test_empty_first_chapter_does_not_offset_siblings(self):
+        """An empty chapter (no verses) shouldn't shift the counter for its siblings."""
+        book = _make_book()
+        book.chapters.append(_make_chapter("Empty", 0))
+        book.chapters.append(_make_chapter("Five", 5))
 
         set_index(book, [], 0)
 
-        # First chapter: verse_start_index=1, verses indexed 1,2
-        # verse_count = 2 - 1 = 1 (off by one)
-        assert book.chapters[0].verse_start_index == 1
-        assert book.chapters[0].verse_count == 1
+        assert book.chapters[0].verse_start_index == 0
+        assert book.chapters[0].verse_count == 0
+        assert book.chapters[1].verse_start_index == 0
+        assert book.chapters[1].verse_count == 5
+        assert book.verse_count == 5
 
-        # Second chapter: verse_start_index=2, verses indexed 3,4
-        # verse_count = 4 - 2 = 2 (correct)
-        assert book.chapters[1].verse_start_index == 2
-        assert book.chapters[1].verse_count == 2
+    def test_three_level_kafi_shape(self):
+        """Mimic the al-kafi shape: Volume → Book → Chapter → verses (depth 4)."""
+        book = _make_book("al-kafi")
+        vol = _make_intermediate("Volume 1")
+        usul = _make_intermediate("Book of Knowledge")
+        usul.chapters.append(_make_chapter("Chapter on Intellect", 36))
+        usul.chapters.append(_make_chapter("Chapter on Knowledge", 24))
+        vol.chapters.append(usul)
+        book.chapters.append(vol)
 
-        # Book total is always correct: 4 - 0 = 4
-        assert book.verse_count == 4
+        set_index(book, [], 0)
+
+        assert usul.chapters[0].verse_start_index == 0
+        assert usul.chapters[0].verse_count == 36
+        assert usul.chapters[1].verse_start_index == 36
+        assert usul.chapters[1].verse_count == 24
+        assert usul.verse_count == 60
+        assert vol.verse_count == 60
+        assert book.verse_count == 60
+
+    def test_three_volumes_chain_cleanly(self):
+        """Top-level volumes (sibling subtrees) accumulate across the whole book."""
+        book = _make_book("multi")
+        for i, n in enumerate([10, 20, 5], start=1):
+            vol = _make_intermediate(f"Volume {i}")
+            vol.chapters.append(_make_chapter("only chapter", n))
+            book.chapters.append(vol)
+
+        set_index(book, [], 0)
+
+        assert book.chapters[0].verse_start_index == 0
+        assert book.chapters[0].verse_count == 10
+        assert book.chapters[1].verse_start_index == 10
+        assert book.chapters[1].verse_count == 20
+        assert book.chapters[2].verse_start_index == 30
+        assert book.chapters[2].verse_count == 5
+        assert book.verse_count == 35
+
+    def test_set_index_is_idempotent_with_fresh_counter(self):
+        """Calling set_index a second time on the same tree (with a fresh
+        counter) must produce the same shape — no leaked state in default args."""
+        book = _make_book()
+        book.chapters.append(_make_chapter("A", 3))
+        book.chapters.append(_make_chapter("B", 2))
+
+        set_index(book, [], 0)
+        first_starts = [c.verse_start_index for c in book.chapters]
+        first_counts = [c.verse_count for c in book.chapters]
+
+        # Reset chapter state to simulate fresh invocation
+        for c in book.chapters:
+            c.verse_start_index = 0
+            c.verse_count = None
+            c.index = None
+            c.local_index = None
+            c.path = None
+            for v in c.verses:
+                v.index = None
+                v.local_index = None
+                v.path = None
+
+        set_index(book, [], 0)
+        second_starts = [c.verse_start_index for c in book.chapters]
+        second_counts = [c.verse_count for c in book.chapters]
+
+        assert first_starts == second_starts == [0, 3]
+        assert first_counts == second_counts == [3, 2]
 
 
 class TestProcessingReport:

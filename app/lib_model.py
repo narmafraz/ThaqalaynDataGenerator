@@ -76,23 +76,60 @@ def get_verses(book):
 		return book['verses']
 	return None
 
-def set_index(chapter: Chapter, indexes: List[int], depth: int, report: Optional[ProcessingReport] = None) -> List[int]:
+def set_index(
+	chapter: Chapter,
+	indexes: List[int],
+	depth: int,
+	report: Optional[ProcessingReport] = None,
+	verse_counter: Optional[List[int]] = None,
+) -> List[int]:
+	"""Assign hierarchical indexes + verse counts to ``chapter`` and its descendants.
+
+	``indexes`` is the legacy per-depth global counter list. Its semantics are
+	preserved so callers and consumers that rely on ``subchapter.index`` (the
+	running count of chapters seen at each tree depth across the whole book)
+	continue to work unchanged.
+
+	``verse_counter`` is a single-element list used as a mutable cumulative
+	count of verses processed so far in the whole book. Decoupling this from
+	``indexes`` is what fixes the bug where the first chapter at each tree
+	level got a wrong ``verse_start_index`` and a negative ``verse_count`` —
+	the old code used ``indexes[-1]`` as a proxy for the verse counter, which
+	silently broke in mixed-depth trees (e.g. man-la-yahduruhu-al-faqih, where
+	some chapters have verses directly and others have grand-children).
+
+	Callers don't need to pass ``verse_counter`` — the top-level call creates
+	one. Pre-fix callers continue to work; ``verse.index``, ``verse_start_index``
+	and ``verse_count`` come out semantically correct for every shape.
+	"""
 	if report is None:
 		report = get_default_report()
+	if verse_counter is None:
+		# Top of the recursion — start a fresh cumulative-verse counter.
+		# Single-element list because Python ints are immutable; this gives us
+		# a reference we can mutate across recursive calls without sentinels.
+		verse_counter = [0]
 
 	if len(indexes) < depth + 1:
 		indexes.append(0)
 
-	if get_verses(chapter):
+	if get_verses(chapter) is not None:
+		# Note: `is not None` (not just truthiness) so a chapter with an
+		# explicit empty `verses=[]` still gets verse_count set to 0 instead
+		# of left as None.
 		verse_local_index = 0
 		for verse in chapter.verses:
 			if verse.part_type == PartType.Hadith or verse.part_type == PartType.Verse:
+				verse_counter[0] += 1
 				indexes[depth] = indexes[depth] + 1
-				verse.index = indexes[depth]
+				# verse.index is globally monotonic across the book regardless
+				# of tree depth — same as cumulative verse count at this point.
+				verse.index = verse_counter[0]
 				verse_local_index = verse_local_index + 1
 				verse.local_index = verse_local_index
 				verse.path = chapter.path + ":" + str(verse_local_index)
-		chapter.verse_count = indexes[depth] - chapter.verse_start_index
+		# verse_count for a leaf is the number of countable verses directly under it.
+		chapter.verse_count = verse_local_index
 
 	report_numbering = True
 	sequence = None
@@ -105,7 +142,8 @@ def set_index(chapter: Chapter, indexes: List[int], depth: int, report: Optional
 			chapter_local_index = chapter_local_index + 1
 			subchapter.local_index = chapter_local_index
 			subchapter.path = chapter.path + ":" + str(chapter_local_index)
-			subchapter.verse_start_index = indexes[-1]
+			# Cumulative-verse count snapshot at the moment this subchapter starts.
+			subchapter.verse_start_index = verse_counter[0]
 
 			if report_numbering and subchapter.part_type == PartType.Chapter and 'en' in subchapter.titles:
 				chapter_number_str = CHAPTER_TITLE_PATTERN.search(subchapter.titles['en'])
@@ -125,7 +163,8 @@ def set_index(chapter: Chapter, indexes: List[int], depth: int, report: Optional
 			subchapter.nav.up = chapter.path
 			prev_chapter = subchapter
 
-			indexes = set_index(subchapter, indexes, depth + 1, report)
-		chapter.verse_count = indexes[-1] - chapter.verse_start_index
+			indexes = set_index(subchapter, indexes, depth + 1, report, verse_counter)
+		# Aggregate verse_count = verses seen during the recursion into this subtree.
+		chapter.verse_count = verse_counter[0] - chapter.verse_start_index
 
 	return indexes
