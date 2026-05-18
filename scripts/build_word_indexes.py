@@ -144,23 +144,37 @@ def build_lemmas_index(words_dir: Path) -> List[Dict]:
         paradigm = data.get("paradigm") or []
         in_corpus_count = sum(1 for p in paradigm if p.get("in_corpus"))
         refs = data.get("cross_references") or {}
-        # First English Wiktextract gloss matching the lemma's POS —
-        # used by the UI for inline per-word translation. We require a
-        # POS-aligned sense to avoid e.g. surfacing the verb gloss "to
-        # promise" for the preposition إِلَى. For content-word POS we
-        # fall back to senses[0] if no aligned sense exists (better
-        # than no gloss); for function-word POS we leave gloss empty
-        # rather than show a wrong one.
-        gloss = _pick_aligned_gloss(
-            data.get("pos_camel") or "",
-            (data.get("definition") or {}).get("senses") or [],
-        )
+
+        # Path B output: 11-lang `translations` map populated by
+        # merge_translations_into_pages.py. Emit it as `glosses` on the
+        # index so the UI can render every word card in the active
+        # language without a per-lemma fetch. Falls back to the
+        # POS-aligned single English gloss (Path C) when translations
+        # are absent (pages whose translation responses had validator
+        # issues and got skipped by the merger).
+        translations = data.get("translations") or {}
+        if translations:
+            glosses = {
+                lang: (translations.get(lang) or "").strip()
+                for lang in ("en", "fa", "ur", "tr", "id", "bn",
+                             "es", "fr", "de", "ru", "zh")
+                if translations.get(lang)
+            }
+            gloss = glosses.get("en", "")
+        else:
+            glosses = {}
+            gloss = _pick_aligned_gloss(
+                data.get("pos_camel") or "",
+                (data.get("definition") or {}).get("senses") or [],
+            )
+
         entries.append({
             "slug": data.get("slug"),
             "root": data.get("root"),
             "root_slug": data.get("root_slug"),
             "pos": data.get("pos"),
-            "gloss": gloss,
+            "gloss": gloss,              # kept for backward-compat (Path C readers)
+            "glosses": glosses,          # NEW (Path B) — 11-lang map; empty dict when missing
             "frequency": data.get("frequency_in_corpus", 0),
             "paradigm_size": len(paradigm),
             "in_corpus_forms": in_corpus_count,
