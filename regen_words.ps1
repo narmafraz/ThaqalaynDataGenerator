@@ -69,7 +69,7 @@ foreach ($dir in @("lemmas", "roots", "surfaces")) {
     }
 }
 
-$totalStages = if ($IncludeTranslations) { 8 } else { 2 }
+$totalStages = if ($IncludeTranslations) { 9 } else { 3 }
 
 Write-Host ""
 Write-Host ("[1/" + $totalStages + "] Building surfaces + lemmas + roots ...") -ForegroundColor Yellow
@@ -132,13 +132,21 @@ if ($IncludeTranslations) {
         exit $LASTEXITCODE
     }
 
-    Write-Host ""
-    Write-Host ("[7/" + $totalStages + "] Merging translations into lemma + surface pages ...") -ForegroundColor Yellow
-    uv run python .\scripts\merge_translations_into_pages.py --pass both
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host ("merge_translations_into_pages.py failed (exit " + $LASTEXITCODE + ")") -ForegroundColor Red
-        exit $LASTEXITCODE
-    }
+}
+
+# Always merge existing Path B response files into the freshly-built
+# lemma/surface JSONs. The merger is idempotent (skips empty/issued
+# responses, no-op when no response files exist) so it's safe even
+# when the Spark passes didn't run this invocation. WITHOUT this step
+# the basic regen would silently wipe out all Path B translations
+# (build_word_pages.py emits translations=null for every page).
+$mergeStage = if ($IncludeTranslations) { 8 } else { 2 }
+Write-Host ""
+Write-Host ("[" + $mergeStage + "/" + $totalStages + "] Merging Path B translations into lemma + surface pages ...") -ForegroundColor Yellow
+uv run python .\scripts\merge_translations_into_pages.py --pass both
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ("merge_translations_into_pages.py failed (exit " + $LASTEXITCODE + ")") -ForegroundColor Red
+    exit $LASTEXITCODE
 }
 
 $indexStage = $totalStages
