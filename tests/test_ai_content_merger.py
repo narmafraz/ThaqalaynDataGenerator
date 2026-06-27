@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from app.ai_content_merger import (
+    AI_LANGUAGES,
     AI_TRANSLATION_ENTRIES,
     AI_TRANSLATION_IDS,
     build_lean_ai_content,
@@ -17,6 +18,7 @@ from app.ai_content_merger import (
     merge_ai_into_file,
     merge_ai_into_verse,
     resolve_canonical_ids,
+    split_ai_per_lang,
     update_translations_index,
     _collect_ai_translation_ids,
 )
@@ -573,6 +575,284 @@ class TestMergeAiIntoFile:
         assert "en.ai" in vt
         assert "fr.ai" in vt
         assert "en.hubeali" in vt
+
+
+# ─── split_ai_per_lang (per-language verse split) ───────────────────────────
+
+
+def _sample_lean_ai_multilang():
+    """A lean ai dict (post build_lean_ai_content) with en + fa per-lang fields."""
+    return {
+        "ai_attribution": {"model": "test", "generated_date": "2026-06-14"},
+        "chunks": [
+            {
+                "arabic_text": "أَخْبَرَنَا أَبُو",
+                "chunk_type": "isnad",
+                "word_start": 0,
+                "word_end": 2,
+                "translations": {"en": "Informed us, Abu", "fa": "ابو ما را خبر داد"},
+            },
+            {
+                "arabic_text": "جَعْفَرٍ",
+                "chunk_type": "body",
+                "word_start": 2,
+                "word_end": 3,
+                "translations": {"en": "Ja'far", "fa": "جعفر"},
+            },
+        ],
+        "content_type": "theological",
+        "isnad_matn": {"has_chain": True, "narrators": []},
+        "key_phrases": [],
+        "key_terms": {
+            "en": {"العقل": "intellect", "الإيمان": "faith"},
+            "fa": {"العقل": "عقل", "الإيمان": "ایمان"},
+        },
+        "related_quran": [],
+        "seo_questions": {
+            "en": "What about intellect?",
+            "fa": "درباره عقل چه؟",
+        },
+        "summaries": {
+            "en": "English summary",
+            "fa": "خلاصه فارسی",
+        },
+        "tags": ["theology"],
+        "topics": ["reasoning"],
+    }
+
+
+class TestSplitAiPerLang:
+    def test_returns_base_and_per_lang(self):
+        ai = _sample_lean_ai_multilang()
+        base, per_lang = split_ai_per_lang(ai)
+        assert set(per_lang.keys()) == {"en", "fa"}
+        # Base must not carry per-language payload
+        assert "summaries" not in base
+        assert "seo_questions" not in base
+        assert "key_terms" not in base
+
+    def test_base_strips_chunk_translations(self):
+        ai = _sample_lean_ai_multilang()
+        base, _ = split_ai_per_lang(ai)
+        for chunk in base["chunks"]:
+            assert "translations" not in chunk
+            assert "arabic_text" in chunk
+            assert "chunk_type" in chunk
+
+    def test_base_has_available_languages(self):
+        ai = _sample_lean_ai_multilang()
+        base, _ = split_ai_per_lang(ai)
+        assert base["available_languages"] == ["en", "fa"]
+
+    def test_base_has_key_terms_keys(self):
+        ai = _sample_lean_ai_multilang()
+        base, _ = split_ai_per_lang(ai)
+        # Insertion order from English first (sorted available_languages)
+        assert base["key_terms_keys"] == ["العقل", "الإيمان"]
+
+    def test_per_lang_entry_shape(self):
+        ai = _sample_lean_ai_multilang()
+        _, per_lang = split_ai_per_lang(ai)
+        en = per_lang["en"]
+        assert en["summary"] == "English summary"
+        assert en["seo_question"] == "What about intellect?"
+        assert en["key_terms"] == {"العقل": "intellect", "الإيمان": "faith"}
+        # Chunks: index-aligned list of translation strings (or null when absent)
+        assert en["chunks"] == ["Informed us, Abu", "Ja'far"]
+
+    def test_chunks_align_when_lang_missing_from_some(self):
+        ai = _sample_lean_ai_multilang()
+        # Drop fa from the second chunk's translations
+        del ai["chunks"][1]["translations"]["fa"]
+        _, per_lang = split_ai_per_lang(ai)
+        assert per_lang["fa"]["chunks"] == ["ابو ما را خبر داد", None]
+
+    def test_empty_per_lang_when_no_multilang_content(self):
+        ai = {
+            "ai_attribution": {"model": "test"},
+            "topics": ["reasoning"],
+            "tags": ["theology"],
+        }
+        base, per_lang = split_ai_per_lang(ai)
+        assert per_lang == {}
+        assert "available_languages" not in base
+        assert "key_terms_keys" not in base
+        assert base["topics"] == ["reasoning"]
+
+    def test_ignores_non_supported_languages(self):
+        ai = _sample_lean_ai_multilang()
+        # xx is not in AI_LANGUAGES; it should be filtered out
+        ai["summaries"]["xx"] = "ignored"
+        _, per_lang = split_ai_per_lang(ai)
+        assert "xx" not in per_lang
+
+    def test_uses_AI_LANGUAGES_constant_for_filtering(self):
+        # Sanity: all AI_LANGUAGES are 2-char lowercase
+        for lang in AI_LANGUAGES:
+            assert lang == lang.lower()
+            assert len(lang) == 2
+
+    def test_word_analysis_translations_split_per_lang(self):
+        """v3 word_analysis entries also carry per-lang translation dicts;
+        those go to sisters, not base."""
+        ai = {
+            "ai_attribution": {"model": "test"},
+            "word_analysis": [
+                {"word": "أَخْبَرَنَا", "pos": "V", "translation": {"en": "informed us", "fa": "ما را خبر داد"}},
+                {"word": "أَبُو", "pos": "N", "translation": {"en": "father of", "fa": "پدر"}},
+            ],
+        }
+        base, per_lang = split_ai_per_lang(ai)
+        # Base preserves word + pos but drops translation
+        for entry in base["word_analysis"]:
+            assert "translation" not in entry
+            assert "word" in entry and "pos" in entry
+        # Per-lang carries the translations index-aligned (flat list of strings)
+        assert per_lang["en"]["word_analysis"] == ["informed us", "father of"]
+        assert per_lang["fa"]["word_analysis"] == ["ما را خبر داد", "پدر"]
+
+
+# ─── merge_ai_into_file → split for verse_detail ─────────────────────────────
+
+
+class TestMergeAiIntoFileSplitVerseDetail:
+    def test_writes_sister_files(self, tmp_path):
+        doc = {
+            "kind": "verse_detail",
+            "index": "al-kafi:1:1:1:1",
+            "data": {
+                "verse": {"path": "/books/al-kafi:1:1:1:1", "text": ["arabic"]},
+                "chapter_path": "/books/al-kafi:1:1:1",
+                "chapter_title": {"en": "Test"},
+                "nav": {"up": "/books/al-kafi:1:1:1"},
+                "verse_translations": ["en.hubeali"],
+            },
+        }
+        fpath = str(tmp_path / "1.json")
+        _write_json(fpath, doc)
+
+        lookup = {"/books/al-kafi:1:1:1:1": {"ai_attribution": _sample_attribution(), "result": _sample_ai_result()}}
+        count = merge_ai_into_file(fpath, lookup)
+        assert count == 1
+
+        # Sister files for both langs in fixture (en + fr)
+        assert os.path.exists(str(tmp_path / "1.en.json"))
+        assert os.path.exists(str(tmp_path / "1.fr.json"))
+
+    def test_base_file_has_no_per_lang(self, tmp_path):
+        doc = {
+            "kind": "verse_detail",
+            "index": "al-kafi:1:1:1:1",
+            "data": {
+                "verse": {"path": "/books/al-kafi:1:1:1:1", "text": ["arabic"]},
+                "chapter_path": "/books/al-kafi:1:1:1",
+                "chapter_title": {"en": "Test"},
+                "nav": {"up": "/books/al-kafi:1:1:1"},
+                "verse_translations": ["en.hubeali"],
+            },
+        }
+        fpath = str(tmp_path / "1.json")
+        _write_json(fpath, doc)
+
+        lookup = {"/books/al-kafi:1:1:1:1": {"ai_attribution": _sample_attribution(), "result": _sample_ai_result()}}
+        merge_ai_into_file(fpath, lookup)
+
+        base = _read_json(fpath)
+        ai = base["data"]["verse"]["ai"]
+        assert "summaries" not in ai
+        assert "seo_questions" not in ai
+        assert "key_terms" not in ai
+        assert ai["available_languages"] == ["en", "fr"]
+        for chunk in ai["chunks"]:
+            assert "translations" not in chunk
+
+    def test_sister_file_contents(self, tmp_path):
+        doc = {
+            "kind": "verse_detail",
+            "index": "al-kafi:1:1:1:1",
+            "data": {
+                "verse": {"path": "/books/al-kafi:1:1:1:1", "text": ["arabic"]},
+                "chapter_path": "/books/al-kafi:1:1:1",
+                "chapter_title": {"en": "Test"},
+                "nav": {"up": "/books/al-kafi:1:1:1"},
+                "verse_translations": ["en.hubeali"],
+            },
+        }
+        fpath = str(tmp_path / "1.json")
+        _write_json(fpath, doc)
+
+        lookup = {"/books/al-kafi:1:1:1:1": {"ai_attribution": _sample_attribution(), "result": _sample_ai_result()}}
+        merge_ai_into_file(fpath, lookup)
+
+        en_sister = _read_json(str(tmp_path / "1.en.json"))
+        assert en_sister["lang"] == "en"
+        assert en_sister["path"] == "/books/al-kafi:1:1:1:1"
+        assert en_sister["ai"]["summary"] == "English summary"
+        assert en_sister["ai"]["seo_question"] == "What about intellect?"
+        assert en_sister["ai"]["key_terms"] == {"العقل": "intellect"}
+        assert en_sister["ai"]["chunks"] == ["Informed us, Abu", "Ja'far"]
+
+    def test_cleans_up_stale_sister_when_lang_dropped(self, tmp_path):
+        """When re-merging a verse and a language is no longer present,
+        the stale sister file is removed."""
+        doc = {
+            "kind": "verse_detail",
+            "index": "al-kafi:1:1:1:1",
+            "data": {
+                "verse": {"path": "/books/al-kafi:1:1:1:1", "text": ["arabic"]},
+                "chapter_path": "/books/al-kafi:1:1:1",
+                "chapter_title": {"en": "Test"},
+                "nav": {"up": "/books/al-kafi:1:1:1"},
+                "verse_translations": ["en.hubeali"],
+            },
+        }
+        fpath = str(tmp_path / "1.json")
+        _write_json(fpath, doc)
+
+        # First run with en + fr
+        lookup = {"/books/al-kafi:1:1:1:1": {"ai_attribution": _sample_attribution(), "result": _sample_ai_result()}}
+        merge_ai_into_file(fpath, lookup)
+        assert os.path.exists(str(tmp_path / "1.fr.json"))
+
+        # Second run, drop fr from the AI result
+        result_only_en = _sample_ai_result()
+        del result_only_en["translations"]["fr"]
+        for chunk in result_only_en["chunks"]:
+            del chunk["translations"]["fr"]
+        for word in result_only_en["word_analysis"]:
+            if "translation" in word and "fr" in word["translation"]:
+                del word["translation"]["fr"]
+        _write_json(fpath, doc)  # reset base file
+        lookup2 = {"/books/al-kafi:1:1:1:1": {"ai_attribution": _sample_attribution(), "result": result_only_en}}
+        merge_ai_into_file(fpath, lookup2)
+        assert os.path.exists(str(tmp_path / "1.en.json"))
+        assert not os.path.exists(str(tmp_path / "1.fr.json"))
+
+    def test_complete_file_stays_monolithic_no_sisters(self, tmp_path):
+        """Per the design, complete/ aggregates keep the all-langs shape."""
+        doc = {
+            "kind": "complete_book",
+            "data": {
+                "verse_translations": ["en.hubeali"],
+                "verses": [
+                    {"path": "/books/al-kafi:1:1:1:1", "text": ["arabic"]},
+                ],
+            },
+        }
+        fpath = str(tmp_path / "al-kafi.json")
+        _write_json(fpath, doc)
+        lookup = {"/books/al-kafi:1:1:1:1": {"ai_attribution": _sample_attribution(), "result": _sample_ai_result()}}
+        merge_ai_into_complete_file(fpath, lookup)
+
+        # No sister files alongside the complete book
+        assert not os.path.exists(str(tmp_path / "al-kafi.en.json"))
+        assert not os.path.exists(str(tmp_path / "al-kafi.fr.json"))
+
+        # ai with all langs is inline
+        written = _read_json(fpath)
+        ai = written["data"]["verses"][0]["ai"]
+        assert "summaries" in ai
+        assert set(ai["summaries"].keys()) == {"en", "fr"}
 
 
 # ─── merge_ai_into_complete_file ─────────────────────────────────────────────

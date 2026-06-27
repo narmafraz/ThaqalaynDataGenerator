@@ -211,6 +211,169 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
     return ai
 
 
+def split_ai_per_lang(ai: dict) -> tuple:
+    """Split a lean `ai` dict into (base_ai, {lang: per_lang_ai}).
+
+    Base keeps language-agnostic fields and adds two registries the loader
+    needs without paying for the per-language payload:
+    - `available_languages`: sorted list of langs that have any per-lang
+      content (summary/seo_question/key_terms/chunk translation).
+    - `key_terms_keys`: canonical Arabic-term ordering across langs; sister
+      files' `key_terms` use these keys.
+
+    Per-lang dicts carry: summary, seo_question, key_terms (keyed by the
+    same Arabic terms as base.key_terms_keys), and chunks (index-aligned
+    with base.chunks, one entry per chunk; each entry holds `translation`
+    when present for that lang).
+
+    Returns (base_ai, per_lang). per_lang is empty if no per-language
+    fields were found.
+    """
+    summaries = ai.get("summaries") or {}
+    seo_questions = ai.get("seo_questions") or {}
+    key_terms = ai.get("key_terms") or {}
+    chunks = ai.get("chunks") or []
+    word_analysis = ai.get("word_analysis") or []
+
+    langs = set()
+    if isinstance(summaries, dict):
+        langs.update(summaries.keys())
+    if isinstance(seo_questions, dict):
+        langs.update(seo_questions.keys())
+    if isinstance(key_terms, dict):
+        langs.update(key_terms.keys())
+    for chunk in chunks:
+        if isinstance(chunk, dict):
+            chunk_translations = chunk.get("translations") or {}
+            if isinstance(chunk_translations, dict):
+                langs.update(chunk_translations.keys())
+    for entry in word_analysis:
+        if isinstance(entry, dict):
+            entry_translation = entry.get("translation") or {}
+            if isinstance(entry_translation, dict):
+                langs.update(entry_translation.keys())
+    available_languages = sorted(l for l in langs if l in AI_LANGUAGES)
+
+    seen_keys: List[str] = []
+    seen_set = set()
+    if isinstance(key_terms, dict):
+        for lang in available_languages:
+            lang_dict = key_terms.get(lang)
+            if isinstance(lang_dict, dict):
+                for term in lang_dict.keys():
+                    if term not in seen_set:
+                        seen_keys.append(term)
+                        seen_set.add(term)
+
+    base_ai: dict = {}
+    for k, v in ai.items():
+        if k in ("summaries", "seo_questions", "key_terms"):
+            continue
+        if k == "chunks":
+            stripped_chunks = []
+            for chunk in v or []:
+                if isinstance(chunk, dict):
+                    stripped_chunks.append(
+                        {ck: cv for ck, cv in chunk.items() if ck != "translations"}
+                    )
+                else:
+                    stripped_chunks.append(chunk)
+            base_ai["chunks"] = stripped_chunks
+        elif k == "word_analysis":
+            stripped_entries = []
+            for entry in v or []:
+                if isinstance(entry, dict):
+                    stripped_entries.append(
+                        {ek: ev for ek, ev in entry.items() if ek != "translation"}
+                    )
+                else:
+                    stripped_entries.append(entry)
+            base_ai["word_analysis"] = stripped_entries
+        else:
+            base_ai[k] = v
+    if available_languages:
+        base_ai["available_languages"] = available_languages
+    if seen_keys:
+        base_ai["key_terms_keys"] = seen_keys
+
+    per_lang: Dict[str, dict] = {}
+    for lang in available_languages:
+        entry: dict = {}
+        if isinstance(summaries, dict) and lang in summaries:
+            entry["summary"] = summaries[lang]
+        if isinstance(seo_questions, dict) and lang in seo_questions:
+            entry["seo_question"] = seo_questions[lang]
+        lang_terms = key_terms.get(lang) if isinstance(key_terms, dict) else None
+        if isinstance(lang_terms, dict) and lang_terms:
+            entry["key_terms"] = lang_terms
+        lang_chunks: list = []
+        any_translation = False
+        for chunk in chunks:
+            if isinstance(chunk, dict):
+                chunk_translations = chunk.get("translations") or {}
+                if isinstance(chunk_translations, dict) and lang in chunk_translations:
+                    lang_chunks.append(chunk_translations[lang])
+                    any_translation = True
+                    continue
+            lang_chunks.append(None)
+        if any_translation:
+            entry["chunks"] = lang_chunks
+        lang_words: list = []
+        any_word_translation = False
+        for word_entry in word_analysis:
+            if isinstance(word_entry, dict):
+                word_translation = word_entry.get("translation") or {}
+                if isinstance(word_translation, dict) and lang in word_translation:
+                    lang_words.append(word_translation[lang])
+                    any_word_translation = True
+                    continue
+            lang_words.append(None)
+        if any_word_translation:
+            entry["word_analysis"] = lang_words
+        if entry:
+            per_lang[lang] = entry
+
+    return base_ai, per_lang
+
+
+def _write_verse_detail_split(file_path: str, doc: dict, per_lang: Dict[str, dict]) -> None:
+    """Write the base verse_detail file + per-language sister files.
+
+    Cleans up stale sisters: removes any `{base}.{lang}.json` whose lang
+    is in `AI_LANGUAGES` but not in the new per_lang map. This keeps the
+    on-disk set in sync when a language is dropped from a verse.
+    """
+    with open(file_path, "w", encoding=JSON_ENCODING) as f:
+        json.dump(doc, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT, sort_keys=True)
+
+    if not file_path.endswith(".json"):
+        return
+    base_no_ext = file_path[:-5]
+    verse_index = doc.get("index", "")
+    verse_path = f"/books/{verse_index}" if verse_index else ""
+
+    for lang, content in per_lang.items():
+        sister_doc = {
+            "ai": content,
+            "lang": lang,
+            "path": verse_path,
+        }
+        sister_path = f"{base_no_ext}.{lang}.json"
+        with open(sister_path, "w", encoding=JSON_ENCODING) as f:
+            json.dump(sister_doc, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT, sort_keys=True)
+
+    for lang in AI_LANGUAGES:
+        if lang in per_lang:
+            continue
+        stale_path = f"{base_no_ext}.{lang}.json"
+        try:
+            os.remove(stale_path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            logger.warning("Could not remove stale sister %s: %s", stale_path, e)
+
+
 def rebuild_narrator_chain_parts_from_ai(verse: dict, ai_result: dict) -> bool:
     """Rebuild verse['narrator_chain']['parts'] using AI-side narrator data.
 
@@ -478,6 +641,14 @@ def merge_ai_into_file(file_path: str, ai_lookup: Dict[str, dict]) -> int:
                     if ai_id not in existing:
                         existing.append(ai_id)
                 data["verse_translations"] = existing
+            # Split per-language AI fields into sister files; base file
+            # carries language-agnostic content + available_languages
+            # + key_terms_keys registries. See PER_LANGUAGE_VERSE_SPLIT.md.
+            ai_block = verse.get("ai") or {}
+            base_ai, per_lang = split_ai_per_lang(ai_block)
+            verse["ai"] = base_ai
+            _write_verse_detail_split(file_path, doc, per_lang)
+            return merge_count
 
     elif kind == "chapter_list":
         # No verses to merge
