@@ -70,11 +70,11 @@ def main() -> int:
 
     with open(corpus_path, "r", encoding="utf-8") as f:
         corpus_surfaces: Dict[str, Dict] = json.load(f)
-    logger.info("Loaded %d unique surfaces from %s", len(corpus_surfaces), corpus_path.name)
+    print(f"Loaded {len(corpus_surfaces)} unique surfaces from {corpus_path.name}")
 
     # Pre-index lemma filenames (set lookup is O(1) per surface)
     lemma_filenames = {p.name for p in lemmas_dir.glob("*.json")}
-    logger.info("Loaded %d lemma files\n", len(lemma_filenames))
+    print(f"Loaded {len(lemma_filenames)} lemma files\n")
 
     missing_surface: List[Tuple[int, str]] = []
     dangling_lemma_link: List[Tuple[int, str, str]] = []
@@ -109,29 +109,27 @@ def main() -> int:
             dangling_lemma_link.append((count, surface, lemma_link))
 
     total = len(corpus_surfaces)
-    logger.info("%-40s  %8s  %s", "Metric", "Count", "%")
-    logger.info("-" * 70)
-    logger.info("%-40s  %8d  %5.1f%%", "Surfaces with a surface page",
-                surfaces_with_page, 100.0 * surfaces_with_page / total if total else 0)
-    logger.info("%-40s  %8d  %5.1f%%", "  ... whose lemma_link resolves",
-                surfaces_with_resolved_lemma, 100.0 * surfaces_with_resolved_lemma / total if total else 0)
-    logger.info("%-40s  %8d  %5.1f%%", "Missing surface pages",
-                len(missing_surface), 100.0 * len(missing_surface) / total if total else 0)
-    logger.info("%-40s  %8d", "Dangling lemma_link", len(dangling_lemma_link))
-    logger.info("")
+    print(f"{'Metric':<40}  {'Count':>8}  %")
+    print("-" * 70)
+    pct = lambda n: (100.0 * n / total) if total else 0
+    print(f"{'Surfaces with a surface page':<40}  {surfaces_with_page:>8}  {pct(surfaces_with_page):5.1f}%")
+    print(f"{'  ... whose lemma_link resolves':<40}  {surfaces_with_resolved_lemma:>8}  {pct(surfaces_with_resolved_lemma):5.1f}%")
+    print(f"{'Missing surface pages':<40}  {len(missing_surface):>8}  {pct(len(missing_surface)):5.1f}%")
+    print(f"{'Dangling lemma_link':<40}  {len(dangling_lemma_link):>8}")
+    print()
 
     if args.top > 0 and missing_surface:
         top = sorted(missing_surface, reverse=True)[: args.top]
-        logger.info("Top %d missing surface pages (by corpus occurrence count):", len(top))
+        print(f"Top {len(top)} missing surface pages (by corpus occurrence count):")
         for count, surface in top:
-            logger.info("  %6d  %s", count, surface)
-        logger.info("")
+            print(f"  {count:>6}  {surface}")
+        print()
 
     if args.top > 0 and dangling_lemma_link:
         top = sorted(dangling_lemma_link, reverse=True)[: args.top]
-        logger.info("Top %d dangling lemma_links:", len(top))
+        print(f"Top {len(top)} dangling lemma_links:")
         for count, surface, link in top:
-            logger.info("  %6d  %s -> %s", count, surface, link)
+            print(f"  {count:>6}  {surface} -> {link}")
 
     return 0
 

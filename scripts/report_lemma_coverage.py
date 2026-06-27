@@ -86,7 +86,7 @@ def main() -> int:
         logger.error("No lemma files found in %s (did regen_words run?)", lemmas_dir)
         return 2
 
-    logger.info("Loaded %d lemma files from %s\n", len(files), lemmas_dir)
+    print(f"Loaded {len(files)} lemma files from {lemmas_dir}\n")
 
     # One pass: load each lemma, evaluate every metric, accumulate.
     covered = {name: 0 for name, _ in METRICS}
@@ -108,23 +108,23 @@ def main() -> int:
                 gaps[name].append((freq, slug))
 
     total = len(files)
-    logger.info("%-40s  %8s  %s", "Metric", "Covered", "%")
-    logger.info("-" * 70)
+    print(f"{'Metric':<40}  {'Covered':>8}  %")
+    print("-" * 70)
     for name, _ in METRICS:
         c = covered[name]
         pct = 100.0 * c / total if total else 0
-        logger.info("%-40s  %8d  %5.1f%%", name, c, pct)
-    logger.info("")
+        print(f"{name:<40}  {c:>8}  {pct:5.1f}%")
+    print()
 
     if args.top > 0:
         for name, _ in METRICS:
             missing = sorted(gaps[name], reverse=True)[: args.top]
             if not missing:
                 continue
-            logger.info("Top %d gaps in '%s' (by corpus frequency):", len(missing), name)
+            print(f"Top {len(missing)} gaps in '{name}' (by corpus frequency):")
             for freq, slug in missing:
-                logger.info("  %6d  %s", freq, slug)
-            logger.info("")
+                print(f"  {freq:>6}  {slug}")
+            print()
 
     return 0
 
