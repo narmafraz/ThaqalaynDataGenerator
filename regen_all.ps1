@@ -26,6 +26,9 @@ if ($IncludeWordTranslations) {
     & "$PSScriptRoot/regen_words.ps1"
 }
 
-& "$PSScriptRoot/regen_search.ps1"
+# Build only here (regen_search deploys by default on its own). regen_all is a
+# "rebuild everything" step; data/words publish via their own git push, and the
+# search deploy (12 sites, long) is left as an explicit `regen_search.ps1` run.
+& "$PSScriptRoot/regen_search.ps1" -NoDeploy
 
 Write-Host ("=== regen_all done in {0:n1} min ===" -f ((Get-Date) - $start).TotalMinutes) -ForegroundColor Green
