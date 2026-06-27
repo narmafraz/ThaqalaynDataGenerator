@@ -1,32 +1,63 @@
-# Rebuild the ThaqalaynSearch Pagefind bundle (per-language) from ../ThaqalaynData.
+# Rebuild (and optionally deploy) the ThaqalaynSearch Pagefind bundles.
 #
-# Run this AFTER add_data.ps1 has regenerated ThaqalaynData, when search needs
-# refreshing. Deliberately kept OUT of add_data.ps1 — the bundle is large and
-# slow to build (one fragment file per verse per language), and changes less
-# often than the routine hadith add. Same convention as regen_words.ps1.
+# Build reads verse_detail files from ../ThaqalaynData and writes per-language
+# Pagefind bundles into ../ThaqalaynSearch/dist/ (one self-contained bundle per
+# language + manifest.json + qref.json). Kept out of add_data.ps1 — the build is
+# slow (one fragment file per verse per language) — same convention as
+# regen_words.ps1.
 #
-# The build is self-contained Node (../ThaqalaynSearch/build.mjs); it reads
-# verse_detail files from ../ThaqalaynData and writes the bundle into the
-# ThaqalaynSearch repo. Deploy that bundle to thaqalaynsearch.netlify.app
-# (see ThaqalaynSearch/README.md).
+# Deploy (-Deploy) ships the bundles as MULTIPLE Netlify sites, because a single
+# site can't take ~650K files (see SEARCH_OVERHAUL_PLAN.md):
+#   - manifest.json + qref.json -> thaqalaynsearch.netlify.app   (meta site)
+#   - dist/<lang>               -> thaqalaynsearch-<lang>.netlify.app
+# Requires `netlify login` to have been run once. Each per-language deploy is
+# ~53K files; deploying all 12 is long, so -Langs limits it for testing.
 #
-# Optional args are passed through to build.mjs (e.g. book slugs to limit a
-# test build):
-#   ./regen_search.ps1                 # all books, all languages
-#   ./regen_search.ps1 al-amali-mufid  # one book (testing)
+# Usage:
+#   ./regen_search.ps1                          # build all books, all languages
+#   ./regen_search.ps1 al-amali-mufid           # build one book (testing)
+#   ./regen_search.ps1 -Deploy                  # build + deploy meta + all langs
+#   ./regen_search.ps1 -Deploy -Langs en        # build + deploy meta + just en
+param(
+    [switch]$Deploy,
+    [string[]]$Langs,                                       # limit deploy to these langs (default: all built)
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$BuildArgs                                    # book slugs forwarded to build.mjs
+)
 
+$ErrorActionPreference = "Stop"
 Write-Host ""
 Write-Host "=== ThaqalaynSearch regen ===" -ForegroundColor Cyan
 $start = Get-Date
 
-$searchDir = Join-Path $PSScriptRoot "../ThaqalaynSearch"
-Push-Location $searchDir
+Push-Location (Join-Path $PSScriptRoot "../ThaqalaynSearch")
 try {
     if (-not (Test-Path "node_modules")) {
         Write-Host "Installing npm deps..." -ForegroundColor Yellow
         npm install
     }
-    node build.mjs @args
+
+    node build.mjs @BuildArgs
+    if ($LASTEXITCODE -ne 0) { throw "build.mjs failed (exit $LASTEXITCODE)" }
+
+    if ($Deploy) {
+        $manifest = Get-Content "dist/_meta/manifest.json" -Raw | ConvertFrom-Json
+        $built = @($manifest.languages.code)
+        if ($Langs) { $built = $built | Where-Object { $Langs -contains $_ } }
+
+        # Meta site: manifest + qref (small; deploys in seconds). build.mjs already
+        # wrote them into dist/_meta.
+        Write-Host "Deploying meta -> thaqalaynsearch" -ForegroundColor Yellow
+        netlify deploy --prod --no-build --dir="dist/_meta" --site thaqalaynsearch
+        if ($LASTEXITCODE -ne 0) { throw "meta deploy failed" }
+
+        # Per-language bundles (each ~53K files -> minutes each).
+        foreach ($l in $built) {
+            Write-Host "Deploying $l -> thaqalaynsearch-$l" -ForegroundColor Yellow
+            netlify deploy --prod --no-build --dir="dist/$l" --site "thaqalaynsearch-$l"
+            if ($LASTEXITCODE -ne 0) { throw "deploy failed for $l" }
+        }
+    }
 }
 finally {
     Pop-Location
