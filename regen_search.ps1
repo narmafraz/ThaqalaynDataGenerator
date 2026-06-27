@@ -42,22 +42,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "build.mjs failed (exit $LASTEXITCODE)" }
 
     if (-not $NoDeploy) {
-        $manifest = Get-Content "dist/_meta/manifest.json" -Raw | ConvertFrom-Json
-        $built = @($manifest.languages.code)
-        if ($Langs) { $built = $built | Where-Object { $Langs -contains $_ } }
-
-        # Meta site: manifest + qref (small; deploys in seconds). build.mjs already
-        # wrote them into dist/_meta.
-        Write-Host "Deploying meta -> thaqalaynsearch" -ForegroundColor Yellow
-        netlify deploy --prod --no-build --dir="dist/_meta" --site thaqalaynsearch
-        if ($LASTEXITCODE -ne 0) { throw "meta deploy failed" }
-
-        # Per-language bundles (each ~53K files -> minutes each).
-        foreach ($l in $built) {
-            Write-Host "Deploying $l -> thaqalaynsearch-$l" -ForegroundColor Yellow
-            netlify deploy --prod --no-build --dir="dist/$l" --site "thaqalaynsearch-$l"
-            if ($LASTEXITCODE -ne 0) { throw "deploy failed for $l" }
-        }
+        # Resilient, resumable multi-site deploy (deploy.mjs): deploys meta + each
+        # built language site, skips sites already done for this data_version, and
+        # retries transient failures. Re-run regen_search.ps1 to resume after an
+        # interruption.
+        $deployArgs = @()
+        if ($Langs) { $deployArgs += @("--langs", ($Langs -join ",")) }
+        node deploy.mjs @deployArgs
+        if ($LASTEXITCODE -ne 0) { throw "deploy failed (re-run regen_search.ps1 to resume)" }
     }
 }
 finally {
