@@ -15,10 +15,10 @@
 # ~53K files; deploying all 12 is long, so -Langs limits it for testing.
 #
 # Usage:
-#   ./regen_search.ps1                          # build + deploy meta + all langs (default)
-#   ./regen_search.ps1 -NoDeploy                # build only, no deploy
-#   ./regen_search.ps1 -Langs en                # build + deploy meta + just en
-#   ./regen_search.ps1 al-amali-mufid -NoDeploy # build one book only, no deploy
+#   ./regen_and_deploy_search.ps1                          # build + deploy meta + all langs (default)
+#   ./regen_and_deploy_search.ps1 -NoDeploy                # build only, no deploy
+#   ./regen_and_deploy_search.ps1 -Langs en                # build + deploy meta + just en
+#   ./regen_and_deploy_search.ps1 al-amali-mufid -NoDeploy # build one book only, no deploy
 param(
     [switch]$NoDeploy,                                      # build only; skip the Netlify deploy
     [string[]]$Langs,                                       # limit deploy to these langs (default: all built)
@@ -46,12 +46,12 @@ try {
     if (-not $NoDeploy) {
         # Resilient, resumable multi-site deploy (deploy.mjs): deploys meta + each
         # built language site, skips sites already done for this data_version, and
-        # retries transient failures. Re-run regen_search.ps1 to resume after an
+        # retries transient failures. Re-run regen_and_deploy_search.ps1 to resume after an
         # interruption.
         $deployArgs = @()
         if ($Langs) { $deployArgs += @("--langs", ($Langs -join ",")) }
         node deploy.mjs @deployArgs
-        if ($LASTEXITCODE -ne 0) { throw "deploy failed (re-run regen_search.ps1 to resume)" }
+        if ($LASTEXITCODE -ne 0) { throw "deploy failed (re-run regen_and_deploy_search.ps1 to resume)" }
     }
 }
 finally {
