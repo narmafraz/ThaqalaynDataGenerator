@@ -214,12 +214,12 @@ def build_lean_ai_content(result: dict, attribution: dict) -> dict:
 def split_ai_per_lang(ai: dict) -> tuple:
     """Split a lean `ai` dict into (base_ai, {lang: per_lang_ai}).
 
-    Base keeps language-agnostic fields and adds two registries the loader
-    needs without paying for the per-language payload:
-    - `available_languages`: sorted list of langs that have any per-lang
-      content (summary/seo_question/key_terms/chunk translation).
-    - `key_terms_keys`: canonical Arabic-term ordering across langs; sister
-      files' `key_terms` use these keys.
+    Base keeps language-agnostic fields and adds `key_terms_keys` (canonical
+    Arabic-term ordering across langs; sister files' `key_terms` use these
+    keys). The set of available AI languages is intentionally NOT stored in
+    base — `verse_translations` at the chapter/verse level already lists every
+    `{lang}.ai` ID and a consumer can derive the available lang set with a
+    `.endsWith('.ai')` filter.
 
     Per-lang dicts carry: summary, seo_question, key_terms (keyed by the
     same Arabic terms as base.key_terms_keys), and chunks (index-aligned
@@ -291,8 +291,6 @@ def split_ai_per_lang(ai: dict) -> tuple:
             base_ai["word_analysis"] = stripped_entries
         else:
             base_ai[k] = v
-    if available_languages:
-        base_ai["available_languages"] = available_languages
     if seen_keys:
         base_ai["key_terms_keys"] = seen_keys
 
@@ -642,8 +640,8 @@ def merge_ai_into_file(file_path: str, ai_lookup: Dict[str, dict]) -> int:
                         existing.append(ai_id)
                 data["verse_translations"] = existing
             # Split per-language AI fields into sister files; base file
-            # carries language-agnostic content + available_languages
-            # + key_terms_keys registries. See PER_LANGUAGE_VERSE_SPLIT.md.
+            # carries language-agnostic content + the key_terms_keys
+            # registry. See PER_LANGUAGE_VERSE_SPLIT.md.
             ai_block = verse.get("ai") or {}
             base_ai, per_lang = split_ai_per_lang(ai_block)
             verse["ai"] = base_ai

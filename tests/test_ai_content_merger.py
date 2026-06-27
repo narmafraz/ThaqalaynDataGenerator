@@ -639,15 +639,18 @@ class TestSplitAiPerLang:
             assert "arabic_text" in chunk
             assert "chunk_type" in chunk
 
-    def test_base_has_available_languages(self):
+    def test_base_omits_available_languages(self):
+        # Available langs are derivable from verse_translations (the chapter/
+        # verse-level field that already lists every {lang}.ai ID), so we
+        # don't store them in base — keeps base byte size honest.
         ai = _sample_lean_ai_multilang()
         base, _ = split_ai_per_lang(ai)
-        assert base["available_languages"] == ["en", "fa"]
+        assert "available_languages" not in base
 
     def test_base_has_key_terms_keys(self):
         ai = _sample_lean_ai_multilang()
         base, _ = split_ai_per_lang(ai)
-        # Insertion order from English first (sorted available_languages)
+        # Insertion order from English first (sorted lang iteration)
         assert base["key_terms_keys"] == ["العقل", "الإيمان"]
 
     def test_per_lang_entry_shape(self):
@@ -675,7 +678,6 @@ class TestSplitAiPerLang:
         }
         base, per_lang = split_ai_per_lang(ai)
         assert per_lang == {}
-        assert "available_languages" not in base
         assert "key_terms_keys" not in base
         assert base["topics"] == ["reasoning"]
 
@@ -762,7 +764,7 @@ class TestMergeAiIntoFileSplitVerseDetail:
         assert "summaries" not in ai
         assert "seo_questions" not in ai
         assert "key_terms" not in ai
-        assert ai["available_languages"] == ["en", "fr"]
+        assert "available_languages" not in ai
         for chunk in ai["chunks"]:
             assert "translations" not in chunk
 
