@@ -38,7 +38,9 @@ try {
         npm install
     }
 
-    node build.mjs @BuildArgs
+    $buildArgs = @($BuildArgs)
+    if ($Langs) { $buildArgs += @("--langs", ($Langs -join ",")) }
+    node build.mjs @buildArgs
     if ($LASTEXITCODE -ne 0) { throw "build.mjs failed (exit $LASTEXITCODE)" }
 
     if (-not $NoDeploy) {
