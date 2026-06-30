@@ -43,6 +43,7 @@ def init():
     merge_ai_content(report)
     shellify_complete_books()
     _write_verse_counts()
+    _write_narrator_analysis()
     _write_data_version()
     report.print_summary()
 
@@ -64,6 +65,21 @@ def _write_verse_counts():
     dest = Path(os.environ.get("DESTINATION_DIR", "../ThaqalaynData/")).resolve()
     out = write_verse_counts(dest)
     logger.info("Wrote verse-counts manifest: %s", out)
+
+def _write_narrator_analysis():
+    """Write per-chapter narrator-analysis sidecars (`{chapter}.narrators.json`).
+
+    Powers the opt-in "Narrator insights" panel on chapter pages. Runs last so
+    it sees final shells + merged AI isnad data. Two-pass: a corpus-wide
+    narrator role profile, then per-chapter analysis.
+    """
+    import os
+    from pathlib import Path
+    from app import narrator_analysis
+    dest = Path(os.environ.get("DESTINATION_DIR", "../ThaqalaynData/")).resolve()
+    written = narrator_analysis.build(dest)
+    logger.info("Wrote %d narrator-analysis sidecars", len(written))
+
 
 def main():
     logger.info("Creating initial data")
