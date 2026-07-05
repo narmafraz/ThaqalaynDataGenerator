@@ -61,13 +61,16 @@ MIN_PRECISION = 0.90
 # multiset overlap check; we default to English-family scraped translations.
 _TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
-_SYSTEM = """You segment an existing English translation to match a sequence of Arabic source segments.
+_SYSTEM = """You split one existing English translation of a hadith into consecutive parts, one per segment, guided by a reference that tells you what each segment means.
+
+You are given N segments in order. Each segment has a REFERENCE (its meaning in English) and its ARABIC source. You are given one TRANSLATION (a different English rendering of the whole hadith). Cut the TRANSLATION into N consecutive parts so that part i covers the SAME content as segment i's reference.
 
 RULES:
-- Preserve the translation's wording EXACTLY — do not paraphrase, translate, reorder, add, or drop words.
-- Only choose where to split. Concatenating your parts in order must reproduce the original translation verbatim.
-- Assign every span of the translation to exactly one segment, in source order.
-- If a segment has no matching text in the translation (e.g. the translation omits the chain of narrators), return an empty string for that segment.
+- Match by MEANING to each segment's reference, not by length or position. Part i must correspond to the same portion of the hadith that reference i describes.
+- Preserve the translation's wording EXACTLY — do not paraphrase, translate, reorder, add, or drop any words or markup (e.g. <sup>…</sup>). Concatenating your parts in order must reproduce the TRANSLATION verbatim.
+- The cuts are the only choice you make. Every character of the TRANSLATION belongs to exactly one part, in order.
+- The narrator chain / isnad at the start (e.g. "A number of our companions, from …") belongs to the first isnad segment.
+- If a segment has no matching text in the TRANSLATION, return an empty string for it (and give its text to no other segment).
 - Output valid JSON only."""
 
 
@@ -117,15 +120,18 @@ def _alignment_schema(n: int) -> dict:
 
 def build_alignment_prompt(chunks: List[dict], scraped_text: str) -> Tuple[str, str]:
     n = len(chunks)
-    lines = [
-        f"There are {n} Arabic source segments. Split the English translation "
-        f"into {n} parts, one per segment, in order.\n",
-        "Arabic segments:",
-    ]
+    lines = [f"There are {n} segments, in order:\n"]
     for i, c in enumerate(chunks, 1):
+        lines.append(f"Segment {i} [{c.get('chunk_type', 'body')}]:")
+        ref = (c.get("en_ref") or "").strip()
+        if ref:
+            lines.append(f"  REFERENCE (meaning): {ref}")
         ar = (c.get("arabic_text") or "").strip()
-        lines.append(f"{i}. [{c.get('chunk_type', 'body')}] {ar}")
-    lines.append("\nEnglish translation to split:")
+        if ar:
+            lines.append(f"  ARABIC: {ar}")
+        lines.append("")
+    lines.append("TRANSLATION to split (cut into exactly "
+                 f"{n} consecutive parts, matching each segment by meaning):")
     lines.append(scraped_text)
     lines.append(
         f'\nOutput JSON: {{"parts": [{{"text": "..."}}, ...]}} with exactly {n} items.'
@@ -183,14 +189,21 @@ def prepared_chunks(verse: dict, response_result: Optional[dict] = None) -> List
     resp_chunks = (response_result or {}).get("chunks") or []
     out = []
     for i, c in enumerate(chunks):
-        ar = (c.get("arabic_text") or "").strip()
-        if not ar and i < len(resp_chunks) and isinstance(resp_chunks[i], dict):
-            ar = (resp_chunks[i].get("arabic_text") or "").strip()
+        rc = resp_chunks[i] if i < len(resp_chunks) and isinstance(resp_chunks[i], dict) else {}
+        ar = (c.get("arabic_text") or "").strip() or (rc.get("arabic_text") or "").strip()
         if not ar:
             ws, we = c.get("word_start"), c.get("word_end")
             if isinstance(ws, int) and isinstance(we, int) and wa:
                 ar = " ".join(_wa_word(w) for w in wa[ws:we]).strip()
-        out.append({"chunk_type": c.get("chunk_type", "body"), "arabic_text": ar})
+        # The AI's own English rendering of this chunk — a same-language
+        # anchor that makes aligning the scraped English far more accurate
+        # than matching it against Arabic.
+        en_ref = ((rc.get("translations") or {}).get("en") or "").strip()
+        out.append({
+            "chunk_type": c.get("chunk_type", "body"),
+            "arabic_text": ar,
+            "en_ref": en_ref,
+        })
     return out
 
 
