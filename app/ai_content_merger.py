@@ -15,6 +15,7 @@ Zero duplication means:
 import json
 import logging
 import os
+from collections import defaultdict
 from typing import Dict, List, Optional
 
 from app.config import (
@@ -914,37 +915,58 @@ def load_chunk_alignments(alignment_dir: Optional[str] = None) -> Dict[str, dict
     return lookup
 
 
-def _merge_alignment_into_verse(verse: dict, lookup: Dict[str, dict]) -> bool:
-    """Set verse['chunk_translations'] from the alignment lookup. Idempotent.
-
-    Only keeps arrays that (a) match the verse's chunk count and (b) have at
-    least one non-empty part — so a fully-empty (unmatched) alignment doesn't
-    trigger the interleaved view.
-    """
-    verse_path = verse.get("path", "")
-    aligned = lookup.get(verse_path)
-    if not aligned:
-        return False
+def _kept_parts(verse: dict, aligned: dict) -> Dict[str, list]:
+    """Alignment arrays valid for this verse: length == chunk count and at
+    least one non-empty part (a fully-empty/unmatched alignment is dropped)."""
     chunks = ((verse.get("ai") or {}).get("chunks")) or []
     n = len(chunks)
     if n == 0:
-        return False
+        return {}
     keep: Dict[str, list] = {}
     for tid, parts in aligned.items():
-        if not isinstance(parts, list) or len(parts) != n:
-            continue
-        if any(p for p in parts):
+        if isinstance(parts, list) and len(parts) == n and any(p for p in parts):
             keep[tid] = parts
-    if not keep:
-        return False
-    existing = verse.get("chunk_translations") or {}
-    existing.update(keep)
-    verse["chunk_translations"] = existing
-    return True
+    return keep
+
+
+def _sister_path(base_file_path: str, lang: str) -> str:
+    stem = base_file_path[:-5] if base_file_path.endswith(".json") else base_file_path
+    return f"{stem}.{lang}.json"
+
+
+def _write_scraped_to_sister(base_file_path: str, lang: str, verse_path: str,
+                             id_parts: Dict[str, list]) -> None:
+    """Fold scraped chunk parts into the per-language sister file, keyed by
+    translation ID under `chunk_translations`. Preserves any AI content the
+    AI merge already wrote to the sister (read-modify-write)."""
+    sp = _sister_path(base_file_path, lang)
+    doc: dict = {}
+    if os.path.exists(sp):
+        try:
+            with open(sp, "r", encoding=JSON_ENCODING) as f:
+                doc = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            doc = {}
+    doc.setdefault("lang", lang)
+    doc.setdefault("path", verse_path)
+    ct = doc.get("chunk_translations") or {}
+    ct.update(id_parts)
+    doc["chunk_translations"] = ct
+    with open(sp, "w", encoding=JSON_ENCODING) as f:
+        json.dump(doc, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT, sort_keys=True)
 
 
 def merge_alignment_into_file(file_path: str, lookup: Dict[str, dict]) -> int:
-    """Inject chunk_translations into a modular JSON data file. Returns count."""
+    """Alignment-scoped sister model: for an aligned verse_detail, write the
+    scraped chunk parts into the per-language sister file (`{base}.{lang}.json`
+    under `chunk_translations[id]`) and REMOVE the flat `verse.translations[id]`
+    from the base file — no duplicated text. The frontend reconstructs the flat
+    block view by joining the parts. Returns 1 if the verse was aligned.
+
+    Only verse_detail files participate; complete/ aggregations and legacy
+    inline verse_list files are left untouched (they keep flat translations —
+    the hybrid interim state until the full language-file migration).
+    """
     try:
         with open(file_path, "r", encoding=JSON_ENCODING) as f:
             doc = json.load(f)
@@ -952,57 +974,52 @@ def merge_alignment_into_file(file_path: str, lookup: Dict[str, dict]) -> int:
         logger.warning("Could not read %s: %s", file_path, e)
         return 0
 
-    kind = doc.get("kind", "")
-    data = doc.get("data", {})
-    count = 0
-
-    if kind == "verse_detail":
-        verse = data.get("verse", data)
-        if _merge_alignment_into_verse(verse, lookup):
-            count += 1
-    else:
-        # verse_list (legacy inline) or unknown — try inline verses.
-        for verse in data.get("verses", []):
-            if _merge_alignment_into_verse(verse, lookup):
-                count += 1
-
-    if count > 0:
-        with open(file_path, "w", encoding=JSON_ENCODING) as f:
-            json.dump(doc, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT, sort_keys=True)
-    return count
-
-
-def _walk_alignment_complete(node: dict, lookup: Dict[str, dict]) -> int:
-    count = 0
-    for verse in node.get("verses", []):
-        if _merge_alignment_into_verse(verse, lookup):
-            count += 1
-    for chapter in node.get("chapters", []):
-        count += _walk_alignment_complete(chapter, lookup)
-    return count
-
-
-def merge_alignment_into_complete_file(file_path: str, lookup: Dict[str, dict]) -> int:
-    try:
-        with open(file_path, "r", encoding=JSON_ENCODING) as f:
-            doc = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Could not read complete file %s: %s", file_path, e)
+    if doc.get("kind") != "verse_detail":
         return 0
-    count = _walk_alignment_complete(doc.get("data", {}), lookup)
-    if count > 0:
-        with open(file_path, "w", encoding=JSON_ENCODING) as f:
-            json.dump(doc, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT, sort_keys=True)
-    return count
+    data = doc.get("data", {})
+    verse = data.get("verse", data)
+    verse_path = verse.get("path", "")
+    aligned = lookup.get(verse_path)
+    if not aligned:
+        return 0
+    keep = _kept_parts(verse, aligned)
+    if not keep:
+        return 0
+
+    # Write parts into each translation's language sister.
+    by_lang: Dict[str, dict] = defaultdict(dict)
+    for tid, parts in keep.items():
+        by_lang[tid.split(".")[0]][tid] = parts
+    for lang, id_parts in by_lang.items():
+        _write_scraped_to_sister(file_path, lang, verse_path, id_parts)
+
+    # Drop the flat scraped text from base (now sourced from the sister).
+    translations = verse.get("translations") or {}
+    for tid in keep:
+        translations.pop(tid, None)
+    verse["translations"] = translations
+    # Ensure the id stays discoverable for the verse_detail selector even
+    # though its text now lives in the sister.
+    vt = data.get("verse_translations")
+    if isinstance(vt, list):
+        for tid in keep:
+            if tid not in vt:
+                vt.append(tid)
+
+    with open(file_path, "w", encoding=JSON_ENCODING) as f:
+        json.dump(doc, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT, sort_keys=True)
+    return 1
 
 
 def merge_chunk_alignment(report=None):
     """Merge scraped chunk-alignment artifacts into the generated JSON files.
 
-    Mirrors merge_ai_content(): loads the DataSources artifact, walks
-    DESTINATION_DIR/books/ (modular + complete), and injects
-    verse.chunk_translations. Cheap, deterministic, no LLM — safe to run at
+    Loads the DataSources artifact and walks DESTINATION_DIR/books/ modular
+    verse_detail files, writing scraped chunk parts into per-language sister
+    files and stripping the flat duplicate from base (see
+    merge_alignment_into_file). Cheap, deterministic, no LLM — safe to run at
     every add_data build so a wiped Data rebuilds the aligned translations.
+    complete/ aggregations are skipped (they keep flat translations).
     """
     dest_dir = os.environ.get("DESTINATION_DIR", DEFAULT_DESTINATION_DIR)
 
@@ -1020,6 +1037,8 @@ def merge_chunk_alignment(report=None):
             if os.path.basename(root) == "complete":
                 continue
             for filename in files:
+                # Skip sister files themselves (….{lang}.json) — only base
+                # verse_detail files carry a verse to align.
                 if not filename.endswith(".json"):
                     continue
                 try:
@@ -1027,18 +1046,6 @@ def merge_chunk_alignment(report=None):
                 except Exception as e:  # noqa: BLE001
                     logger.warning("Error merging alignment into %s: %s",
                                    os.path.join(root, filename), e)
-
-    complete_dir = os.path.join(books_dir, "complete")
-    if os.path.isdir(complete_dir):
-        for filename in os.listdir(complete_dir):
-            if not filename.endswith(".json"):
-                continue
-            try:
-                total += merge_alignment_into_complete_file(
-                    os.path.join(complete_dir, filename), lookup)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Error merging alignment into complete file %s: %s",
-                               filename, e)
 
     logger.info("Chunk-alignment merge complete: %d verses merged (%d artifacts)",
                 total, len(lookup))

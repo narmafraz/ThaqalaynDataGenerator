@@ -15,7 +15,8 @@ from app.pipeline_cli.chunk_alignment_phase import (
     validate_alignment,
 )
 from app.ai_content_merger import (
-    _merge_alignment_into_verse,
+    _kept_parts,
+    _sister_path,
     load_chunk_alignments,
     merge_alignment_into_file,
 )
@@ -154,50 +155,78 @@ def _verse_with_chunks(n=2, path="/books/al-amali-mufid:1:1:1"):
     }
 
 
-def test_merge_into_verse_sets_chunk_translations():
+def test_kept_parts_valid():
     verse = _verse_with_chunks(2)
-    lookup = {verse["path"]: {"en.qarai": ["The chain narrated.", "The saying followed."]}}
-    assert _merge_alignment_into_verse(verse, lookup)
-    assert verse["chunk_translations"]["en.qarai"] == [
-        "The chain narrated.", "The saying followed."
-    ]
+    keep = _kept_parts(verse, {"en.qarai": ["The chain narrated.", "The saying followed."]})
+    assert keep == {"en.qarai": ["The chain narrated.", "The saying followed."]}
 
 
-def test_merge_skips_length_mismatch():
+def test_kept_parts_skips_length_mismatch():
     verse = _verse_with_chunks(2)
-    lookup = {verse["path"]: {"en.qarai": ["only one part"]}}  # 1 != 2 chunks
-    assert not _merge_alignment_into_verse(verse, lookup)
-    assert "chunk_translations" not in verse
+    assert _kept_parts(verse, {"en.qarai": ["only one part"]}) == {}  # 1 != 2 chunks
 
 
-def test_merge_skips_all_empty_alignment():
+def test_kept_parts_skips_all_empty():
     verse = _verse_with_chunks(2)
-    lookup = {verse["path"]: {"en.qarai": ["", ""]}}
-    assert not _merge_alignment_into_verse(verse, lookup)
-    assert "chunk_translations" not in verse
+    assert _kept_parts(verse, {"en.qarai": ["", ""]}) == {}
 
 
-def test_merge_no_artifact_for_verse():
-    verse = _verse_with_chunks(2)
-    assert not _merge_alignment_into_verse(verse, {})
-
-
-def test_merge_into_file_patches_verse_detail(tmp_path):
+def test_merge_into_file_writes_sister_and_strips_base(tmp_path):
+    # Alignment-scoped sister model: parts go to {base}.en.json under
+    # chunk_translations; the flat scraped text is removed from base.
     verse = _verse_with_chunks(2)
     doc = {
         "index": "al-amali-mufid:1:1:1",
         "kind": "verse_detail",
-        "data": {"verse": verse},
+        "data": {"verse": verse, "verse_translations": ["en.qarai"]},
     }
     fp = tmp_path / "1.json"
     fp.write_text(json.dumps(doc), encoding="utf-8")
-    lookup = {verse["path"]: {"en.qarai": ["The chain narrated.", "The saying followed."]}}
+    parts = ["The chain narrated.", "The saying followed."]
+    lookup = {verse["path"]: {"en.qarai": parts}}
 
     count = merge_alignment_into_file(str(fp), lookup)
     assert count == 1
-    written = json.loads(fp.read_text(encoding="utf-8"))
-    ct = written["data"]["verse"]["chunk_translations"]
-    assert ct["en.qarai"] == ["The chain narrated.", "The saying followed."]
+
+    base = json.loads(fp.read_text(encoding="utf-8"))
+    base_verse = base["data"]["verse"]
+    # flat text dropped from base, but id still discoverable
+    assert "en.qarai" not in base_verse.get("translations", {})
+    assert "en.qarai" in base["data"]["verse_translations"]
+    # no chunk_translations on base — it lives in the sister
+    assert "chunk_translations" not in base_verse
+
+    sister = json.loads((tmp_path / "1.en.json").read_text(encoding="utf-8"))
+    assert sister["lang"] == "en"
+    assert sister["chunk_translations"]["en.qarai"] == parts
+
+
+def test_merge_into_file_preserves_existing_ai_sister(tmp_path):
+    # A pre-existing AI sister (from merge_ai_content) must keep its ai block.
+    verse = _verse_with_chunks(2)
+    (tmp_path / "1.json").write_text(json.dumps({
+        "kind": "verse_detail",
+        "data": {"verse": verse, "verse_translations": ["en.qarai"]},
+    }), encoding="utf-8")
+    (tmp_path / "1.en.json").write_text(json.dumps({
+        "ai": {"summary": "AI summary", "chunks": ["c0", "c1"]},
+        "lang": "en", "path": verse["path"],
+    }), encoding="utf-8")
+
+    merge_alignment_into_file(str(tmp_path / "1.json"),
+                              {verse["path"]: {"en.qarai": ["p0", "p1"]}})
+    sister = json.loads((tmp_path / "1.en.json").read_text(encoding="utf-8"))
+    assert sister["ai"]["summary"] == "AI summary"          # preserved
+    assert sister["chunk_translations"]["en.qarai"] == ["p0", "p1"]  # added
+
+
+def test_no_artifact_leaves_file_untouched(tmp_path):
+    verse = _verse_with_chunks(2)
+    doc = {"kind": "verse_detail", "data": {"verse": verse}}
+    fp = tmp_path / "1.json"
+    fp.write_text(json.dumps(doc), encoding="utf-8")
+    assert merge_alignment_into_file(str(fp), {}) == 0
+    assert not (tmp_path / "1.en.json").exists()
 
 
 def test_load_chunk_alignments(tmp_path):
