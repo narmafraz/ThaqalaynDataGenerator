@@ -29,6 +29,10 @@ AI_CONTENT_SUBDIR = os.environ.get("AI_CONTENT_SUBDIR", "corpus")
 AI_RESPONSES_DIR = os.path.join(AI_CONTENT_DIR, AI_CONTENT_SUBDIR, "responses")
 AI_CACHE_DIR = os.path.join(AI_CONTENT_DIR, AI_CONTENT_SUBDIR, "cache")
 AI_QUARANTINE_DIR = os.path.join(AI_CONTENT_DIR, AI_CONTENT_SUBDIR, "quarantine")
+# Scraped-translation chunk-alignment artifacts (one JSON per aligned verse).
+# Committed source of truth (like responses/); merged into Data at build time
+# by ai_content_merger.merge_chunk_alignment().
+AI_ALIGNMENT_DIR = os.path.join(AI_CONTENT_DIR, AI_CONTENT_SUBDIR, "chunk_alignment")
 
 # Output destination (defaults to sibling ThaqalaynData directory)
 DEFAULT_DESTINATION_DIR = "../ThaqalaynData/"

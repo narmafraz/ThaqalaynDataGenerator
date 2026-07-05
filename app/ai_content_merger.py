@@ -18,6 +18,7 @@ import os
 from typing import Dict, List, Optional
 
 from app.config import (
+    AI_ALIGNMENT_DIR,
     AI_RESPONSES_DIR,
     DEFAULT_DESTINATION_DIR,
     JSON_ENCODING,
@@ -875,3 +876,171 @@ def merge_ai_content(report=None):
     if report is not None:
         report.ai_verses_merged = total_merged
         report.ai_merge_errors = errors
+
+
+# ─── Scraped-translation chunk alignment merge ─────────────────────────────
+#
+# Injects verse.chunk_translations (scraped translations re-segmented to the
+# AI chunk boundaries) into the built Data. Source of truth is the DataSources
+# artifact at ai-content/{subdir}/chunk_alignment/ — produced offline by the
+# `align-scraped` command. Runs after merge_ai_content() so base chunks exist.
+
+def load_chunk_alignments(alignment_dir: Optional[str] = None) -> Dict[str, dict]:
+    """Load alignment artifacts → {verse_path: {translationId: [parts]}}."""
+    if alignment_dir is None:
+        alignment_dir = AI_ALIGNMENT_DIR
+
+    lookup: Dict[str, dict] = {}
+    if not os.path.isdir(alignment_dir):
+        logger.info("Chunk-alignment dir not found: %s — skipping", alignment_dir)
+        return lookup
+
+    for filename in sorted(os.listdir(alignment_dir)):
+        if not filename.endswith(".json"):
+            continue
+        filepath = os.path.join(alignment_dir, filename)
+        try:
+            with open(filepath, "r", encoding=JSON_ENCODING) as f:
+                doc = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Skipping malformed alignment file %s: %s", filename, e)
+            continue
+        verse_path = doc.get("verse_path")
+        aligned = doc.get("aligned")
+        if verse_path and isinstance(aligned, dict) and aligned:
+            lookup[verse_path] = aligned
+
+    logger.info("Loaded %d chunk-alignment artifacts from %s", len(lookup), alignment_dir)
+    return lookup
+
+
+def _merge_alignment_into_verse(verse: dict, lookup: Dict[str, dict]) -> bool:
+    """Set verse['chunk_translations'] from the alignment lookup. Idempotent.
+
+    Only keeps arrays that (a) match the verse's chunk count and (b) have at
+    least one non-empty part — so a fully-empty (unmatched) alignment doesn't
+    trigger the interleaved view.
+    """
+    verse_path = verse.get("path", "")
+    aligned = lookup.get(verse_path)
+    if not aligned:
+        return False
+    chunks = ((verse.get("ai") or {}).get("chunks")) or []
+    n = len(chunks)
+    if n == 0:
+        return False
+    keep: Dict[str, list] = {}
+    for tid, parts in aligned.items():
+        if not isinstance(parts, list) or len(parts) != n:
+            continue
+        if any(p for p in parts):
+            keep[tid] = parts
+    if not keep:
+        return False
+    existing = verse.get("chunk_translations") or {}
+    existing.update(keep)
+    verse["chunk_translations"] = existing
+    return True
+
+
+def merge_alignment_into_file(file_path: str, lookup: Dict[str, dict]) -> int:
+    """Inject chunk_translations into a modular JSON data file. Returns count."""
+    try:
+        with open(file_path, "r", encoding=JSON_ENCODING) as f:
+            doc = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Could not read %s: %s", file_path, e)
+        return 0
+
+    kind = doc.get("kind", "")
+    data = doc.get("data", {})
+    count = 0
+
+    if kind == "verse_detail":
+        verse = data.get("verse", data)
+        if _merge_alignment_into_verse(verse, lookup):
+            count += 1
+    else:
+        # verse_list (legacy inline) or unknown — try inline verses.
+        for verse in data.get("verses", []):
+            if _merge_alignment_into_verse(verse, lookup):
+                count += 1
+
+    if count > 0:
+        with open(file_path, "w", encoding=JSON_ENCODING) as f:
+            json.dump(doc, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT, sort_keys=True)
+    return count
+
+
+def _walk_alignment_complete(node: dict, lookup: Dict[str, dict]) -> int:
+    count = 0
+    for verse in node.get("verses", []):
+        if _merge_alignment_into_verse(verse, lookup):
+            count += 1
+    for chapter in node.get("chapters", []):
+        count += _walk_alignment_complete(chapter, lookup)
+    return count
+
+
+def merge_alignment_into_complete_file(file_path: str, lookup: Dict[str, dict]) -> int:
+    try:
+        with open(file_path, "r", encoding=JSON_ENCODING) as f:
+            doc = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Could not read complete file %s: %s", file_path, e)
+        return 0
+    count = _walk_alignment_complete(doc.get("data", {}), lookup)
+    if count > 0:
+        with open(file_path, "w", encoding=JSON_ENCODING) as f:
+            json.dump(doc, f, ensure_ascii=JSON_ENSURE_ASCII, indent=JSON_INDENT, sort_keys=True)
+    return count
+
+
+def merge_chunk_alignment(report=None):
+    """Merge scraped chunk-alignment artifacts into the generated JSON files.
+
+    Mirrors merge_ai_content(): loads the DataSources artifact, walks
+    DESTINATION_DIR/books/ (modular + complete), and injects
+    verse.chunk_translations. Cheap, deterministic, no LLM — safe to run at
+    every add_data build so a wiped Data rebuilds the aligned translations.
+    """
+    dest_dir = os.environ.get("DESTINATION_DIR", DEFAULT_DESTINATION_DIR)
+
+    lookup = load_chunk_alignments()
+    if not lookup:
+        logger.info("No chunk-alignment content to merge")
+        if report is not None:
+            report.alignment_verses_merged = 0
+        return
+
+    total = 0
+    books_dir = os.path.join(dest_dir, "books")
+    if os.path.isdir(books_dir):
+        for root, _dirs, files in os.walk(books_dir):
+            if os.path.basename(root) == "complete":
+                continue
+            for filename in files:
+                if not filename.endswith(".json"):
+                    continue
+                try:
+                    total += merge_alignment_into_file(os.path.join(root, filename), lookup)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Error merging alignment into %s: %s",
+                                   os.path.join(root, filename), e)
+
+    complete_dir = os.path.join(books_dir, "complete")
+    if os.path.isdir(complete_dir):
+        for filename in os.listdir(complete_dir):
+            if not filename.endswith(".json"):
+                continue
+            try:
+                total += merge_alignment_into_complete_file(
+                    os.path.join(complete_dir, filename), lookup)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Error merging alignment into complete file %s: %s",
+                               filename, e)
+
+    logger.info("Chunk-alignment merge complete: %d verses merged (%d artifacts)",
+                total, len(lookup))
+    if report is not None:
+        report.alignment_verses_merged = total

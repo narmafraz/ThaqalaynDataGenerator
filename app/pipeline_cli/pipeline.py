@@ -1727,10 +1727,54 @@ async def run_retranslate(config: PipelineConfig):
           f"${total_cost:.2f} cost", flush=True)
 
 
+def _handle_align_scraped(args):
+    """Run the scraped-translation chunk-alignment pass, then merge into Data.
+
+    Reuses the durability model of the generation pipeline (resumable per-verse
+    artifacts, Spark backend, strict schema). Output goes to DataSources
+    (ai-content/{subdir}/chunk_alignment/); merge_chunk_alignment() folds it
+    into ThaqalaynData unless --skip-merge / --dry-run.
+    """
+    from app.pipeline_cli.chunk_alignment_phase import run_alignment
+
+    langs = None
+    if args.langs and args.langs.lower() != "all":
+        langs = [l.strip() for l in args.langs.split(",") if l.strip()]
+    tids = None
+    if args.translation_ids:
+        tids = [t.strip() for t in args.translation_ids.split(",") if t.strip()]
+
+    asyncio.run(run_alignment(
+        book=args.book,
+        langs=langs,
+        translation_ids=tids,
+        workers=args.workers,
+        data_dir=args.data_dir,
+        model=args.align_model,
+        dry_run=args.dry_run,
+        attempt_quarantined=args.attempt_quarantined,
+        max_verses=args.max_verses,
+    ))
+
+    if not args.skip_merge and not args.dry_run:
+        dest_dir = os.environ.get("DESTINATION_DIR")
+        if dest_dir and os.path.isdir(dest_dir):
+            print("\nMerging chunk alignment into ThaqalaynData...", flush=True)
+            try:
+                from app.ai_content_merger import merge_chunk_alignment
+                merge_chunk_alignment()
+                print("Chunk alignment merge complete.", flush=True)
+            except Exception as e:
+                print(f"Chunk alignment merge failed: {e}", flush=True)
+                logger.error("Chunk alignment merge failed: %s", e)
+        else:
+            print("Skipping merge: DESTINATION_DIR not set or not found.", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pipeline v4 — AI content generation orchestrator")
     parser.add_argument("command", nargs="?", default="run",
-                        help="Command: run (default), retranslate, word-dict, batch")
+                        help="Command: run (default), retranslate, word-dict, batch, align-scraped")
     parser.add_argument("subcommand", nargs="?", default=None,
                         help="Subcommand for word-dict (extract, missing, stats) or batch (submit, status, download, submit-fixes, download-fixes)")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="Concurrent Claude calls")
@@ -1771,6 +1815,16 @@ def main():
                              "When --backend spark, defaults to qwen36-fast.")
     parser.add_argument("--skip-merge", action="store_true",
                         help="Skip merging AI content into ThaqalaynData after run")
+    # align-scraped command options
+    parser.add_argument("--langs", type=str, default="en",
+                        help="align-scraped: comma-separated language codes to align "
+                             "(default: en). Use 'all' for every scraped language.")
+    parser.add_argument("--translation-ids", type=str, default=None,
+                        help="align-scraped: restrict to these scraped translation IDs "
+                             "(comma-separated, e.g. en.qarai,en.sarwar)")
+    parser.add_argument("--align-model", default="qwen36-fast",
+                        help="align-scraped: model for segmentation "
+                             "(default: qwen36-fast — Spark, $0)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -1797,6 +1851,12 @@ def main():
     if args.command == "batch":
         from app.pipeline_cli.openai_batch import handle_batch_command
         handle_batch_command(args)
+        return
+
+    # Handle align-scraped subcommand
+    if args.command == "align-scraped":
+        os.environ.setdefault("SOURCE_DATA_DIR", "../ThaqalaynDataSources/")
+        _handle_align_scraped(args)
         return
 
     # Handle retranslate subcommand
