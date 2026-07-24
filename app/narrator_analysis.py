@@ -77,20 +77,47 @@ def _norm(s: str | None) -> str:
     return (s or "").strip().lower()
 
 
+def _narrator_chain_ids(verse: dict) -> list[int | None]:
+    """Ordered canonical ids from the deterministic `narrator_chain.parts`.
+
+    Non-narrator parts are skipped; a narrator part whose path tail isn't a bare
+    id yields `None` (so positions still align with the parts sequence).
+    """
+    nc = verse.get("narrator_chain") or {}
+    ids: list[int | None] = []
+    for part in nc.get("parts", []):
+        if part.get("kind") != "narrator":
+            continue
+        tail = (part.get("path") or "").rsplit("/", 1)[-1]
+        ids.append(int(tail) if tail.isdigit() else None)
+    return ids
+
+
 def _chain_from_verse(verse: dict) -> list[dict]:
     """Return an ordered list of narrator dicts for a verse.
 
     Each entry: {id:int, name_ar, name_en, role, confidence, ambiguous:bool}.
     Prefers AI isnad_matn; falls back to narrator_chain.parts (ids only).
     Returns [] when no chain is present.
+
+    The AI isnad frequently leaves the terminal source-Imam (and occasionally an
+    interior narrator) with a null ``canonical_id``. When the deterministic
+    ``narrator_chain`` has the same number of narrators, we backfill those null
+    ids positionally from it — otherwise the terminal Imam is silently dropped
+    from the chain *and* never observed under its real id (so it's never
+    classified as a source). We only fill gaps; AI-provided ids are kept as-is.
     """
     ai = (verse.get("ai") or {})
     isnad = (ai.get("isnad_matn") or {})
     narrators = isnad.get("narrators")
     if narrators:
+        nc_ids = _narrator_chain_ids(verse)
+        aligned = nc_ids if len(nc_ids) == len(narrators) else None
         out = []
-        for n in narrators:
+        for i, n in enumerate(narrators):
             cid = n.get("canonical_id")
+            if cid is None and aligned is not None:
+                cid = aligned[i]
             if cid is None:
                 continue
             conf = _norm(n.get("identity_confidence"))
@@ -316,13 +343,21 @@ def analyze_chapter(verses: list[dict], profile: NarratorProfile) -> dict:
             nid = e["id"]
             is_new = nid not in seen_ids
             seen_ids.add(nid)
-            if is_new and profile.is_source(nid):
+            # A narrator counts as a *source* here if the corpus profile says so
+            # OR the AI tagged *this* entry with a source role. The per-entry
+            # check is essential for the Imams: the AI labels them "narrator" far
+            # more often than "imam" corpus-wide, so the majority-vote profile
+            # misses them — yet in the chains where they're the source they are
+            # tagged "imam", and must be excluded from clustering so two chapters
+            # that merely both quote the same Imam aren't fused into one path.
+            entry_source = e.get("role") in SOURCE_ROLES
+            if is_new and (profile.is_source(nid) or entry_source):
                 source_hadith[nid].append(li)
             if is_new and (e.get("ambiguous") or nid in profile.ambiguous_ids):
                 ambiguous_hadith[nid].append(li)
             if e.get("ambiguous") or nid in profile.ambiguous_ids:
                 chain_has_ambiguous = True
-            if not profile.is_excluded(nid):
+            if not (profile.is_excluded(nid) or entry_source):
                 kept.add(nid)
         for nid in seen_ids:
             narrator_hadith[nid].append(li)
@@ -341,6 +376,14 @@ def analyze_chapter(verses: list[dict], profile: NarratorProfile) -> dict:
     source_freq = Counter({nid: len(lis) for nid, lis in source_hadith.items()})
     ambiguous_ids = Counter({nid: len(lis) for nid, lis in ambiguous_hadith.items()})
 
+    # Sources seen in *this* chapter (corpus profile ∪ per-entry role above).
+    # Used to keep them out of the "frequent transmitters" leaderboard and the
+    # network graph, mirroring their exclusion from clustering.
+    chapter_sources = set(source_hadith)
+
+    def _excluded(nid: int) -> bool:
+        return profile.is_excluded(nid) or nid in chapter_sources
+
     # Narrators are referenced by id everywhere below; their names are emitted
     # once in a per-file `narrators` lookup map (see end). `ref()` records an id
     # as referenced and returns it, so the map covers exactly what's used.
@@ -351,6 +394,12 @@ def analyze_chapter(verses: list[dict], profile: NarratorProfile) -> dict:
         return nid
 
     # --- #1 independent transmission paths ---------------------------------- #
+    # Each cluster now carries its members' full isnad chains (ordered narrator
+    # ids, source-Imams and placeholders included) so the UI can render the
+    # chain behind every hadith and highlight the narrators shared across the
+    # group. `size` and `local_indices` are intentionally *not* emitted — both
+    # are derivable from `members` (len / members[].li). `shared_ids` is kept as
+    # a precomputed, count-ranked top-5 for the group header.
     clusters = _cluster(clustered_ids)
     cluster_out = []
     for grp in clusters:
@@ -360,18 +409,19 @@ def analyze_chapter(verses: list[dict], profile: NarratorProfile) -> dict:
             for nid in clustered_ids[li]:
                 member_ids[nid] += 1
         shared = [ref(nid) for nid, c in member_ids.most_common() if c > 1][:5]
-        cluster_out.append(
-            {
-                "size": len(grp),
-                "local_indices": grp,
-                "shared_ids": shared,
-            }
-        )
+        # Full ordered isnad per hadith. ref() every id so its name resolves in
+        # the per-file lookup map even if it appears nowhere else (e.g. a
+        # placeholder excluded from clustering/graph).
+        members = [
+            {"li": li, "chain": [ref(e["id"]) for e in chains[li]]}
+            for li in grp
+        ]
+        cluster_out.append({"members": members, "shared_ids": shared})
 
     # --- #2 prolific narrators (real transmitters, excludes sources/placeholders)
     prolific = []
     for nid, c in freq.most_common():
-        if profile.is_excluded(nid):
+        if _excluded(nid):
             continue
         prolific.append({"id": ref(nid), "hadith": sorted(narrator_hadith[nid]),
                          "pct": round(c / analyzed, 3) if analyzed else 0})
@@ -446,7 +496,7 @@ def analyze_chapter(verses: list[dict], profile: NarratorProfile) -> dict:
 
     # --- #9 isnad graph (real transmitters as nodes; co-occurrence edges) ---- #
     node_freq = [(nid, c) for nid, c in freq.most_common()
-                 if not profile.is_excluded(nid)]
+                 if not _excluded(nid)]
     node_ids = {nid for nid, _ in node_freq}
     nodes = [{"id": ref(nid), "count": c} for nid, c in node_freq]
     edge_counts: Counter = Counter()
@@ -468,6 +518,16 @@ def analyze_chapter(verses: list[dict], profile: NarratorProfile) -> dict:
         nm = profile.name(nid)
         narrators[str(nid)] = [nm.get("name_en"), nm.get("name_ar")]
 
+    # Role class per *non-transmitter* referenced id, so the UI can style the
+    # excluded links in a chain distinctly (source-Imam vs collective/relative
+    # placeholder). Transmitters are the default and are omitted to stay compact.
+    narrator_roles: dict[str, str] = {}
+    for nid in sorted(referenced):
+        if profile.is_source(nid) or nid in chapter_sources:
+            narrator_roles[str(nid)] = "source"
+        elif nid in profile.placeholder_ids:
+            narrator_roles[str(nid)] = "placeholder"
+
     return {
         "hadith_count": hadith_count,
         "analyzed_count": analyzed,
@@ -485,6 +545,7 @@ def analyze_chapter(verses: list[dict], profile: NarratorProfile) -> dict:
         "ambiguity": ambiguity,
         "graph": graph,
         "narrators": narrators,
+        "narrator_roles": narrator_roles,
     }
 
 

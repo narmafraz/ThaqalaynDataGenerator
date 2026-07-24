@@ -83,6 +83,47 @@ def test_chain_empty_when_no_data():
     assert na._chain_from_verse({"local_index": 1}) == []
 
 
+def test_chain_backfills_null_ai_ids_from_narrator_chain():
+    # AI leaves the terminal Imam (and an interior narrator) with a null id;
+    # the deterministic narrator_chain of equal length supplies them positionally.
+    verse = {
+        "local_index": 1,
+        "ai": {"isnad_matn": {"has_chain": True, "narrators": [
+            {"canonical_id": 3, "role": "narrator", "name_en": "Ali"},
+            {"canonical_id": None, "role": "narrator", "name_en": "his father"},
+            {"canonical_id": 7, "role": "narrator", "name_en": "Ibn Abi Umayr"},
+            {"canonical_id": None, "role": "imam", "name_en": "Abu Abdillah"},
+        ]}},
+        "narrator_chain": {"parts": [
+            {"kind": "narrator", "path": "/people/narrators/3", "text": "a"},
+            {"kind": "narrator", "path": "/people/narrators/2", "text": "b"},
+            {"kind": "narrator", "path": "/people/narrators/7", "text": "c"},
+            {"kind": "narrator", "path": "/people/narrators/669", "text": "d"},
+        ]},
+    }
+    chain = na._chain_from_verse(verse)
+    assert [e["id"] for e in chain] == [3, 2, 7, 669]
+    # the backfilled terminal entry keeps its AI role, so it can be seen as a source
+    assert chain[3]["role"] == "imam"
+
+
+def test_chain_no_backfill_when_lengths_differ():
+    # length mismatch -> no positional backfill; the null entry is dropped
+    verse = {
+        "local_index": 1,
+        "ai": {"isnad_matn": {"has_chain": True, "narrators": [
+            {"canonical_id": 3, "role": "narrator", "name_en": "Ali"},
+            {"canonical_id": None, "role": "imam", "name_en": "Abu Abdillah"},
+        ]}},
+        "narrator_chain": {"parts": [
+            {"kind": "narrator", "path": "/people/narrators/3", "text": "a"},
+            {"kind": "narrator", "path": "/people/narrators/7", "text": "c"},
+            {"kind": "narrator", "path": "/people/narrators/669", "text": "d"},
+        ]},
+    }
+    assert [e["id"] for e in na._chain_from_verse(verse)] == [3]
+
+
 # --------------------------------------------------------------------------- #
 # profile classification
 # --------------------------------------------------------------------------- #
@@ -198,6 +239,70 @@ def test_analyze_chapter_full_bundle():
     assert "99" in res["narrators"] and "88" in res["narrators"]
     assert "name_en" not in res["prolific"][0]
     assert all(isinstance(x, int) for x in res["clusters"][0]["shared_ids"])
+    # clusters carry per-hadith full chains; size/local_indices are dropped
+    big = res["clusters"][0]
+    assert "size" not in big and "local_indices" not in big
+    assert [m["li"] for m in big["members"]] == [1, 2]
+    # full isnad per member, source Imam included in the chain (id 99)
+    assert big["members"][0]["chain"] == [10, 11, 99]
+    assert big["members"][1]["chain"] == [10, 12, 99]
+    # role map classifies the excluded ids; transmitters are omitted
+    assert res["narrator_roles"]["99"] == "source"
+    assert res["narrator_roles"]["88"] == "source"
+    assert "10" not in res["narrator_roles"]
+
+
+def test_cluster_members_and_roles():
+    verses = [
+        ai_verse(1, [(10, "narrator", "Shared", False),
+                     (2, "narrator", "his father", False),
+                     (99, "source", "Imam", False)]),
+        ai_verse(2, [(10, "narrator", "Shared", False), (11, "narrator", "B", False)]),
+        ai_verse(3, [(20, "narrator", "Alone", False)]),
+    ]
+    p = make_profile(verses)
+    res = na.analyze_chapter(verses, p)
+    clusters = res["clusters"]
+    # 1&2 merge on shared transmitter 10; 3 stands alone (a shown singleton)
+    assert [m["li"] for c in clusters for m in c["members"]] == [1, 2, 3]
+    big = clusters[0]
+    # full chain preserved in order, including placeholder + source
+    assert big["members"][0]["chain"] == [10, 2, 99]
+    # singleton still carries its chain
+    singleton = clusters[1]
+    assert len(singleton["members"]) == 1
+    assert singleton["members"][0]["chain"] == [20]
+    assert singleton["shared_ids"] == []
+    # placeholder id 2 and source id 99 classified; shared transmitter 10 is not
+    assert res["narrator_roles"]["2"] == "placeholder"
+    assert res["narrator_roles"]["99"] == "source"
+    assert "10" not in res["narrator_roles"]
+    # every id used in a chain resolves in the name lookup map
+    for c in clusters:
+        for m in c["members"]:
+            for nid in m["chain"]:
+                assert str(nid) in res["narrators"]
+
+
+def test_per_entry_source_excluded_even_if_profile_says_narrator():
+    # Corpus profile sees id 99 mostly as a plain narrator (not a source)...
+    p = make_profile([ai_verse(i, [(99, "narrator", "X", False)]) for i in range(10)])
+    assert not p.is_source(99)
+    # ...but in these two chains it's the terminal Imam (role 'imam'). The chains
+    # share ONLY 99, so without per-entry source exclusion they'd wrongly merge.
+    verses = [
+        ai_verse(1, [(10, "narrator", "A", False), (99, "imam", "X", False)]),
+        ai_verse(2, [(20, "narrator", "B", False), (99, "imam", "X", False)]),
+    ]
+    res = na.analyze_chapter(verses, p)
+    assert res["independent_paths"] == 2
+    chains = {m["li"]: m["chain"] for c in res["clusters"] for m in c["members"]}
+    # 99 stays in each member's full isnad, and is flagged a source, not shared
+    assert chains[1] == [10, 99] and chains[2] == [20, 99]
+    assert res["narrator_roles"]["99"] == "source"
+    assert 99 in {s["id"] for s in res["sources"]}
+    assert 99 not in {pr["id"] for pr in res["prolific"]}
+    assert 99 not in {n["id"] for n in res["graph"]["nodes"]}
 
 
 def test_classify_grade_arabic_and_english():
