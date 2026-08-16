@@ -52,7 +52,7 @@ def test_validate_rejects_dropped_text():
     parts = ["A number of our companions narrated.", ""]  # matn dropped entirely
     ok, reason = validate_alignment(parts, scraped)
     assert not ok
-    assert "recall" in reason
+    assert "not verbatim" in reason
 
 
 def test_validate_rejects_added_commentary():
@@ -63,7 +63,7 @@ def test_validate_rejects_added_commentary():
     ]
     ok, reason = validate_alignment(parts, scraped)
     assert not ok
-    assert "precision" in reason
+    assert "not verbatim" in reason
 
 
 # ── schema / prompt ─────────────────────────────────────────────────────────
@@ -242,3 +242,65 @@ def test_load_chunk_alignments(tmp_path):
 
     lookup = load_chunk_alignments(str(tmp_path))
     assert lookup == {"/books/al-amali-mufid:1:1:1": {"en.qarai": ["a", "b"]}}
+
+
+# -- strict verbatim validation (replaces the old 0.90 token-overlap check) --
+
+def test_validate_rejects_single_dropped_word():
+    # The old 0.90 token-overlap check waved this through on longer texts; the
+    # strict check must not - the sister parts are the sole copy of the text.
+    words = [f"word{i}" for i in range(30)]
+    scraped = " ".join(words)
+    parts = [" ".join(words[:10]), " ".join(words[10:29])]  # word29 lost
+    ok, reason = validate_alignment(parts, scraped)
+    assert not ok
+    assert "not verbatim" in reason
+
+
+def test_validate_rejects_reordered_words():
+    scraped = "seek knowledge from cradle to grave"
+    parts = ["seek knowledge", "from grave to cradle"]
+    ok, _ = validate_alignment(parts, scraped)
+    assert not ok
+
+
+def test_validate_rejects_case_change():
+    # Extractive means character-exact: silent recapitalisation is a rewrite.
+    scraped = "The Imam said: seek knowledge."
+    parts = ["The Imam said:", "Seek knowledge."]
+    ok, _ = validate_alignment(parts, scraped)
+    assert not ok
+
+
+def test_validate_accepts_whitespace_differences_only():
+    # Cut points may trim/normalise whitespace (incl. the newline joining the
+    # scraped array items) - that must still pass.
+    scraped = "The chain narrated." + "\n" + "The saying   followed."
+    parts = ["The chain narrated. ", " The saying followed."]
+    ok, reason = validate_alignment(parts, scraped)
+    assert ok, reason
+
+
+def test_validate_preserves_markup_exactly():
+    scraped = "Abu Abdullah<sup>asws</sup> said: seek knowledge."
+    ok, _ = validate_alignment(["Abu Abdullah<sup>asws</sup> said:", "seek knowledge."], scraped)
+    assert ok
+    # Markup dropped -> rewrite -> reject.
+    ok2, _ = validate_alignment(["Abu Abdullah said:", "seek knowledge."], scraped)
+    assert not ok2
+
+
+def test_validate_empty_original_accepts_only_empty_parts():
+    assert validate_alignment(["", ""], "")[0]
+    assert not validate_alignment(["stray text", ""], "")[0]
+
+
+def test_validate_accepts_canonically_equivalent_arabic_marks():
+    # shadda+kasra vs kasra+shadda are the same text under Unicode NFC -
+    # models re-emit combining marks in canonical order (seen on HubeAli
+    # inline Arabic in the July pilot). Must pass.
+    dal, shadda, kasra = "د", "ّ", "ِ"
+    scraped = f"the word {dal}{shadda}{kasra} appears"
+    reordered_part = f"the word {dal}{kasra}{shadda}"
+    ok, reason = validate_alignment([reordered_part, "appears"], scraped)
+    assert ok, reason

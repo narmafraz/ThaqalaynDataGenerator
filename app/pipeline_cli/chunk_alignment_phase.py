@@ -33,9 +33,8 @@ import asyncio
 import json
 import logging
 import os
-import re
 import time
-from collections import Counter
+import unicodedata
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -50,16 +49,13 @@ from app.pipeline_cli.verse_processor import verse_path_to_id
 
 logger = logging.getLogger(__name__)
 
-# Accept an alignment only when the re-joined parts closely reproduce the
-# original scraped text (multiset token overlap). This rejects paraphrase
-# (low precision), dropped text (low recall), and added commentary (low
-# precision) — the failure modes of a model that ignored the "verbatim" rule.
-MIN_RECALL = 0.90
-MIN_PRECISION = 0.90
-
-# Word-ish tokens across scripts (Latin, Arabic, CJK runs). Good enough for the
-# multiset overlap check; we default to English-family scraped translations.
-_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
+# Accept an alignment only when the re-joined parts reproduce the original
+# scraped text EXACTLY, modulo whitespace. Segmentation is extractive — the
+# model only chooses cut points — so anything short of verbatim (a paraphrase,
+# a dropped word, added commentary, reordering) means the model rewrote the
+# text and the alignment must be quarantined. This matters because the merged
+# sister parts become the sole copy of the scraped translation (the flat base
+# text is removed): a fuzzy threshold would silently lose words forever.
 
 _SYSTEM = """You split one existing English translation of a hadith into consecutive parts, one per segment, guided by a reference that tells you what each segment means.
 
@@ -74,26 +70,34 @@ RULES:
 - Output valid JSON only."""
 
 
-def _tokens(text: str) -> List[str]:
-    return _TOKEN_RE.findall((text or "").lower())
+def _squash(text: str) -> str:
+    """The text's non-whitespace characters, in order, NFC-normalized.
+
+    NFC matters for inline Arabic: models legally re-emit combining marks in
+    canonical order (e.g. kasra+shadda for shadda+kasra) — identical text per
+    Unicode, so it must not fail the verbatim check.
+    """
+    return unicodedata.normalize("NFC", "".join((text or "").split()))
 
 
 def validate_alignment(parts: List[str], scraped_text: str) -> Tuple[bool, str]:
-    """Return (ok, reason). Checks the parts re-join to the original text."""
-    orig = Counter(_tokens(scraped_text))
-    got = Counter(_tokens(" ".join(p or "" for p in parts)))
-    if not orig:
-        # No word tokens in the original (punctuation-only / empty) — accept
-        # only if the parts are likewise empty of words.
-        return (sum(got.values()) == 0, "empty original")
-    common = sum((orig & got).values())
-    recall = common / sum(orig.values())
-    precision = common / max(1, sum(got.values()))
-    if recall < MIN_RECALL:
-        return False, f"token recall {recall:.2f} < {MIN_RECALL}"
-    if precision < MIN_PRECISION:
-        return False, f"token precision {precision:.2f} < {MIN_PRECISION}"
-    return True, ""
+    """Return (ok, reason). Strict extractive check: the parts, concatenated
+    in order, must equal the original scraped text with whitespace collapsed.
+    """
+    orig = _squash(scraped_text)
+    got = _squash(" ".join(p or "" for p in parts))
+    if orig == got:
+        return True, ""
+    # First divergence point, for a diagnostic the quarantine record can keep.
+    i = 0
+    limit = min(len(orig), len(got))
+    while i < limit and orig[i] == got[i]:
+        i += 1
+    return False, (
+        f"not verbatim: rejoined parts diverge at char {i} "
+        f"(orig {len(orig)} chars, got {len(got)}): "
+        f"{orig[max(0, i - 15):i + 25]!r} vs {got[max(0, i - 15):i + 25]!r}"
+    )
 
 
 def _alignment_schema(n: int) -> dict:
