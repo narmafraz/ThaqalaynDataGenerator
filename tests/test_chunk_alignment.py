@@ -7,6 +7,8 @@ import pytest
 
 from app.pipeline_cli.chunk_alignment_phase import (
     _alignment_schema,
+    attach_prefix,
+    split_leading_number,
     build_alignment_prompt,
     eligible_scraped_ids,
     is_eligible,
@@ -304,3 +306,41 @@ def test_validate_accepts_canonically_equivalent_arabic_marks():
     reordered_part = f"the word {dal}{kasra}{shadda}"
     ok, reason = validate_alignment([reordered_part, "appears"], scraped)
     assert ok, reason
+
+
+# -- leading hadith-number prefix handling ----------------------------------
+
+def test_split_leading_number_variants():
+    assert split_leading_number("1. The grand Shaikh") == ("1. ", "The grand Shaikh")
+    assert split_leading_number(" 5. A number of our people") == (" 5. ", "A number of our people")
+    assert split_leading_number("10. He said") == ("10. ", "He said")
+    assert split_leading_number("12) He said") == ("12) ", "He said")
+    assert split_leading_number("3 - He said") == ("3 - ", "He said")
+
+
+def test_split_leading_number_leaves_ordinary_text():
+    # No separator marker after the digits -> not a hadith-number prefix.
+    assert split_leading_number("40 rakats are prescribed") == ("", "40 rakats are prescribed")
+    assert split_leading_number("He said: pray") == ("", "He said: pray")
+    assert split_leading_number("") == ("", "")
+
+
+def test_attach_prefix_first_nonempty_part():
+    assert attach_prefix(["", "He said", "more"], "10. ") == ["", "10. He said", "more"]
+    assert attach_prefix(["He said", "more"], "1. ") == ["1. He said", "more"]
+    assert attach_prefix(["", ""], "5. ") == ["5. ", ""]
+    assert attach_prefix(["He said"], "") == ["He said"]
+
+
+def test_prefix_roundtrip_passes_strict_validation():
+    # End-to-end shape of the fix: strip prefix, segment the body, re-attach,
+    # validate against the FULL original -> must pass.
+    scraped = "10. He said: Al-Sharif reported. Seek knowledge."
+    prefix, body = split_leading_number(scraped)
+    parts_from_model = ["He said: Al-Sharif reported.", "Seek knowledge."]
+    parts = attach_prefix(parts_from_model, prefix)
+    ok, reason = validate_alignment(parts, scraped)
+    assert ok, reason
+    # Without re-attachment the same output fails (the July-pilot failure).
+    ok2, _ = validate_alignment(["He said: Al-Sharif reported.", "Seek knowledge."], scraped)
+    assert not ok2

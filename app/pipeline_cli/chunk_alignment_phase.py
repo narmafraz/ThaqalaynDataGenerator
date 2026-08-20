@@ -33,6 +33,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import unicodedata
 from datetime import datetime, timezone
@@ -68,6 +69,43 @@ RULES:
 - The narrator chain / isnad at the start (e.g. "A number of our companions, from …") belongs to the first isnad segment.
 - If a segment has no matching text in the TRANSLATION, return an empty string for it (and give its text to no other segment).
 - Output valid JSON only."""
+
+
+# A leading hadith-number marker ("1. ", " 5. ", "10 - "). It belongs to no
+# segment's meaning, so models drop it when segmenting — 4 of the 5 July-pilot
+# quarantines. Handled deterministically: stripped before the call,
+# re-attached to the first non-empty part after (split_leading_number /
+# attach_prefix), with the strict validator checking the reassembled whole.
+_LEADING_NUM_RE = re.compile(r"^\s*\d{1,4}\s*[.)\-–:]\s+")
+
+# Attempts per (verse, translation) call. The strict verbatim validator
+# rejects marginal samples the old fuzzy check passed; fresh samples are the
+# cheapest cure on Spark ($0), so allow one more than the historical 2.
+MAX_ATTEMPTS = 3
+
+
+def split_leading_number(text: str) -> Tuple[str, str]:
+    """Split a leading hadith-number prefix off the text.
+
+    Returns (prefix, rest); prefix is "" when the text doesn't start with a
+    number marker. Lossless: callers re-attach the prefix after alignment.
+    """
+    m = _LEADING_NUM_RE.match(text or "")
+    if not m:
+        return "", text or ""
+    return text[:m.end()], text[m.end():]
+
+
+def attach_prefix(parts: List[str], prefix: str) -> List[str]:
+    """Prepend the split-off number prefix to the first non-empty part."""
+    if not prefix or not parts:
+        return parts
+    for i, p in enumerate(parts):
+        if (p or "").strip():
+            parts[i] = prefix + p
+            return parts
+    parts[0] = prefix + (parts[0] or "")
+    return parts
 
 
 def _squash(text: str) -> str:
@@ -272,17 +310,20 @@ async def _align_one(
     """
     n = len(chunks)
     schema = _alignment_schema(n)
-    system, user = build_alignment_prompt(chunks, scraped_text)
+    # The hadith-number prefix belongs to no segment, so keep it away from the
+    # model entirely and re-attach it to the first non-empty part afterwards.
+    prefix, body = split_leading_number(scraped_text)
+    system, user = build_alignment_prompt(chunks, body)
     # Output ≈ the input text re-emitted as JSON. English ~3 chars/token; add
     # JSON overhead + per-part framing. Cap to keep degenerate loops bounded.
-    est = int(len(scraped_text) / 3) + 256 + 40 * n
+    est = int(len(body) / 3) + 256 + 40 * n
     max_out = max(1024, min(16000, est))
     response_format = {
         "type": "json_schema",
         "json_schema": {"name": "chunk_alignment", "schema": schema, "strict": True},
     }
     last_reason = "exhausted"
-    for attempt in range(2):
+    for attempt in range(MAX_ATTEMPTS):
         cr = await call_openai(
             system, user, model=model,
             max_output_tokens=max_out,
@@ -301,6 +342,9 @@ async def _align_one(
         if len(parts) != n:
             last_reason = f"wrong part count {len(parts)} != {n}"
             continue
+        parts = attach_prefix(parts, prefix)
+        # Validate against the FULL original text — this also proves the
+        # prefix re-attachment reassembles losslessly.
         ok, reason = validate_alignment(parts, scraped_text)
         if ok:
             return parts, ""
