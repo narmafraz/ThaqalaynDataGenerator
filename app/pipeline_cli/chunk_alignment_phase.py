@@ -63,10 +63,11 @@ _SYSTEM = """You split one existing English translation of a hadith into consecu
 You are given N segments in order. Each segment has a REFERENCE (its meaning in English) and its ARABIC source. You are given one TRANSLATION (a different English rendering of the whole hadith). Cut the TRANSLATION into N consecutive parts so that part i covers the SAME content as segment i's reference.
 
 RULES:
-- Match by MEANING to each segment's reference, not by length or position. Part i must correspond to the same portion of the hadith that reference i describes.
+- Match by MEANING to each segment's reference, not by length or position. Part i must correspond to the same portion of the hadith that reference i describes. NEVER just cut the TRANSLATION into N similar-sized pieces — every cut must be justified by the references.
 - Preserve the translation's wording EXACTLY — do not paraphrase, translate, reorder, add, or drop any words or markup (e.g. <sup>…</sup>). Concatenating your parts in order must reproduce the TRANSLATION verbatim.
 - The cuts are the only choice you make. Every character of the TRANSLATION belongs to exactly one part, in order.
 - The narrator chain / isnad at the start (e.g. "A number of our companions, from …") belongs to the first isnad segment.
+- The TRANSLATION may OMIT or ABRIDGE segments — translators often skip the narrator chain or shorten the text. If a segment's content is absent from the TRANSLATION, return an empty string for that part and place the existing text under the segments it actually matches. Do NOT stretch neighboring text into an omitted segment's slot, and do NOT dump the whole text into part 1 when it belongs to a later segment.
 - If a segment has no matching text in the TRANSLATION, return an empty string for it (and give its text to no other segment).
 - Output valid JSON only."""
 
@@ -136,6 +137,195 @@ def validate_alignment(parts: List[str], scraped_text: str) -> Tuple[bool, str]:
         f"(orig {len(orig)} chars, got {len(got)}): "
         f"{orig[max(0, i - 15):i + 25]!r} vs {got[max(0, i - 15):i + 25]!r}"
     )
+
+
+# ── placement accuracy gate (uses the AI's own per-chunk English refs) ──────
+#
+# Strict validation proves the text survived intact; it cannot see MISPLACED
+# cuts. Pilot2 accuracy analysis (2026-09-02) found two real classes:
+#  - "single dump": abridged translations (esp. Sarwar, which omits isnads)
+#    put their whole text in part 0 even when it belongs to a later segment;
+#  - "off-by-one": parts lag/lead their segments by one slot (e.g.
+#    al-amali-mufid 18:6 — every part from slot 1 rendered under the wrong
+#    chunk). Both are detectable by comparing each part against the AI's own
+#    English rendering of the same chunk (`en_ref`) — two English renderings
+#    of the same Arabic share content words.
+
+_CONTENT_WORD_RE = re.compile(r"[a-z']+")
+_STOPWORDS = frozenset("""a an the and or of to in on for from with by at as
+is are was were be been has have had he she it they we you i his her its
+their this that these those who whom which what said says say then when
+while not no nor so does do did but if than there here upon unto shall will
+would may might""".split())
+
+# A neighboring reference must fit this much better before we call a part
+# misplaced — two independent translations legitimately word things apart.
+_SHIFT_MARGIN = 0.25
+_MOVE_MARGIN = 0.10
+
+
+def _content_words(text: str) -> frozenset:
+    return frozenset(w for w in _CONTENT_WORD_RE.findall((text or "").lower())
+                     if w not in _STOPWORDS and len(w) > 2)
+
+
+def _jaccard(a: frozenset, b: frozenset) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def fix_single_dump(parts: List[str], chunks: List[dict]) -> List[str]:
+    """If exactly one part holds all the text, move it to the slot whose
+    reference matches best. Deterministic and lossless (all other parts are
+    empty, so the concatenation is unchanged). Handles abridged translations
+    that omit the isnad: text dumped at slot 0 belongs at the matn slot.
+    """
+    nonempty = [i for i, p in enumerate(parts) if (p or "").strip()]
+    if len(parts) < 2 or len(nonempty) != 1:
+        return parts
+    placed = nonempty[0]
+    refs = [_content_words(c.get("en_ref") or "") for c in chunks]
+    if len(refs) != len(parts) or len({frozenset(r) for r in refs if r}) < 2:
+        return parts  # refs missing or degenerate — nothing to judge by
+    pw = _content_words(parts[placed])
+    if not pw:
+        return parts
+    sims = [_jaccard(pw, r) for r in refs]
+    best = max(range(len(sims)), key=lambda i: sims[i])
+    if best != placed and sims[best] > sims[placed] + _MOVE_MARGIN:
+        moved = ["" for _ in parts]
+        moved[best] = parts[placed]
+        return moved
+    return parts
+
+
+def placement_suspect(parts: List[str], chunks: List[dict]) -> Optional[str]:
+    """Return a reason when a part clearly matches a NEIGHBORING segment's
+    reference better than its own (the off-by-one class); None when placement
+    looks fine or the references are unusable (missing, degenerate, or the
+    text has no English content words, e.g. transliterations).
+    """
+    refs = [_content_words(c.get("en_ref") or "") for c in chunks]
+    if len(refs) != len(parts) or len({frozenset(r) for r in refs if r}) < 2:
+        return None
+    # Heavily-abridged translations (Sarwar summarises and omits isnads) end
+    # up as one part that matches NO reference well — there is no faithful
+    # per-chunk mapping, so the flat block view is the honest rendering.
+    nonempty = [i for i, p in enumerate(parts) if (p or "").strip()]
+    if len(parts) >= 2 and len(nonempty) == 1:
+        placed = nonempty[0]
+        pw = _content_words(parts[placed])
+        if len(pw) >= 5 and refs[placed] and _jaccard(pw, refs[placed]) < 0.10:
+            return ("placement suspect: single part matches its own segment "
+                    f"weakly ({_jaccard(pw, refs[placed]):.2f}) — abridged "
+                    "translation with no faithful chunk mapping")
+    suspects = []
+    for i, p in enumerate(parts):
+        pw = _content_words(p)
+        if len(pw) < 5 or not refs[i]:
+            continue
+        own = _jaccard(pw, refs[i])
+        for j in (i - 1, i + 1):
+            if 0 <= j < len(refs) and refs[j]:
+                other = _jaccard(pw, refs[j])
+                if other > own + _SHIFT_MARGIN:
+                    suspects.append(
+                        f"part {i} fits reference {j} better "
+                        f"({other:.2f} vs {own:.2f})")
+                    break
+    if suspects:
+        return "placement suspect: " + "; ".join(suspects[:3])
+    return None
+
+
+# ── cut-point salvage (reslice the ORIGINAL at model-implied boundaries) ────
+#
+# Pilot2 taxonomy (2026-08-20, 95/1189 quarantined): the model reliably finds
+# the right cut points but mangles characters while re-typing the text —
+# dropping "..." quote marks (63), duplicating a few words at a boundary (18),
+# swapping curly↔straight quotes (11). All three vanish if we use the model's
+# parts only to LOCATE boundaries and then slice the original string directly:
+# the result is extractive by construction, so the strict validator passes.
+
+# Quote-family characters the model substitutes freely; folded 1:1 for the
+# boundary matching only (never in the output text, which is a literal slice).
+_QUOTE_FOLD = str.maketrans({
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "`": "'", "´": "'",
+    "“": '"', "”": '"', "„": '"', "«": '"', "»": '"',
+    "–": "-", "—": "-",
+})
+
+# A boundary falling inside an unmatched run longer than this is too uncertain
+# to place — fail salvage rather than risk cutting mid-clause.
+_MAX_BOUNDARY_GAP = 60
+
+
+def _fold_indexed(text: str) -> Tuple[str, List[int]]:
+    """(folded squashed string, per-char index into the original text)."""
+    chars, idx = [], []
+    for i, ch in enumerate(text):
+        if ch.isspace():
+            continue
+        chars.append(ch.translate(_QUOTE_FOLD))
+        idx.append(i)
+    return "".join(chars), idx
+
+
+def reslice_from_original(parts: List[str], original: str) -> Optional[List[str]]:
+    """Re-derive the parts as literal slices of `original`, using the model's
+    (possibly character-mangled) parts only for the boundary positions.
+
+    Returns None when a boundary cannot be placed confidently.
+    """
+    from difflib import SequenceMatcher
+
+    n = len(parts)
+    if n == 0:
+        return None
+    a, a_idx = _fold_indexed(original)          # original (folded)
+    b, _ = _fold_indexed("".join(p or "" for p in parts))  # model text (folded)
+    if not a:
+        return None
+
+    # Part boundaries in b-coordinates (start of each part i >= 1).
+    bounds = []
+    pos = 0
+    for p in parts[:-1]:
+        pos += len(_fold_indexed(p or "")[0])
+        bounds.append(pos)
+
+    sm = SequenceMatcher(None, a, b, autojunk=False)
+    blocks = sm.get_matching_blocks()  # ends with zero-size sentinel
+    if sum(bl.size for bl in blocks) < 0.8 * max(len(a), len(b)):
+        return None  # texts too dissimilar — not a character-mangling case
+
+    def b_to_a(bpos: int) -> Optional[int]:
+        """Map a b-coordinate to an a-coordinate; None if too uncertain."""
+        prev_end_a = 0
+        prev_end_b = 0
+        for bl in blocks:
+            if bl.b <= bpos < bl.b + bl.size:
+                return bl.a + (bpos - bl.b)
+            if bpos < bl.b:  # falls in the unmatched gap before this block
+                gap = bl.b - prev_end_b
+                if gap > _MAX_BOUNDARY_GAP or (bl.a - prev_end_a) > _MAX_BOUNDARY_GAP:
+                    return None
+                return bl.a  # snap to the next matched region's start
+            prev_end_a, prev_end_b = bl.a + bl.size, bl.b + bl.size
+        return len(a)
+
+    cuts = [0]
+    for bpos in bounds:
+        apos = b_to_a(bpos)
+        if apos is None or apos < cuts[-1]:
+            return None
+        # a-coordinate → index into the original string (start of that char).
+        cuts.append(a_idx[apos] if apos < len(a_idx) else len(original))
+    cuts.append(len(original))
+
+    return [original[cuts[i]:cuts[i + 1]] for i in range(n)]
 
 
 def _alignment_schema(n: int) -> dict:
@@ -346,7 +536,26 @@ async def _align_one(
         # Validate against the FULL original text — this also proves the
         # prefix re-attachment reassembles losslessly.
         ok, reason = validate_alignment(parts, scraped_text)
+        if not ok:
+            # Cut-point salvage: the usual failure is character mangling
+            # (dropped/substituted quote marks, boundary duplication), not bad
+            # cuts. Reslice the original at model-implied boundaries, re-check.
+            resliced = reslice_from_original(parts, scraped_text)
+            if resliced is not None:
+                ok2, reason2 = validate_alignment(resliced, scraped_text)
+                if ok2:
+                    parts, ok = resliced, True
+                else:
+                    reason = f"{reason}; reslice failed too: {reason2[:80]}"
         if ok:
+            # Placement accuracy gate (skipped for transliterations — no
+            # English content words to judge by).
+            if "transliteration" not in tid:
+                parts = fix_single_dump(parts, chunks)
+                suspect = placement_suspect(parts, chunks)
+                if suspect:
+                    last_reason = suspect
+                    continue  # fresh sample sometimes places correctly
             return parts, ""
         last_reason = reason
     return None, last_reason

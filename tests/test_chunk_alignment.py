@@ -8,6 +8,9 @@ import pytest
 from app.pipeline_cli.chunk_alignment_phase import (
     _alignment_schema,
     attach_prefix,
+    fix_single_dump,
+    placement_suspect,
+    reslice_from_original,
     split_leading_number,
     build_alignment_prompt,
     eligible_scraped_ids,
@@ -344,3 +347,143 @@ def test_prefix_roundtrip_passes_strict_validation():
     # Without re-attachment the same output fails (the July-pilot failure).
     ok2, _ = validate_alignment(["He said: Al-Sharif reported.", "Seek knowledge."], scraped)
     assert not ok2
+
+
+# -- cut-point salvage: reslice the original at model-implied boundaries ----
+# Each case is modeled on a real pilot2 quarantine class (2026-08-20).
+
+def test_reslice_restores_dropped_quote_marks():
+    # 63/95 pilot2 quarantines: model drops the "..." around quoted speech.
+    original = 'He said: "It is recorded in the book." Then he left the mosque.'
+    model_parts = ["He said: It is recorded in the book.", "Then he left the mosque."]
+    out = reslice_from_original(model_parts, original)
+    assert out is not None
+    assert "".join(out) == original          # literal slices - lossless
+    ok, reason = validate_alignment(out, original)
+    assert ok, reason
+    assert out[0].startswith('He said: "It is recorded')
+    assert out[1].strip() == "Then he left the mosque."
+
+
+def test_reslice_fixes_curly_straight_quote_substitution():
+    # 11/95: same length, curly quote re-typed as ASCII apostrophe.
+    original = "saying: ’O, He, Whom one hearing does not distract’ and he wept."
+    model_parts = ["saying: 'O, He, Whom one hearing does not distract'", "and he wept."]
+    out = reslice_from_original(model_parts, original)
+    assert out is not None
+    assert "".join(out) == original
+    assert validate_alignment(out, original)[0]
+    assert "’" in out[0]                  # the original quote char survives
+
+
+def test_reslice_fixes_boundary_duplication():
+    # 18/95: model duplicates a few words across the cut.
+    original = "Muhammad al-Katib al-Iskafi reported. From Abu Ali who said: pray at dawn."
+    model_parts = ["Muhammad al-Katib al-Katib al-Iskafi reported.",
+                   "From Abu Ali who said: pray at dawn."]
+    out = reslice_from_original(model_parts, original)
+    assert out is not None
+    assert "".join(out) == original
+    assert validate_alignment(out, original)[0]
+    assert out[1].strip().startswith("From Abu Ali")
+
+
+def test_reslice_preserves_empty_parts():
+    original = "The Imam said: seek knowledge from the cradle."
+    model_parts = ["", "The Imam said: seek knowledge from the cradle."]
+    out = reslice_from_original(model_parts, original)
+    assert out is not None
+    assert out[0] == ""
+    assert "".join(out) == original
+
+
+def test_reslice_rejects_unrelated_text():
+    original = "The Imam said: seek knowledge from the cradle to the grave."
+    model_parts = ["Completely different opening sentence here.",
+                   "And an equally unrelated second half of text."]
+    assert reslice_from_original(model_parts, original) is None
+
+
+# -- placement accuracy gate (modeled on real pilot2 accuracy findings) ------
+
+ISNAD_REF = ("Muhammad ibn Yahya, from Ahmad ibn Muhammad ibn Isa, from Ali "
+             "ibn Hadid, from Murazim, from Abu Abdillah peace be upon him")
+MATN_REF = ("Indeed Allah revealed in the Quran a clarification of everything "
+            "so nothing about lawful and unlawful matters was left without a rule")
+
+
+def _chunks(*refs):
+    return [{"chunk_type": "body", "arabic_text": "x", "en_ref": r} for r in refs]
+
+
+def test_fix_single_dump_moves_abridged_text_to_matching_slot():
+    # Sarwar omits the isnad; model dumped the matn text into the isnad slot.
+    text = ("There is nothing about lawful and unlawful matters that has been "
+            "left without a rule in the Quran which clarifies everything")
+    parts = [text, ""]
+    out = fix_single_dump(parts, _chunks(ISNAD_REF, MATN_REF))
+    assert out == ["", text]
+
+
+def test_fix_single_dump_keeps_correct_placement():
+    text = "Muhammad ibn Yahya from Ahmad ibn Muhammad ibn Isa from Ali ibn Hadid"
+    parts = [text, ""]
+    out = fix_single_dump(parts, _chunks(ISNAD_REF, MATN_REF))
+    assert out == [text, ""]
+
+
+def test_fix_single_dump_noop_on_degenerate_refs():
+    # quran_11_29 class: all chunk references identical - nothing to judge by.
+    text = "And O my people I do not ask you for any wealth for it"
+    parts = [text, "", ""]
+    out = fix_single_dump(parts, _chunks(MATN_REF, MATN_REF, MATN_REF))
+    assert out == parts
+
+
+def test_fix_single_dump_noop_when_multiple_parts():
+    parts = ["chain text here", "matn text here"]
+    assert fix_single_dump(parts, _chunks(ISNAD_REF, MATN_REF)) == parts
+
+
+def test_placement_suspect_flags_off_by_one():
+    # al-amali-mufid 18:6 class: parts lag their segments by one slot.
+    r0 = "Ali ibn Muhammad ibn Hubaish al-Katib reported from al-Hasan al-Zafarani"
+    r1 = ("you are like the absentees despite your presence and the deaf "
+          "despite your hearing I recite unto you words of wisdom")
+    r2 = ("rise to fight the enemy before they overwhelm you your hands are "
+          "weakened and you occupied your minds with unavailing things")
+    parts = [r0,  # slot 0 correct
+             r2,  # slot 1 actually holds slot 2's content
+             r1]  # slot 2 actually holds slot 1's content
+    reason = placement_suspect(parts, _chunks(r0, r1, r2))
+    assert reason is not None
+    assert "placement suspect" in reason
+
+
+def test_placement_suspect_accepts_good_alignment():
+    r0 = "Ali ibn Muhammad reported from al-Hasan who reported from Ibrahim"
+    r1 = "seek knowledge from the cradle to the grave said the Imam clearly"
+    parts = ["Ali ibn Muhammad reported to me from al-Hasan from Ibrahim",
+             "the Imam said seek knowledge from the cradle unto the grave"]
+    assert placement_suspect(parts, _chunks(r0, r1)) is None
+
+
+def test_placement_suspect_none_on_missing_or_degenerate_refs():
+    parts = ["some text here with many content words present", "other half"]
+    assert placement_suspect(parts, _chunks("", "")) is None
+    assert placement_suspect(parts, _chunks(MATN_REF, MATN_REF)) is None
+
+
+def test_placement_suspect_flags_weak_single_dump():
+    # Sarwar-abridgement class (al-kafi 1:2:20:1): one part, matches nothing.
+    text = ("a completely different summary sentence discussing jurisprudence "
+            "rulings and permissibility matters generally")
+    reason = placement_suspect([text, ""], _chunks(ISNAD_REF, MATN_REF))
+    assert reason is not None
+    assert "abridged" in reason
+
+
+def test_placement_suspect_allows_strong_single_dump():
+    # Single part that clearly matches its own slot must NOT be flagged.
+    text = "Muhammad ibn Yahya from Ahmad ibn Muhammad ibn Isa from Ali ibn Hadid from Murazim"
+    assert placement_suspect([text, ""], _chunks(ISNAD_REF, MATN_REF)) is None
