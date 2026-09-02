@@ -8,6 +8,7 @@ import pytest
 from app.pipeline_cli.chunk_alignment_phase import (
     _alignment_schema,
     attach_prefix,
+    best_effort_split,
     fix_single_dump,
     placement_suspect,
     reslice_from_original,
@@ -487,3 +488,54 @@ def test_placement_suspect_allows_strong_single_dump():
     # Single part that clearly matches its own slot must NOT be flagged.
     text = "Muhammad ibn Yahya from Ahmad ibn Muhammad ibn Isa from Ali ibn Hadid from Murazim"
     assert placement_suspect([text, ""], _chunks(ISNAD_REF, MATN_REF)) is None
+
+
+# -- best-effort split (deterministic DP over sentences x chunk references) --
+
+def test_best_effort_split_empties_omitted_isnad():
+    # Sarwar class: translation omits the chain entirely; one matn sentence.
+    text = ("There is nothing about lawful and unlawful matters that has been "
+            "left without a rule in the Quran which clarifies everything.")
+    out = best_effort_split(text, _chunks(ISNAD_REF, MATN_REF))
+    assert out is not None
+    assert out[0] == ""                      # isnad stays empty
+    assert out[1] == text
+    assert "".join(out) == text
+
+
+def test_best_effort_split_distributes_multiple_sentences():
+    r_chain = "Ali ibn Muhammad reported from al-Hasan from Ibrahim ibn Muhammad"
+    r_battle = ("rise to fight the enemy before they overwhelm you your hands "
+                "weakened occupied minds unavailing things preparedness war")
+    r_ashath = ("al-Ashath ibn Qais al-Kindi stood and asked why he did not do "
+                "what Uthman ibn Affan did granting favours compromising")
+    text = ("Ali ibn Muhammad reported to me from al-Hasan, from Ibrahim ibn "
+            "Muhammad. Rise to fight the enemy before they overwhelm you, for "
+            "your hands are weakened by unavailing things. Then al-Ashath ibn "
+            "Qais al-Kindi stood up and asked why he did not do what Uthman "
+            "ibn Affan did.")
+    out = best_effort_split(text, _chunks(r_chain, r_battle, r_ashath))
+    assert out is not None
+    assert "".join(out) == text
+    assert "Ali ibn Muhammad reported" in out[0]
+    assert "Rise to fight" in out[1]
+    assert "al-Ashath" in out[2]
+
+
+def test_best_effort_split_none_without_signal():
+    text = "Completely unrelated words about gardening and carpentry hobbies."
+    assert best_effort_split(text, _chunks(ISNAD_REF, MATN_REF)) is None
+
+
+def test_best_effort_split_none_on_degenerate_refs():
+    text = "Some sentence here. Another sentence there."
+    assert best_effort_split(text, _chunks(MATN_REF, MATN_REF)) is None
+
+
+def test_best_effort_split_lossless_on_odd_whitespace():
+    text = ("First sentence matching the chain: Ali ibn Muhammad reported."
+            + "\n\n"
+            + "  Second one: nothing lawful was left without a rule in the Quran. ")
+    out = best_effort_split(text, _chunks(ISNAD_REF, MATN_REF))
+    assert out is not None
+    assert "".join(out) == text

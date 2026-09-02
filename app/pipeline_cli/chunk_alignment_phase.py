@@ -239,6 +239,88 @@ def placement_suspect(parts: List[str], chunks: List[dict]) -> Optional[str]:
     return None
 
 
+# ── best-effort split (deterministic, for placement-suspect alignments) ─────
+#
+# When the model's placement fails the gate (off-by-one shift, or an abridged
+# translation dumped into one slot), don't give up: sentence-split the
+# translation and assign contiguous sentence runs to chunks by reference
+# similarity with an order-preserving DP. Chunks with no matching text (an
+# omitted isnad, abridged-away passages) stay EMPTY. Parts are literal slices
+# of the original, so the strict validator passes by construction. Returns
+# None only when there is no similarity signal at all to place anything by.
+
+# Sentence boundary: terminal punctuation (optionally + closing quote), then
+# whitespace. Fixed-width lookbehind branches (Python `re` requirement).
+_SENT_BREAK = re.compile(
+    r'(?:(?<=[.!?؟…])|(?<=[.!?؟…]["”’]))\s+')
+
+
+def _sentence_spans(text: str) -> List[Tuple[int, int]]:
+    """Spans covering the whole text (slices rejoin to it exactly)."""
+    spans = []
+    start = 0
+    for m in _SENT_BREAK.finditer(text):
+        spans.append((start, m.end()))
+        start = m.end()
+    if start < len(text):
+        spans.append((start, len(text)))
+    return spans
+
+
+def best_effort_split(scraped_text: str, chunks: List[dict]) -> Optional[List[str]]:
+    """Order-preserving optimal assignment of sentences to chunks.
+
+    dp[j][i] = best score with the first i sentences distributed over the
+    first j chunks; each chunk takes a (possibly empty) contiguous run.
+    Score = Σ jaccard(sentence words, chunk reference words).
+    """
+    n = len(chunks)
+    refs = [_content_words(c.get("en_ref") or "") for c in chunks]
+    if n < 2 or len({frozenset(r) for r in refs if r}) < 2:
+        return None
+    spans = _sentence_spans(scraped_text)
+    s = len(spans)
+    if s == 0:
+        return None
+    sent_words = [_content_words(scraped_text[a:b]) for a, b in spans]
+    sim = [[_jaccard(w, r) for r in refs] for w in sent_words]
+    # Signal requirement: a single incidentally-shared word is not evidence of
+    # placement — some sentence must share >= 2 content words with some ref.
+    if not any(len(w & r) >= 2 for w in sent_words for r in refs):
+        return None  # nothing to place anything by
+
+    NEG = float("-inf")
+    dp = [[NEG] * (s + 1) for _ in range(n + 1)]
+    dp[0][0] = 0.0
+    back: Dict[Tuple[int, int], int] = {}
+    for j in range(1, n + 1):
+        for i in range(s + 1):
+            best, arg = NEG, -1
+            run = 0.0
+            for k in range(i, -1, -1):  # chunk j-1 takes sentences [k, i)
+                if k < i:
+                    run += sim[k][j - 1]
+                if dp[j - 1][k] > NEG and dp[j - 1][k] + run > best:
+                    best, arg = dp[j - 1][k] + run, k
+            if arg >= 0:
+                dp[j][i] = best
+                back[(j, i)] = arg
+    if dp[n][s] <= 0.0:
+        return None
+
+    cuts = [s]
+    i = s
+    for j in range(n, 0, -1):
+        i = back[(j, i)]
+        cuts.append(i)
+    cuts.reverse()  # cuts[j] = first sentence of chunk j
+    parts = []
+    for j in range(n):
+        a, b = cuts[j], cuts[j + 1]
+        parts.append(scraped_text[spans[a][0]:spans[b - 1][1]] if a < b else "")
+    return parts
+
+
 # ── cut-point salvage (reslice the ORIGINAL at model-implied boundaries) ────
 #
 # Pilot2 taxonomy (2026-08-20, 95/1189 quarantined): the model reliably finds
@@ -554,6 +636,12 @@ async def _align_one(
                 parts = fix_single_dump(parts, chunks)
                 suspect = placement_suspect(parts, chunks)
                 if suspect:
+                    # Best effort instead of giving up: re-split the original
+                    # by reference similarity (omitted segments stay empty —
+                    # e.g. an isnad the translator skipped).
+                    bev = best_effort_split(scraped_text, chunks)
+                    if bev is not None and validate_alignment(bev, scraped_text)[0]:
+                        return bev, ""
                     last_reason = suspect
                     continue  # fresh sample sometimes places correctly
             return parts, ""
