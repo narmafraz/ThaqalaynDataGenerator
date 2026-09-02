@@ -399,10 +399,12 @@ def reslice_from_original(parts: List[str], original: str) -> Optional[List[str]
         return len(a)
 
     cuts = [0]
+    prev_apos = 0  # monotonicity must be checked in fold coordinates
     for bpos in bounds:
         apos = b_to_a(bpos)
-        if apos is None or apos < cuts[-1]:
+        if apos is None or apos < prev_apos:
             return None
+        prev_apos = apos
         # a-coordinate → index into the original string (start of that char).
         cuts.append(a_idx[apos] if apos < len(a_idx) else len(original))
     cuts.append(len(original))
@@ -629,6 +631,13 @@ async def _align_one(
                     parts, ok = resliced, True
                 else:
                     reason = f"{reason}; reslice failed too: {reason2[:80]}"
+            if not ok:
+                # Last resort: the model dropped whole spans (long texts) or
+                # the boundary neighborhood is unrecoverable. Re-split the
+                # ORIGINAL by reference similarity instead.
+                bev = best_effort_split(scraped_text, chunks)
+                if bev is not None and validate_alignment(bev, scraped_text)[0]:
+                    parts, ok = bev, True
         if ok:
             # Placement accuracy gate (skipped for transliterations — no
             # English content words to judge by).

@@ -539,3 +539,24 @@ def test_best_effort_split_lossless_on_odd_whitespace():
     out = best_effort_split(text, _chunks(ISNAD_REF, MATN_REF))
     assert out is not None
     assert "".join(out) == text
+
+
+def test_reslice_multi_part_with_whitespace_regression():
+    # Regression: boundary monotonicity was checked across mixed coordinate
+    # spaces (fold vs original), so any multi-boundary text with accumulated
+    # whitespace falsely returned None (pilot cases al-amali-mufid 33:6,
+    # al-kafi 1:1:1:12). Must reslice successfully with 4 parts.
+    original = ('He said:  "The first ruling stands."   Then the people '
+                'gathered  around him.  He recited: "Patience is the key."  '
+                'And they departed  to their homes quietly.  The end came '
+                'after  the third night watch.')
+    model_parts = [  # model dropped the quote marks in two places
+        'He said: The first ruling stands.',
+        'Then the people gathered around him.',
+        'He recited: Patience is the key. And they departed to their homes quietly.',
+        'The end came after the third night watch.',
+    ]
+    out = reslice_from_original(model_parts, original)
+    assert out is not None, "reslice must handle multi-part whitespace texts"
+    assert "".join(out) == original
+    assert validate_alignment(out, original)[0]
