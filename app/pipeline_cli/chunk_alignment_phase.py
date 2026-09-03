@@ -220,6 +220,21 @@ def placement_suspect(parts: List[str], chunks: List[dict]) -> Optional[str]:
             return ("placement suspect: single part matches its own segment "
                     f"weakly ({_jaccard(pw, refs[placed]):.2f}) — abridged "
                     "translation with no faithful chunk mapping")
+    # Global mismatch: no part matches ANY reference — the scraped text isn't
+    # a translation of this verse at all (seen in round 2: Sarwar texts
+    # attached with an off-by-one hadith number, and title-stub "translations"
+    # like nahj 1:110's two-word entry). Interleaving mismatched text under
+    # the Arabic would be actively misleading; keep the flat view.
+    all_pw = [_content_words(p) for p in parts]
+    if any(all_pw):
+        best_any = max(
+            (_jaccard(pw, r) for pw in all_pw if pw for r in refs if r),
+            default=0.0)
+        if best_any < 0.05:
+            return ("placement suspect: no part matches any segment reference "
+                    f"(best {best_any:.2f}) — translation likely does not "
+                    "belong to this verse (source misattachment or stub)")
+
     suspects = []
     for i, p in enumerate(parts):
         pw = _content_words(p)
@@ -645,6 +660,10 @@ async def _align_one(
                 parts = fix_single_dump(parts, chunks)
                 suspect = placement_suspect(parts, chunks)
                 if suspect:
+                    if "does not belong" in suspect:
+                        # Wrong-verse text / stub: no split can fix this —
+                        # quarantine so the flat view (only) shows it.
+                        return None, suspect
                     # Best effort instead of giving up: re-split the original
                     # by reference similarity (omitted segments stay empty —
                     # e.g. an isnad the translator skipped).

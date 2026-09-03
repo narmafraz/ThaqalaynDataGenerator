@@ -560,3 +560,22 @@ def test_reslice_multi_part_with_whitespace_regression():
     assert out is not None, "reslice must handle multi-part whitespace texts"
     assert "".join(out) == original
     assert validate_alignment(out, original)[0]
+
+
+def test_placement_suspect_flags_global_mismatch():
+    # Round-2 class: scraped text attached to the wrong verse (off-by-one
+    # hadith numbering) - no part matches ANY reference.
+    parts = ["Ali has narrated from abu Ahmad ibn Rashid who requested camels.",
+             "He then said take it and grant us pardon before the journey."]
+    reason = placement_suspect(parts, _chunks(
+        "Proceed for there is no fear upon you if Allah so wills",
+        "So they proceeded safely and all praise belongs to Allah"))
+    assert reason is not None
+    assert "does not belong" in reason
+
+
+def test_placement_suspect_global_mismatch_allows_partial_match():
+    # A translation matching at least one segment must NOT be globally flagged.
+    parts = ["Muhammad ibn Yahya narrated from Ahmad ibn Muhammad ibn Isa.",
+             "totally free paraphrase here about something else entirely"]
+    assert placement_suspect(parts, _chunks(ISNAD_REF, MATN_REF)) is None
