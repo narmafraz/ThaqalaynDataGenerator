@@ -52,9 +52,10 @@ def test_make_attribution_shape(merger):
     a = merger.make_attribution("qwen36-35b-heretic")
     assert a["model"] == "qwen36-35b-heretic"
     assert a["pipeline_version"] == merger.PIPELINE_VERSION
-    # ISO 8601 date
-    assert len(a["generated_date"]) == 10
-    assert a["generated_date"].count("-") == 2
+    # No per-file date: the build timestamp lives once in
+    # index/words_version.json (see build_word_indexes.py). A per-file
+    # generated_date churned all ~113K pages on every rerun.
+    assert "generated_date" not in a
 
 
 # ────────────────── is_valid_response ──────────────────

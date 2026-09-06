@@ -35,7 +35,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
 import logging
 import sys
@@ -48,9 +47,14 @@ PIPELINE_VERSION = "words.translation.v1.spark"
 
 
 def make_attribution(model_name: str) -> dict:
+    # No per-file date. A single build timestamp lives in
+    # ThaqalaynWords/index/words_version.json (written by
+    # build_word_indexes.py), mirroring the data project's
+    # index/data_version.json. A per-file `generated_date` meant every
+    # rerun rewrote all ~113K pages with today's date even when nothing
+    # else changed — pure churn that broke rebuild idempotency.
     return {
         "model": model_name,
-        "generated_date": datetime.date.today().isoformat(),
         "pipeline_version": PIPELINE_VERSION,
     }
 

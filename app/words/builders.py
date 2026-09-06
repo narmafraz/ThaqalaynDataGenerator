@@ -179,18 +179,22 @@ def canonical_diacritized_lemma(lex: str, pos: str = "verb") -> str:
     base_pos = _strip_pos_dot_suffix(pos) or "verb"
 
     if base_pos == "verb":
-        # Find the past_3ms entry in the role-tagged paradigm.
-        for entry in paradigm_by_role(lex, pos=base_pos):
-            if entry.get("role") == "past_3ms":
-                d = entry.get("diacritized")
-                if d:
-                    return slug(d)
-        # If past_3ms missing (rare), fall back to any tagged form.
         roles = paradigm_by_role(lex, pos=base_pos)
-        if roles:
-            d = roles[0].get("diacritized")
-            if d:
-                return slug(d)
+        # past_3ms is the citation form. Several analyses can yield more
+        # than one diacritized past_3ms variant; pick the lexicographically
+        # smallest so the choice is deterministic across process runs
+        # (paradigm_by_role's underlying generator order is hash-randomized).
+        past_3ms = sorted(
+            slug(e["diacritized"])
+            for e in roles
+            if e.get("role") == "past_3ms" and e.get("diacritized")
+        )
+        if past_3ms:
+            return past_3ms[0]
+        # If past_3ms missing (rare), fall back to the first tagged form —
+        # roles is now deterministically ordered by paradigm_by_role.
+        if roles and roles[0].get("diacritized"):
+            return slug(roles[0]["diacritized"])
     else:
         # Nouns/adj: pick the masc-singular nominative-indefinite form
         # as the standard citation form (e.g. يُسْرٌ, آبِقٌ — not يُسْرٍ,
@@ -206,29 +210,29 @@ def canonical_diacritized_lemma(lex: str, pos: str = "verb") -> str:
         #   2. any nom + indef + sg     — defective nouns (fem-only, etc.)
         #   3. any form's diac          — last-resort fallback
         raw = generate_paradigm(lex, pos=base_pos)
-        for entry in raw:
-            if (
-                entry.get("cas") == "n"
-                and entry.get("stt") == "i"
-                and entry.get("num") == "s"
-                and entry.get("gen") == "m"
-            ):
-                d = entry.get("diac")
-                if d:
-                    return slug(d)
-        for entry in raw:
-            if (
-                entry.get("cas") == "n"
-                and entry.get("stt") == "i"
-                and entry.get("num") == "s"
-            ):
-                d = entry.get("diac")
-                if d:
-                    return slug(d)
-        for entry in raw:
-            d = entry.get("diac")
-            if d:
-                return slug(d)
+
+        def _smallest_slug(pred) -> Optional[str]:
+            # Deterministic pick: smallest slug among all forms matching
+            # `pred`. generate_paradigm's order is hash-randomized across
+            # runs, so "first match wins" produced unstable lemma slugs.
+            cands = sorted(
+                slug(e["diac"]) for e in raw if e.get("diac") and pred(e)
+            )
+            return cands[0] if cands else None
+
+        result = (
+            _smallest_slug(
+                lambda e: e.get("cas") == "n" and e.get("stt") == "i"
+                and e.get("num") == "s" and e.get("gen") == "m"
+            )
+            or _smallest_slug(
+                lambda e: e.get("cas") == "n" and e.get("stt") == "i"
+                and e.get("num") == "s"
+            )
+            or _smallest_slug(lambda e: True)
+        )
+        if result:
+            return result
 
     return slug(lex)
 

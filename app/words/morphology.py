@@ -128,10 +128,30 @@ def get_best_analysis(surface_form: str) -> Optional[Dict]:
         except (TypeError, ValueError):
             return float("-inf")
 
-    # 2/3. score by lex_logprob with pos_lex_logprob tiebreaker
+    def _tiebreak(a):
+        # Deterministic final tiebreak. calima-msa-r13 leaves lex_logprob /
+        # pos_lex_logprob as None for many entries, so the two scores above
+        # frequently tie (both -inf). Without this, max() returns whichever
+        # tied analysis came first in `analyses` — and the analyzer's result
+        # order is hash-randomized across processes (PYTHONHASHSEED), which
+        # made the chosen lemma flip between rebuilds. A stable lexicographic
+        # key pins the winner regardless of input order.
+        return (
+            a.get("diac") or "",
+            a.get("lex") or "",
+            a.get("pos") or "",
+            a.get("root") or "",
+            a.get("stem") or "",
+        )
+
+    # 2/3. score by lex_logprob with pos_lex_logprob then a stable tiebreak
     return max(
         pool,
-        key=lambda a: (_logprob(a, "lex_logprob"), _logprob(a, "pos_lex_logprob")),
+        key=lambda a: (
+            _logprob(a, "lex_logprob"),
+            _logprob(a, "pos_lex_logprob"),
+            _tiebreak(a),
+        ),
     )
 
 
@@ -254,9 +274,14 @@ def paradigm_by_role(lemma: str, pos: str = "verb") -> List[Dict]:
             "mod": entry.get("mod"),
         }
 
+    # Total order: role first, then form slug. The secondary key is
+    # essential — CAMeL's generator returns forms in hash-randomized order
+    # across processes, so sorting on role alone (Python's sort is stable)
+    # would preserve that non-deterministic input order among same-role
+    # variants and reshuffle the paradigm array on every rebuild.
     return sorted(
         by_role.values(),
-        key=lambda e: _role_sort_key(e["role"]),
+        key=lambda e: (_role_sort_key(e["role"]), e["form"]),
     )
 
 

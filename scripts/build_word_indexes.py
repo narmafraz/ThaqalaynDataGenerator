@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import logging
 import sys
@@ -157,12 +158,24 @@ def main():
     with open(roots_out, "w", encoding="utf-8") as f:
         json.dump({"total": len(roots), "roots": roots},
                   f, ensure_ascii=False, separators=(",", ":"))
+    # Single build timestamp for the whole Words project — mirrors the
+    # data project's index/data_version.json. This is the ONLY per-run
+    # changing file; the per-page JSONs no longer carry a date, so a
+    # rebuild with unchanged inputs produces zero diff on them.
+    version_out = index_dir / "words_version.json"
+    version = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y%m%dT%H%M%SZ"
+    )
+    with open(version_out, "w", encoding="utf-8") as f:
+        json.dump({"version": version}, f, ensure_ascii=False)
+
     logger.info("Wrote %s (%d KB)",
                 surfaces_out, surfaces_out.stat().st_size // 1024)
     logger.info("Wrote %s (%d KB)",
                 lemmas_out, lemmas_out.stat().st_size // 1024)
     logger.info("Wrote %s (%d KB)",
                 roots_out, roots_out.stat().st_size // 1024)
+    logger.info("Wrote %s (version %s)", version_out, version)
 
 
 if __name__ == "__main__":

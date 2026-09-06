@@ -13,6 +13,14 @@ param(
 
 $Env:PYTHONPATH = "$PSScriptRoot;$PSScriptRoot/app"
 
+# Determinism: pin the hash seed so CAMeL Tools' internal set/dict-of-string
+# iteration order is stable across process runs. Combined with the explicit
+# total-order tiebreaks in app/words/morphology.py + builders.py, this makes
+# the surface/lemma/root output byte-reproducible — a rebuild with unchanged
+# inputs yields zero git diff (only index/words_version.json changes). Without
+# it, hash randomization reshuffled paradigms and flipped lemma slugs every run.
+$Env:PYTHONHASHSEED = "0"
+
 # Rebuild the ThaqalaynWords output (surfaces/, lemmas/, roots/, index/)
 # from the sources in ../ThaqalaynWordSources.
 #
