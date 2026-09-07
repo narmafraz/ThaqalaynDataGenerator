@@ -336,10 +336,28 @@ def add_content(volume: Chapter, dirname, report: ProcessingReport = None):
 def get_path(file: str) -> str:
 	return config.get_raw_path("thaqalayn_net", "Thaqalayn", "thaqalayn.net", file)
 
+def _clear_sarwar(chapter: Chapter) -> None:
+	"""Remove existing Sarwar attachments before re-attaching.
+
+	add_kafi_sarwar loads the PREVIOUS build's complete/al-kafi.json as its
+	base, so a misattachment from an earlier run survives on any verse the
+	new (correct) pass doesn't touch — observed 2026-09-07: verse 1:4:117:7
+	kept the pre-fix run's stale '6.' after the fixed code attached 1..6
+	correctly. Sarwar is the only source writing en.sarwar, so clearing is
+	lossless.
+	"""
+	for v in chapter.verses or []:
+		if v.translations:
+			v.translations.pop(SARWAR_TRANSLATION_ID, None)
+	for sub in chapter.chapters or []:
+		_clear_sarwar(sub)
+
+
 def add_kafi_sarwar(report: ProcessingReport = None):
 	if report is None:
 		report = get_default_report()
 	kafi = load_chapter("/books/complete/al-kafi")
+	_clear_sarwar(kafi)
 	add_content(kafi.chapters[0], get_path(os.path.join("chapter", "1")), report)
 	add_content(kafi.chapters[1], get_path(os.path.join("chapter", "2")), report)
 	add_content(kafi.chapters[2], get_path(os.path.join("chapter", "3")), report)
