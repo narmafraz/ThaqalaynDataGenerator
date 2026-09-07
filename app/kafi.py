@@ -21,8 +21,22 @@ from app.lib_db import insert_chapter, write_file
 from app.lib_model import ProcessingReport, SEQUENCE_ERRORS, get_default_report, set_index
 from app.models import Chapter, Crumb, Language, PartType, Translation, Verse
 
+def _clean_title(text):
+    """Titles are plain-text navigation labels. hubeali's chapter headings
+    carry decorative first-letter markup (<span class="first-in-scene">ب
+    </span>َابُ…) and two v8 titles are hardcoded as HTML entities; both
+    leaked verbatim into 221 index/chapter titles (found 2026-09-07 via the
+    words-corpus junk-surface audit). Strip markup / decode entities here —
+    the single funnel for every title assignment. Verse TEXT is untouched
+    (its <sup> honorifics are intentional)."""
+    if not text or ("<" not in text and "&#" not in text):
+        return text
+    from bs4 import BeautifulSoup
+    return BeautifulSoup(text, "html.parser").get_text()
+
+
 def set_titles_and_index(chapter: Chapter, titles: Dict[str, str]) -> None:
-    chapter.titles = titles
+    chapter.titles = {k: _clean_title(v) for k, v in titles.items()}
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

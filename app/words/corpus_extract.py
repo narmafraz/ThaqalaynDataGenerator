@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import string
 from collections import defaultdict
 from pathlib import Path
@@ -85,6 +86,13 @@ def tokenize_chunk_text(arabic_text: str) -> List[str]:
     """
     if not arabic_text:
         return []
+    # Strip inline markup BEFORE splitting: hubeali text carries decorative
+    # spans (<span class="first-in-scene">ب</span>َابُ) and honorific <sup>
+    # tags. Tokenizing the raw string minted junk surface pages like
+    # "class=_first-in-scene__ف__span_..." (6 live pages, found 2026-09-07).
+    # Tag removal rejoins split letters correctly: <span>ب</span>َابُ → بَابُ.
+    if "<" in arabic_text:
+        arabic_text = re.sub(r"<[^>]+>", "", arabic_text)
     out = []
     for tok in arabic_text.split():
         cleaned = tok.strip(_TRIM_CHARS)

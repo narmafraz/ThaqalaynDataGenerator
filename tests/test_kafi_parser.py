@@ -304,3 +304,29 @@ class TestKafiConstants:
         assert V8_HADITH_TITLE_PATTERN.match("H 1234")
         assert V8_HADITH_TITLE_PATTERN.match("H 5")
         assert not V8_HADITH_TITLE_PATTERN.match("Some other text")
+
+
+class TestCleanTitle:
+    def test_strips_decorative_spans_and_rejoins(self):
+        from app.kafi import _clean_title
+        raw = ('<span class="first-scene-phrase"><span class="first-in-scene">'
+               'ب</span>َابُ العقل</span>')
+        out = _clean_title(raw)
+        assert "<" not in out and out.startswith("بَ")
+
+    def test_decodes_entities(self):
+        from app.kafi import _clean_title
+        assert _clean_title("&#1603;&#1578;&#1575;&#1576;") == "كتاب"
+
+    def test_plain_text_untouched(self):
+        from app.kafi import _clean_title
+        assert _clean_title("The Book of Intellect") == "The Book of Intellect"
+        assert _clean_title(None) is None
+
+    def test_funnel_applies_cleaning(self):
+        from app.kafi import set_titles_and_index
+        from app.models import Chapter
+        ch = Chapter()
+        set_titles_and_index(ch, {"ar": "<span>ب</span>اب", "en": "Chapter"})
+        assert ch.titles["ar"] == "باب"
+        assert ch.titles["en"] == "Chapter"

@@ -214,3 +214,15 @@ class TestSummaryStats:
         assert stats["min_freq"] == 1
         assert stats["surfaces_appearing_once"] == 1
         assert stats["surfaces_appearing_10_plus"] == 1
+
+
+def test_tokenize_strips_inline_markup():
+    # hubeali decorative spans + honorific sup tags must not mint junk
+    # surfaces; the split first letter rejoins with its word.
+    text = ('<span class="first-scene-phrase"><span class="first-in-scene">'
+            'ب</span>َابُ العقل</span>'
+            ' قال<sup>asws</sup>')
+    from app.words.corpus_extract import tokenize_chunk_text
+    toks = tokenize_chunk_text(text)
+    assert all("<" not in t and "class" not in t and "span" not in t for t in toks)
+    assert toks[0].startswith("ب")  # rejoined بَابُ
