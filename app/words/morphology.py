@@ -121,37 +121,59 @@ def get_best_analysis(surface_form: str) -> Optional[Dict]:
     exact_diac = [a for a in analyses if slug(a.get("diac", "")) == target_diac]
     pool = exact_diac if exact_diac else analyses
 
-    def _logprob(a, key):
+    # 2..5. principled preference chain, then a stable lexicographic backstop
+    return max(pool, key=analysis_preference_key)
+
+
+# POS preference when probabilities tie (calima-msa-r13 leaves lex_logprob /
+# pos_lex_logprob as None for ~59% of surfaces, so ties are the COMMON case).
+# Content readings outrank function-word and junk readings: the July failure
+# class linked verb surfaces (أَخَّرَهُ "he delayed it") to unrelated nominal
+# lemmas (آخَر "other") purely because of the old alphabetical backstop.
+_POS_PRIORITY = {
+    "verb": 0, "noun": 1, "adj": 2, "noun_prop": 3, "adj_comp": 4,
+    "noun_num": 5, "adv": 6, "pron": 7, "prep": 8, "conj": 9, "part": 10,
+    "interj": 11, "abbrev": 12, "digit": 13, "latin": 14, "punc": 15,
+}
+
+
+def analysis_preference_key(a: Dict) -> tuple:
+    """Sort key for choosing among a surface's analyses (used with max()).
+
+    Preference order (each stage only decides when earlier stages tie):
+
+    1. ``lex_logprob``            — corpus probability of (surface, lex, pos)
+    2. ``pos_lex_logprob``        — fallback probability
+    3. POS priority               — content readings (verb/noun/adj) over
+                                    function-word and junk readings
+    4. shorter lemma (``lex``)    — simpler citation forms win: prefers the
+                                    singular آخَر over the dual آخَرَيْنِ,
+                                    fixing the slug-identity flips from the
+                                    2026-07-05 regen churn
+    5. lexicographic backstop     — full determinism regardless of the
+                                    analyzer's hash-randomized result order
+    """
+    def _logprob(key):
         v = a.get(key)
         try:
             return float(v)
         except (TypeError, ValueError):
             return float("-inf")
 
-    def _tiebreak(a):
-        # Deterministic final tiebreak. calima-msa-r13 leaves lex_logprob /
-        # pos_lex_logprob as None for many entries, so the two scores above
-        # frequently tie (both -inf). Without this, max() returns whichever
-        # tied analysis came first in `analyses` — and the analyzer's result
-        # order is hash-randomized across processes (PYTHONHASHSEED), which
-        # made the chosen lemma flip between rebuilds. A stable lexicographic
-        # key pins the winner regardless of input order.
-        return (
-            a.get("diac") or "",
-            a.get("lex") or "",
-            a.get("pos") or "",
-            a.get("root") or "",
-            a.get("stem") or "",
-        )
-
-    # 2/3. score by lex_logprob with pos_lex_logprob then a stable tiebreak
-    return max(
-        pool,
-        key=lambda a: (
-            _logprob(a, "lex_logprob"),
-            _logprob(a, "pos_lex_logprob"),
-            _tiebreak(a),
-        ),
+    lex = a.get("lex") or ""
+    pos_rank = _POS_PRIORITY.get((a.get("pos") or "").lower(), 20)
+    return (
+        _logprob("lex_logprob"),
+        _logprob("pos_lex_logprob"),
+        -pos_rank,          # max() ⇒ negate: lower rank number wins
+        -len(lex),          # max() ⇒ negate: shorter lemma wins
+        # stable backstop (inverted lexicographic is unnecessary — any total
+        # order works; keep natural order for readability)
+        a.get("diac") or "",
+        lex,
+        a.get("pos") or "",
+        a.get("root") or "",
+        a.get("stem") or "",
     )
 
 

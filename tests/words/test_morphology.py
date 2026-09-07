@@ -16,6 +16,7 @@ from app.words.morphology import (  # noqa: E402
     extract_lemma,
     extract_root,
     generate_paradigm,
+    analysis_preference_key,
     get_best_analysis,
     measure_coverage,
     paradigm_by_role,
@@ -219,3 +220,35 @@ class TestMeasureCoverage:
             "coverage": 0.0,
             "avg_analyses_per_form": 0.0,
         }
+
+
+class TestAnalysisPreferenceKey:
+    """Principled tiebreak chain (SPARK item 10, decision A)."""
+
+    def _pick(self, analyses):
+        return max(analyses, key=analysis_preference_key)
+
+    def test_logprob_still_dominates(self):
+        a = {"lex": "aaa", "pos": "punc", "lex_logprob": -1.0}
+        b = {"lex": "zzz", "pos": "verb", "lex_logprob": -5.0}
+        assert self._pick([a, b]) is a
+
+    def test_pos_priority_on_probability_tie(self):
+        # The July failure class: verb reading must beat a nominal reading
+        # when probabilities are absent (both None -> tie).
+        verb = {"lex": "أخّر", "pos": "verb"}
+        noun = {"lex": "آخر", "pos": "adj"}
+        assert self._pick([noun, verb]) is verb
+        assert self._pick([verb, noun]) is verb  # order-independent
+
+    def test_shorter_lemma_wins_within_same_pos(self):
+        # Prefers singular citation forms over dual/plural variants.
+        dual = {"lex": "آخرين", "pos": "noun"}
+        sing = {"lex": "آخر", "pos": "noun"}
+        assert self._pick([dual, sing]) is sing
+        assert self._pick([sing, dual]) is sing
+
+    def test_fully_deterministic_backstop(self):
+        a = {"lex": "كتب", "pos": "noun", "diac": "A"}
+        b = {"lex": "كتب", "pos": "noun", "diac": "B"}
+        assert self._pick([a, b]) is self._pick([b, a])
