@@ -1,479 +1,318 @@
-"""Translate Arabic chapter titles to English using claude -p.
+"""Chapter/book title translation into the 10 non-English UI languages
+(SPARK_AI_CONTENT_ROADMAP item 5).
+
+Reads `index/books.en.json` (+ Arabic anchors from `books.ar.json`) and
+produces `index/books.{lang}.json` files in the same shape, via batched
+Spark/Qwen calls with a strict JSON schema. Durable + resumable: every batch
+response is persisted under
+`ThaqalaynDataSources/ai-content/chapter-titles/{lang}/batch_{i:04d}.json`
+and skipped on re-run (delete a file to redo it).
 
 Usage:
-    # Step 1: Extract titles that need translation
-    python scripts/translate_chapter_titles.py extract
-
-    # Step 2: Review the prompt (printed to stdout)
-    python scripts/translate_chapter_titles.py prompt
-
-    # Step 3: Run translation via claude -p
-    python scripts/translate_chapter_titles.py translate
-
-    # Step 4: Apply translations to the data (updates parser lookup + regenerates)
-    python scripts/translate_chapter_titles.py apply
-
-Stores translations in:
-    ThaqalaynDataSources/ai-pipeline-data/chapter_title_translations.json
+  python scripts/translate_chapter_titles.py extract
+      Build the work manifest from the built ThaqalaynData index.
+  python scripts/translate_chapter_titles.py run --langs fa,ur --sample 30
+      Translate (sample first! iterate on prompt quality before full runs).
+  python scripts/translate_chapter_titles.py run --langs all --workers 8
+      Full corpus, all 10 languages.
+  python scripts/translate_chapter_titles.py merge
+      Write index/books.{lang}.json for every language with responses.
+  python scripts/translate_chapter_titles.py report
+      Coverage/validation summary of the responses on disk.
 """
-
 import argparse
+import asyncio
+import hashlib
 import json
 import os
-import subprocess
+import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# ── Paths ──────────────────────────────────────────────────────────────────
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA = os.environ.get("DESTINATION_DIR", os.path.join(ROOT, "..", "ThaqalaynData"))
+SOURCES = os.environ.get("SOURCE_DATA_DIR", os.path.join(ROOT, "..", "ThaqalaynDataSources"))
+OUT_DIR = os.path.join(SOURCES, "ai-content", "chapter-titles")
+MANIFEST = os.path.join(OUT_DIR, "titles_manifest.json")
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_DIR = os.path.dirname(SCRIPT_DIR)  # ThaqalaynDataGenerator/
+LANGS = {
+    "ur": "Urdu", "tr": "Turkish", "fa": "Farsi (Persian)", "id": "Indonesian",
+    "bn": "Bengali", "es": "Spanish", "fr": "French", "de": "German",
+    "ru": "Russian", "zh": "Chinese (Simplified)",
+}
 
-SOURCE_DATA_DIR = os.environ.get(
-    "SOURCE_DATA_DIR",
-    os.path.join(PROJECT_DIR, "..", "ThaqalaynDataSources"),
-)
-DESTINATION_DIR = os.environ.get(
-    "DESTINATION_DIR",
-    os.path.join(PROJECT_DIR, "..", "ThaqalaynData"),
-)
+# Script sanity: expected unicode ranges per language (None = Latin-based).
+SCRIPT_RANGES = {
+    "ur": r"[؀-ۿ]", "fa": r"[؀-ۿ]",
+    "bn": r"[ঀ-৿]", "ru": r"[Ѐ-ӿ]",
+    "zh": r"[一-鿿]",
+}
 
-AI_PIPELINE_DATA_DIR = os.path.join(SOURCE_DATA_DIR, "ai-pipeline-data")
-TRANSLATIONS_FILE = os.path.join(
-    AI_PIPELINE_DATA_DIR, "chapter_title_translations.json"
-)
-PROMPT_FILE = os.path.join(SCRIPT_DIR, "chapter_title_prompt.txt")
+BATCH_SIZE = 25
 
-INDEX_AR = os.path.join(DESTINATION_DIR, "index", "books.ar.json")
-INDEX_EN = os.path.join(DESTINATION_DIR, "index", "books.en.json")
+_SYSTEM = """You are a specialist translator of Twelver Shia Islamic scholarly texts. You translate CHAPTER and BOOK TITLES from classical Shia hadith collections (al-Kafi, Tahdhib al-Ahkam, Nahj al-Balagha, etc.) into {language}.
 
-# Books whose chapters come from ghbook_parser with Arabic-only titles
-BOOKS_NEEDING_TRANSLATION = ["al-istibsar", "tahdhib-al-ahkam"]
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────
+RULES:
+- Translate each title into natural, formal {language} as used in Islamic scholarly publishing for {language}-speaking Shia communities.
+- Use the established Islamic terminology of {language}: words like salat, wudu, zakat, hajj, jihad, imam, hadith have conventional renderings in {language} — use those, do not invent new ones.
+- Keep proper nouns (names of Imams, narrators, places, book names) in their conventional {language} form; transliterate if no convention exists.
+- PERSON NAMES must be written in {language}'s own script (e.g. Chinese characters for Chinese, Cyrillic for Russian, Bengali script for Bengali). Never leave a name in Latin letters when {language} uses a different script, and never leave it in Arabic script unless {language} is written in Arabic script.
+- The ARABIC original (when given) is authoritative for meaning; the ENGLISH is a reference translation.
+- Keep titles concise — these are navigation labels, not explanations.
+- TRANSLATE EVERY WORD: never leave an English word untranslated in the output. If a term has no {language} equivalent, transliterate it into {language} script.
+- Do not add numbering, punctuation decorations, or commentary.
+- Output valid JSON only: {{"items": [{{"i": <index>, "t": "<translated title>"}}, ...]}} with exactly one item per input title, same "i" values."""
 
 
-def load_json(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
+def _load_index(name):
+    with open(os.path.join(DATA, "index", name), encoding="utf-8") as f:
         return json.load(f)
 
 
-def save_json(path: str, data: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    print(f"Wrote {path}")
-
-
-def extract_titles_needing_translation() -> dict[str, list[dict]]:
-    """Find chapters in AR index that have no real English title.
-
-    Returns {book_slug: [{path, ar_title}, ...]}
-    """
-    ar_index = load_json(INDEX_AR)
-    en_index = load_json(INDEX_EN)
-
-    by_book: dict[str, list[dict]] = {}
-
-    for path, ar_entry in ar_index.items():
-        # Only process target books
-        book_slug = None
-        for slug in BOOKS_NEEDING_TRANSLATION:
-            if path.startswith(f"/books/{slug}:"):
-                book_slug = slug
-                break
-        if not book_slug:
-            continue
-
-        # Only chapters (not Book or Volume level)
-        if ar_entry.get("part_type") != "Chapter":
-            continue
-
-        ar_title = ar_entry.get("title", "")
-        if not ar_title:
-            continue
-
-        # Check if EN index has a real translation (not just Arabic copy)
-        en_entry = en_index.get(path, {})
-        en_title = en_entry.get("title", "")
-
-        # If EN title is missing or identical to Arabic, it needs translation
-        if not en_title or en_title == ar_title:
-            by_book.setdefault(book_slug, []).append({
-                "path": path,
-                "ar_title": ar_title,
-            })
-
-    # Sort by path within each book for stable ordering
-    for slug in by_book:
-        by_book[slug].sort(key=lambda x: x["path"])
-
-    return by_book
-
-
-# ── Commands ───────────────────────────────────────────────────────────────
-
-
-def cmd_extract(args: argparse.Namespace) -> None:
-    """Extract and display titles that need translation."""
-    by_book = extract_titles_needing_translation()
-
-    total = 0
-    for slug, titles in sorted(by_book.items()):
-        print(f"\n{slug}: {len(titles)} chapters need English titles")
-        if args.verbose:
-            for t in titles[:10]:
-                print(f"  {t['path']}: {t['ar_title']}")
-            if len(titles) > 10:
-                print(f"  ... and {len(titles) - 10} more")
-        total += len(titles)
-
-    print(f"\nTotal: {total} chapter titles need translation")
-
-
-def build_prompt(by_book: dict[str, list[dict]]) -> str:
-    """Build the translation prompt for claude -p."""
-    # Collect all titles into a numbered list grouped by book
-    lines = []
-    title_index = []  # Track (number, path, ar_title) for response parsing
-
-    num = 0
-    for slug in sorted(by_book.keys()):
-        titles = by_book[slug]
-        lines.append(f"\n## {slug}")
-        for t in titles:
-            num += 1
-            ar = t["ar_title"]
-            lines.append(f"{num}. {ar}")
-            title_index.append((num, t["path"], ar))
-
-    numbered_titles = "\n".join(lines)
-
-    prompt = f"""You are a specialist in Twelver Shia Islamic scholarly texts. Translate the following Arabic chapter titles ("bab" headings) from two of the Four Books (al-Kutub al-Arba'a) of Shia hadith: al-Istibsar and Tahdhib al-Ahkam, both by Shaykh al-Tusi.
-
-## Context
-
-These are chapter headings from classical Shia jurisprudence (fiqh) collections. The text is in classical Arabic (fusha qadima) — vocabulary and syntax differ from Modern Standard Arabic. Be faithful to Shia scholarly tradition in terminology and interpretation. These books cover Shia fiqh rulings on worship, transactions, marriage, inheritance, criminal law, and other topics specific to Ja'fari jurisprudence.
-
-## Instructions
-
-1. Each title follows the pattern: `NUMBER- بَابُ TOPIC` (or `NUMBER - بَابُ TOPIC`).
-2. Translate only the topic part after "باب". Render the result as: `Chapter on ...` or `Chapter of ...`.
-3. Preserve the original Arabic number prefix exactly as-is (e.g., "1-", "47-", "129-"). Place it before "Chapter": `1- Chapter of ...`.
-4. For titles without "باب" (e.g., section headers like "أَبْوَابُ الزِّيَادَاتِ" or introductions like "تمهيد"), translate them naturally (e.g., "Supplementary Chapters on...", "Introduction").
-5. Use established Islamic terminology — do not translate terms that have standard transliterations:
-   - صلاة = salat (prayer)
-   - وضوء = wudu (ablution)
-   - غسل = ghusl (ritual bath)
-   - زكاة = zakat
-   - خمس = khums (one-fifth tax)
-   - حج = hajj
-   - صوم = sawm (fasting)
-   - جنابة = janaba (major ritual impurity)
-   - تيمّم = tayammum (dry ablution)
-   - نكاح = marriage
-   - طلاق = divorce
-   - ميراث = inheritance
-   - حدود = hudud (legal punishments)
-   - قصاص = qisas (retribution)
-   - ديات = diyat (blood money)
-   - متعة = mut'a (temporary marriage)
-   - تقيّة = taqiyya (precautionary dissimulation)
-   - إمام = Imam (when referring to the Twelve Imams)
-6. Transliterate proper names — do not translate them (e.g., "مِنًى" = "Mina", "عَرَفَات" = "Arafat", "الكوفة" = "Kufa"). Preserve honorifics conceptually but do not include them in the title.
-7. Aim for concise, readable English. If the Arabic is very long (a full sentence describing a legal scenario), condense the legal issue while keeping the key terms.
-8. This is classical Arabic — note that some words have different meanings than in MSA.
-
-## Style reference (from Al-Kafi chapter titles in the same project)
-
-بَابُ فَرْضِ الْعِلْمِ وَ وُجُوبِ طَلَبِهِ وَ الْحَثِّ عَلَيْهِ => 1- Chapter on the Obligation of Knowledge, the Duty to Seek It, and the Urging Upon It
-بَابُ النَّهْيِ عَنِ الْقَوْلِ بِغَيْرِ عِلْمٍ => 11- Chapter on the Forbiddance of Speaking Without Knowledge
-بَابُ التَّقْلِيدِ => 18- Chapter on Taqlid (Emulation)
-بَابُ النَّوَادِرِ => 16- The Miscellaneous
-
-## Output format
-
-Return one translation per line, matching the input numbering. No JSON, no extra text, no blank lines.
-
-1. 1- Chapter on the Amount of Water That Is Not Made Impure by Anything
-2. 10- Chapter on ...
-3. 121- Chapter on ...
-
-## Titles to translate ({num} total)
-{numbered_titles}
-"""
-    return prompt, title_index
-
-
-def cmd_prompt(args: argparse.Namespace) -> None:
-    """Build and display the prompt without running it."""
-    by_book = extract_titles_needing_translation()
-    if not by_book:
-        print("No titles need translation.")
-        return
-
-    prompt, title_index = build_prompt(by_book)
-
-    # Save prompt to file for review
-    with open(PROMPT_FILE, "w", encoding="utf-8") as f:
-        f.write(prompt)
-
-    total = sum(len(v) for v in by_book.values())
-    print(f"Prompt saved to: {PROMPT_FILE}")
-    print(f"Titles to translate: {total}")
-    print(f"Prompt length: {len(prompt):,} characters (~{len(prompt) // 4:,} tokens)")
-    print(f"\nPreview (first 80 lines):\n")
-    for line in prompt.split("\n")[:80]:
-        print(line)
-    if prompt.count("\n") > 80:
-        print(f"\n... ({prompt.count(chr(10)) - 80} more lines, see {PROMPT_FILE})")
-
-
-def run_claude_p(prompt: str, model: str = "sonnet") -> str:
-    """Run claude -p with a prompt, handling Windows encoding issues.
-
-    Returns the response text.
-    """
-    proc = subprocess.Popen(
-        ["claude", "-p", "--output-format", "json", "--model", model],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout_bytes, stderr_bytes = proc.communicate(
-        input=prompt.encode("utf-8"),
-        timeout=900,  # 15 minute timeout per batch
-    )
-    stdout_text = stdout_bytes.decode("utf-8", errors="replace")
-    stderr_text = stderr_bytes.decode("utf-8", errors="replace")
-
-    if proc.returncode != 0:
-        print(f"claude -p failed (exit code {proc.returncode}):")
-        print(stderr_text)
-        raise RuntimeError("claude -p failed")
-
-    # Parse claude's JSON output wrapper
+def cmd_extract(_args):
+    en = _load_index("books.en.json")
     try:
-        claude_output = json.loads(stdout_text)
-        return claude_output.get("result", stdout_text)
-    except json.JSONDecodeError:
-        return stdout_text
-
-
-def parse_line_responses(response_text: str) -> dict[int, str]:
-    """Parse line-by-line output: 'N. translation text' -> {N: text}."""
-    import re
-    results = {}
-    for line in response_text.strip().split("\n"):
-        line = line.strip()
-        if not line:
+        ar = _load_index("books.ar.json")
+    except FileNotFoundError:
+        ar = {}
+    items = []
+    for path, entry in sorted(en.items()):
+        title = (entry or {}).get("title")
+        if not title or not str(title).strip():
             continue
-        m = re.match(r"^(\d+)\.\s+(.+)$", line)
-        if m:
-            results[int(m.group(1))] = m.group(2)
-    return results
+        items.append({
+            "path": path,
+            "en": str(title).strip(),
+            "ar": str((ar.get(path) or {}).get("title") or "").strip() or None,
+            "part_type": entry.get("part_type"),
+        })
+    os.makedirs(OUT_DIR, exist_ok=True)
+    with open(MANIFEST, "w", encoding="utf-8") as f:
+        json.dump({"count": len(items), "items": items}, f, ensure_ascii=False, indent=1)
+    print(f"manifest: {len(items)} titles -> {MANIFEST}")
 
 
-def cmd_translate(args: argparse.Namespace) -> None:
-    """Run translation via claude -p, one batch per book."""
-    by_book = extract_titles_needing_translation()
-    if not by_book:
-        print("No titles need translation.")
-        return
+def _schema(n):
+    return {
+        "type": "object",
+        "properties": {"items": {
+            "type": "array", "minItems": n, "maxItems": n,
+            "items": {"type": "object",
+                      "properties": {"i": {"type": "integer"}, "t": {"type": "string"}},
+                      "required": ["i", "t"], "additionalProperties": False}}},
+        "required": ["items"], "additionalProperties": False,
+    }
 
-    total = sum(len(v) for v in by_book.values())
-    model = args.model
-    print(f"Translating {total} chapter titles via claude -p --model {model}")
-    print(f"Splitting into {len(by_book)} batches (one per book)\n")
 
-    all_translations = {}
+def _build_user(batch, lang_name):
+    lines = [f"Translate these {len(batch)} titles into {lang_name}:", ""]
+    for j, it in enumerate(batch):
+        lines.append(f"[{j}] ENGLISH: {it['en']}")
+        if it.get("ar"):
+            lines.append(f"    ARABIC: {it['ar']}")
+    return "\n".join(lines)
 
-    # Load existing translations if any
-    if os.path.exists(TRANSLATIONS_FILE):
-        all_translations = load_json(TRANSLATIONS_FILE)
-        print(f"Loaded {len(all_translations)} existing translations")
 
-    for slug in sorted(by_book.keys()):
-        book_titles = {slug: by_book[slug]}
-        prompt, title_index = build_prompt(book_titles)
-        count = len(by_book[slug])
+def _validate(batch, items, lang):
+    """Return (ok, reason). Count, index coverage, non-empty, script sanity."""
+    if len(items) != len(batch):
+        return False, f"count {len(items)} != {len(batch)}"
+    seen = {it.get("i") for it in items}
+    if seen != set(range(len(batch))):
+        return False, "index coverage mismatch"
+    rng = SCRIPT_RANGES.get(lang)
+    for it in items:
+        t = (it.get("t") or "").strip()
+        if not t:
+            return False, f"empty translation at i={it.get('i')}"
+        if len(t) > 300:
+            return False, f"suspiciously long ({len(t)} chars) at i={it.get('i')}"
+        if rng:
+            if not re.search(rng, t):
+                return False, f"no {lang}-script characters at i={it.get('i')}: {t[:40]!r}"
+            # Cross-script leak: untranslated English words inside a non-Latin
+            # title (e.g. zh sample produced '真主 imposed 的...'). Isolated
+            # Latin letters/abbreviations are tolerated; word-runs are not.
+            if re.search(r"[A-Za-z]{3,}", t):
+                return False, f"latin word leaked into {lang} at i={it.get('i')}: {t[:40]!r}"
+    return True, ""
 
-        print(f"\n--- {slug}: {count} titles ---")
-        print(f"Prompt: ~{len(prompt) // 4:,} tokens")
 
-        response_text = run_claude_p(prompt, model=model)
+async def _run_lang(lang, items, workers, model):
+    from app.pipeline_cli.openai_backend import call_openai
+    from app.pipeline_cli.translation_phase import _strip_code_fences
 
-        # Save raw response
-        response_file = os.path.join(
-            SCRIPT_DIR, f"chapter_title_response_{slug}.txt"
-        )
-        with open(response_file, "w", encoding="utf-8") as f:
-            f.write(response_text)
-        print(f"Response saved to {response_file}")
+    lang_dir = os.path.join(OUT_DIR, lang)
+    os.makedirs(lang_dir, exist_ok=True)
+    batches = [items[i:i + BATCH_SIZE] for i in range(0, len(items), BATCH_SIZE)]
+    sem = asyncio.Semaphore(workers)
+    stats = {"ok": 0, "failed": 0, "skipped": 0}
 
-        # Parse
-        translations_by_num = parse_line_responses(response_text)
-
-        matched = 0
-        missing = []
-        for num, path, ar_title in title_index:
-            if num in translations_by_num:
-                all_translations[ar_title] = translations_by_num[num]
-                matched += 1
+    async def do_batch(bi, batch):
+        out_path = os.path.join(lang_dir, f"batch_{bi:04d}.json")
+        key = hashlib.sha1(json.dumps([b["path"] for b in batch]).encode()).hexdigest()[:12]
+        if os.path.exists(out_path):
+            try:
+                prev = json.load(open(out_path, encoding="utf-8"))
+                if prev.get("key") == key:
+                    stats["skipped"] += 1
+                    return
+            except Exception:
+                pass
+        async with sem:
+            system = _SYSTEM.format(language=LANGS[lang])
+            user = _build_user(batch, LANGS[lang])
+            fmt = {"type": "json_schema", "json_schema": {
+                "name": "title_translations", "schema": _schema(len(batch)), "strict": True}}
+            last = "exhausted"
+            for _attempt in range(3):
+                cr = await call_openai(system, user, model=model,
+                                       max_output_tokens=120 * len(batch) + 256,
+                                       response_format=fmt)
+                if "error" in cr:
+                    last = f"api error: {str(cr['error'])[:120]}"
+                    continue
+                try:
+                    parsed = json.loads(_strip_code_fences(cr.get("result", "")))
+                except (json.JSONDecodeError, ValueError) as e:
+                    last = f"parse: {e}"
+                    continue
+                got = parsed.get("items") or []
+                ok, reason = _validate(batch, got, lang)
+                if not ok:
+                    last = reason
+                    continue
+                by_i = {it["i"]: it["t"].strip() for it in got}
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump({"key": key, "lang": lang,
+                               "paths": [b["path"] for b in batch],
+                               "titles": [by_i[j] for j in range(len(batch))]},
+                              f, ensure_ascii=False, indent=1)
+                stats["ok"] += 1
+                return
+            # Batch exhausted (T=0 retries are deterministic). Fall back to
+            # per-title calls with a corrective instruction — a different
+            # prompt shape breaks the repeated failure.
+            titles = []
+            for it in batch:
+                one = None
+                last_r = ""
+                # Sampled retries (temperature) — T=0 repeats the exact failure.
+                for temp in (0.0, 0.6, 0.9):
+                    cr = await call_openai(
+                        _SYSTEM.format(language=LANGS[lang]) +
+                        "\n- CRITICAL: a previous attempt left English words untranslated. Every single word must be rendered in the target language/script.",
+                        _build_user([it], LANGS[lang]),
+                        model=model, max_output_tokens=400, temperature=temp,
+                        response_format={"type": "json_schema", "json_schema": {
+                            "name": "title_translations", "schema": _schema(1), "strict": True}})
+                    if "error" in cr:
+                        last_r = str(cr["error"])[:80]
+                        continue
+                    try:
+                        got = json.loads(_strip_code_fences(cr.get("result", ""))).get("items") or []
+                    except (json.JSONDecodeError, ValueError) as e:
+                        last_r = f"parse: {e}"
+                        continue
+                    ok, last_r = _validate([it], [{**got[0], "i": 0}] if got else [], lang)
+                    if ok:
+                        one = got[0]["t"].strip()
+                        break
+                if one is None:
+                    print(f"  fallback still failing [{it['en'][:40]}]: {last_r}", flush=True)
+                titles.append(one)
+            # Persist whatever succeeded; nulls fall back to the English title
+            # at merge time. One stubborn title must not cost its batch.
+            n_ok = sum(1 for t in titles if t is not None)
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump({"key": key, "lang": lang,
+                           "paths": [b["path"] for b in batch],
+                           "titles": titles}, f, ensure_ascii=False, indent=1)
+            if n_ok == len(titles):
+                stats["ok"] += 1
+                print(f"  salvaged {lang} batch {bi} via per-title fallback", flush=True)
             else:
-                missing.append((num, path, ar_title))
+                stats["failed"] += 1
+                print(f"  {lang} batch {bi}: {n_ok}/{len(titles)} salvaged; "
+                      f"last reason: {last}", flush=True)
 
-        print(f"Matched: {matched}/{count}")
-        if missing:
-            print(f"Missing: {len(missing)}")
-            for num, path, ar in missing[:5]:
-                print(f"  {num}. {path}: {ar}")
-
-    save_json(TRANSLATIONS_FILE, all_translations)
-    print(f"\nTotal: {len(all_translations)} translations saved to {TRANSLATIONS_FILE}")
-    print("Next step: run 'py scripts/translate_chapter_titles.py apply'")
+    await asyncio.gather(*(do_batch(bi, b) for bi, b in enumerate(batches)))
+    print(f"{lang}: batches ok={stats['ok']} skipped={stats['skipped']} failed={stats['failed']}")
 
 
-def cmd_apply(args: argparse.Namespace) -> None:
-    """Apply translations: update index files and chapter JSON files."""
-    if not os.path.exists(TRANSLATIONS_FILE):
-        print(f"No translations file found at {TRANSLATIONS_FILE}")
-        print("Run 'translate' command first.")
-        sys.exit(1)
+def cmd_run(args):
+    with open(MANIFEST, encoding="utf-8") as f:
+        items = json.load(f)["items"]
+    if args.sample:
+        items = items[:args.sample]
+    langs = list(LANGS) if args.langs == "all" else [l.strip() for l in args.langs.split(",")]
+    for lang in langs:
+        assert lang in LANGS, f"unknown lang {lang}"
+        print(f"=== {lang} ({LANGS[lang]}): {len(items)} titles ===", flush=True)
+        asyncio.run(_run_lang(lang, items, args.workers, args.model))
 
-    translations = load_json(TRANSLATIONS_FILE)
-    print(f"Loaded {len(translations)} translations")
 
-    # Load AR and EN indexes
-    ar_index = load_json(INDEX_AR)
-    en_index = load_json(INDEX_EN)
-
-    updated_index = 0
-    updated_files = 0
-
-    for path, ar_entry in ar_index.items():
-        # Only target books
-        book_slug = None
-        for slug in BOOKS_NEEDING_TRANSLATION:
-            if path.startswith(f"/books/{slug}:"):
-                book_slug = slug
-                break
-        if not book_slug:
+def _collect(lang):
+    lang_dir = os.path.join(OUT_DIR, lang)
+    out = {}
+    if not os.path.isdir(lang_dir):
+        return out
+    for fn in sorted(os.listdir(lang_dir)):
+        if not fn.endswith(".json"):
             continue
+        doc = json.load(open(os.path.join(lang_dir, fn), encoding="utf-8"))
+        for path, title in zip(doc["paths"], doc["titles"]):
+            if title:  # nulls = untranslatable -> English fallback at merge
+                out[path] = title
+    return out
 
-        if ar_entry.get("part_type") != "Chapter":
+
+def cmd_merge(_args):
+    en = _load_index("books.en.json")
+    for lang in LANGS:
+        got = _collect(lang)
+        if not got:
             continue
-
-        ar_title = ar_entry.get("title", "")
-        en_translation = translations.get(ar_title)
-        if not en_translation:
-            continue
-
-        # Update EN index
-        if path not in en_index:
-            en_index[path] = {}
-        en_index[path]["title"] = en_translation
-        en_index[path]["part_type"] = ar_entry.get("part_type", "Chapter")
-        if "local_index" in ar_entry:
-            en_index[path]["local_index"] = ar_entry["local_index"]
-        updated_index += 1
-
-        # Update individual chapter JSON file
-        # Path like /books/al-istibsar:1:1 -> books/al-istibsar/1/1.json
-        rel_path = path[1:]  # strip leading /
-        file_path = os.path.join(
-            DESTINATION_DIR,
-            rel_path.replace(":", "/") + ".json",
-        )
-        if os.path.exists(file_path):
-            chapter_data = load_json(file_path)
-            if "data" in chapter_data and "titles" in chapter_data["data"]:
-                chapter_data["data"]["titles"]["en"] = en_translation
-                save_json(file_path, chapter_data)
-                updated_files += 1
-
-    # Write updated EN index
-    save_json(INDEX_EN, en_index)
-
-    # Update volume/book list files (these embed chapter titles for the chapter-list view)
-    updated_list_files = 0
-    for slug in BOOKS_NEEDING_TRANSLATION:
-        # Find all volume/book list files for this slug
-        book_dir = os.path.join(DESTINATION_DIR, "books", slug)
-        if not os.path.isdir(book_dir):
-            continue
-        # Walk all JSON files that contain a chapters[] array
-        for root, dirs, files in os.walk(book_dir):
-            for fname in files:
-                if not fname.endswith(".json"):
-                    continue
-                fpath = os.path.join(root, fname)
-                data = load_json(fpath)
-                inner = data.get("data", data)
-                chapters = inner.get("chapters")
-                if not chapters or not isinstance(chapters, list):
-                    continue
-                changed = False
-                for ch in chapters:
-                    titles = ch.get("titles", {})
-                    ar_title = titles.get("ar", "")
-                    if ar_title and ar_title in translations and "en" not in titles:
-                        titles["en"] = translations[ar_title]
-                        changed = True
-                if changed:
-                    save_json(fpath, data)
-                    updated_list_files += 1
-
-    print(f"\nDone:")
-    print(f"  Updated EN index entries: {updated_index}")
-    print(f"  Updated chapter JSON files: {updated_files}")
-    print(f"  Updated volume/list files: {updated_list_files}")
+        # Full file with per-entry English fallback: the frontend's fallback
+        # machinery is per-FILE, so a translated index must never have holes.
+        out = {}
+        translated = 0
+        for path, entry in en.items():
+            e = dict(entry)
+            if path in got:
+                e["title"] = got[path]
+                translated += 1
+            out[path] = e
+        fp = os.path.join(DATA, "index", f"books.{lang}.json")
+        with open(fp, "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False)
+        print(f"books.{lang}.json: {translated}/{len(en)} translated (rest EN fallback)")
 
 
-# ── Main ───────────────────────────────────────────────────────────────────
+def cmd_report(_args):
+    with open(MANIFEST, encoding="utf-8") as f:
+        total = json.load(f)["count"]
+    for lang in LANGS:
+        got = _collect(lang)
+        print(f"{lang}: {len(got)}/{total} ({len(got)/total:.1%})")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Translate Arabic chapter titles to English"
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    # extract
-    p_extract = subparsers.add_parser(
-        "extract", help="Show titles that need translation"
-    )
-    p_extract.add_argument(
-        "-v", "--verbose", action="store_true", help="Show sample titles"
-    )
-    p_extract.set_defaults(func=cmd_extract)
-
-    # prompt
-    p_prompt = subparsers.add_parser(
-        "prompt", help="Build and display the translation prompt"
-    )
-    p_prompt.set_defaults(func=cmd_prompt)
-
-    # translate
-    p_translate = subparsers.add_parser(
-        "translate", help="Run translation via claude -p"
-    )
-    p_translate.add_argument(
-        "--model", default="sonnet",
-        help="Claude model to use (default: sonnet)",
-    )
-    p_translate.set_defaults(func=cmd_translate)
-
-    # apply
-    p_apply = subparsers.add_parser(
-        "apply", help="Apply translations to data files"
-    )
-    p_apply.set_defaults(func=cmd_apply)
-
-    args = parser.parse_args()
-    args.func(args)
+    ap = argparse.ArgumentParser()
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("extract")
+    r = sub.add_parser("run")
+    r.add_argument("--langs", default="all")
+    r.add_argument("--sample", type=int, default=0)
+    r.add_argument("--workers", type=int, default=8)
+    r.add_argument("--model", default="qwen36-fast")
+    sub.add_parser("merge")
+    sub.add_parser("report")
+    args = ap.parse_args()
+    {"extract": cmd_extract, "run": cmd_run, "merge": cmd_merge,
+     "report": cmd_report}[args.cmd](args)
 
 
 if __name__ == "__main__":
