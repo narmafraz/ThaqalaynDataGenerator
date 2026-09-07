@@ -250,8 +250,17 @@ def cmd_run(args):
     langs = list(LANGS) if args.langs == "all" else [l.strip() for l in args.langs.split(",")]
     for lang in langs:
         assert lang in LANGS, f"unknown lang {lang}"
-        print(f"=== {lang} ({LANGS[lang]}): {len(items)} titles ===", flush=True)
-        asyncio.run(_run_lang(lang, items, args.workers, args.model))
+
+    async def _run_all():
+        # One event loop for the whole run: per-language asyncio.run() calls
+        # left the shared AsyncOpenAI client's pooled connections finalizing
+        # on a closed loop ("RuntimeError: Event loop is closed" teardown
+        # noise between languages).
+        for lang in langs:
+            print(f"=== {lang} ({LANGS[lang]}): {len(items)} titles ===", flush=True)
+            await _run_lang(lang, items, args.workers, args.model)
+
+    asyncio.run(_run_all())
 
 
 def _collect(lang):
