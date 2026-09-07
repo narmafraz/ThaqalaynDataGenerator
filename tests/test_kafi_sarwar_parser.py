@@ -292,3 +292,25 @@ class TestPreambleOffsetFix:
         report = ProcessingReport()
         add_chapter_content(chapter, filepath, report=report)
         assert chapter.verses[0].translations[SARWAR_TRANSLATION_ID][0].startswith("313.")
+
+
+    def test_unnumbered_first_hadith_attaches_numbering_starts_at_two(self, tmp_path):
+        """1:4:117 class: hadith 1 is an unnumbered poetry report, so the
+        chapter's numbering starts at "2.". The unnumbered section must attach
+        to verse 1 (similarity-gated), and "2." to verse 2 - the old fallback
+        shifted everything by one."""
+        from app.kafi_sarwar import add_chapter_content
+        from app.lib_model import ProcessingReport
+
+        chapter = _make_chapter([self.AR1, self.AR2])
+        filepath = _write_sections(tmp_path, [
+            ("ولد النبي في عام الفيل",
+             "A preamble note about the birth year"),  # matches nothing -> skipped
+            (self.AR1, "Unnumbered first hadith: poetry couplet translated"),
+            (self.AR2, "2. Muhammad ibn Yahya from al-Hajjal from Hammad: in Medina"),
+        ])
+        report = ProcessingReport()
+        add_chapter_content(chapter, filepath, report=report)
+        assert chapter.verses[0].translations[SARWAR_TRANSLATION_ID][0].startswith("Unnumbered first")
+        assert chapter.verses[1].translations[SARWAR_TRANSLATION_ID][0].startswith("2.")
+        assert any("preamble" in e for e in report.sequence_errors)

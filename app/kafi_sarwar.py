@@ -144,8 +144,11 @@ def add_chapter_content(chapter: Chapter, filepath: str, hadith_index: int = 0, 
 		# volume-global.
 		section_numbers = [extract_hadith_number(en) for _, en, _ in sections]
 		numbered = [n for n in section_numbers if n is not None]
-		use_prefix = hadith_index == 0 and bool(numbered) and min(numbered) == 1
+		# min <= 2: some chapters' hadith 1 is itself unnumbered (e.g. the
+		# poetry report opening 1:4:117), so their numbering starts at "2.".
+		use_prefix = hadith_index == 0 and bool(numbered) and min(numbered) <= 2
 		hadith_verses = [v for v in verses if v.part_type == PartType.Hadith]
+		last_number = 0
 
 		site_path = sitepath_from_filepath(filepath)
 		if chapter.crumbs:
@@ -156,16 +159,24 @@ def add_chapter_content(chapter: Chapter, filepath: str, hadith_index: int = 0, 
 		for (hadith_ar, hadith_en, gradings), number in zip(sections, section_numbers):
 			if use_prefix:
 				if number is None:
-					# Chapter preamble / unnumbered note: it has no HubeAli
-					# verse to live on. Attaching it positionally is exactly
-					# the bug this mode fixes.
-					msg = (f"Skipping unnumbered Sarwar section (chapter preamble) in "
-						   f"https://thaqalayn.net/chapter/{site_path}: {hadith_en[:60]!r}")
-					logger.info(msg)
-					report.add_sequence_error(msg)
-					SEQUENCE_ERRORS.append(msg)
-					continue
+					# Unnumbered section: either a chapter preamble (no
+					# HubeAli verse to live on) or an unnumbered FIRST hadith
+					# (poetry reports, e.g. 1:4:117). Infer the next slot and
+					# let the Arabic-similarity gate below decide: a real
+					# hadith matches its verse; a preamble matches nothing.
+					inferred = last_number + 1
+					if inferred - 1 < len(hadith_verses) and 0 <= arabic_similarity(
+							hadith_ar, hadith_verses[inferred - 1].text) >= MIN_ARABIC_SIMILARITY:
+						number = inferred
+					else:
+						msg = (f"Skipping unnumbered Sarwar section (chapter preamble) in "
+							   f"https://thaqalayn.net/chapter/{site_path}: {hadith_en[:60]!r}")
+						logger.info(msg)
+						report.add_sequence_error(msg)
+						SEQUENCE_ERRORS.append(msg)
+						continue
 				target = number - 1
+				last_number = max(last_number, number)
 				hadith_index = max(hadith_index, number)
 			else:
 				target = hadith_index
