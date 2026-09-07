@@ -7,7 +7,10 @@ import os
 import pytest
 
 from app.kafi_sarwar import (
+    MIN_ARABIC_SIMILARITY,
     SARWAR_TRANSLATION_ID,
+    arabic_similarity,
+    extract_hadith_number,
     V8_HADITH_CUMSUM,
     sitepath_from_filepath,
     we_dont_care,
@@ -175,3 +178,117 @@ class TestAddChapterContent:
         add_chapter_content(chapter, filepath, report=report)
         sarwar_count = chapter.verse_translations.count(SARWAR_TRANSLATION_ID)
         assert sarwar_count == 1
+
+
+class TestHadithNumberPrefix:
+    def test_extracts_common_forms(self):
+        assert extract_hadith_number("5. Ali has narrated") == 5
+        assert extract_hadith_number(" 12. text") == 12
+        assert extract_hadith_number("3- text") == 3
+        assert extract_hadith_number("7: text") == 7
+
+    def test_none_for_unnumbered(self):
+        assert extract_hadith_number("The Holy Prophet was born on") is None
+        assert extract_hadith_number("") is None
+        assert extract_hadith_number(None) is None
+
+
+class TestArabicSimilarity:
+    def test_same_hadith_across_orthography(self):
+        # HubeAli diacritized vs thaqalayn.net plain: same hadith, high overlap.
+        a = ["مُحَمَّدُ بْنُ يَحْيَى عَنْ أَحْمَدَ بْنِ مُحَمَّدٍ عَنِ الْحَجَّالِ عَنْ حَمَّادٍ قَالَ سَمِعْتُ أَبَا عَبْدِ اللَّهِ"]
+        b = ["محمد بن يحيى عن احمد بن محمد عن الحجال عن حماد قال سمعت ابا عبد الله"]
+        assert arabic_similarity(a, b) >= 0.8
+
+    def test_different_hadith_low(self):
+        a = ["ولد النبي صلى الله عليه وآله في الثاني عشر من شهر ربيع الاول في عام الفيل يوم الجمعة"]
+        b = ["قلت لابي عبد الله عليه السلام كان رسول الله يختم القرآن في شهر رمضان مرة واحدة او اكثر"]
+        assert 0 <= arabic_similarity(a, b) < MIN_ARABIC_SIMILARITY
+
+    def test_not_comparable_when_one_side_empty(self):
+        assert arabic_similarity([], ["نص عربي هنا"]) == -1.0
+        assert arabic_similarity(["نص عربي هنا"], None) == -1.0
+
+
+def _make_chapter(arabic_texts):
+    from app.models import Chapter, PartType, Verse
+    chapter = Chapter()
+    chapter.path = "/books/al-kafi:1:4:111"
+    chapter.titles = {"en": "Test", "ar": "باب"}
+    chapter.crumbs = []
+    chapter.verse_translations = ["en.hubeali"]
+    chapter.verses = []
+    for t in arabic_texts:
+        v = Verse()
+        v.part_type = PartType.Hadith
+        v.text = [t]
+        v.translations = {}
+        chapter.verses.append(v)
+    return chapter
+
+
+def _write_sections(tmp_path, sections):
+    html = "<body></body>"
+    for ar, en in sections:
+        html += f'<hr><p dir="rtl">{ar}</p><p>{en}</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p>'
+    filepath = str(tmp_path / "chapter" / "1" / "4" / "111.html")
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(html)
+    return filepath
+
+
+class TestPreambleOffsetFix:
+    """The N8 bug: an unnumbered preamble section used to shift every
+    following hadith's translation by one."""
+
+    AR1 = "محمد بن يحيى عن احمد بن محمد عن ابن فضال عن عبد الله بن محمد قال ولد النبي في مكة"
+    AR2 = "محمد بن يحيى عن احمد بن محمد عن الحجال عن حماد قال سمعت ابا عبد الله يقول في المدينة"
+
+    def test_preamble_skipped_and_numbers_align(self, tmp_path):
+        from app.kafi_sarwar import add_chapter_content
+        from app.lib_model import ProcessingReport
+
+        chapter = _make_chapter([self.AR1, self.AR2])
+        filepath = _write_sections(tmp_path, [
+            ("ولد النبي صلى الله عليه وآله في عام الفيل", "The Holy Prophet was born in the year of the Elephant"),
+            (self.AR1, "1. Muhammad ibn Yahya from ibn Faddal: born in Mecca"),
+            (self.AR2, "2. Muhammad ibn Yahya from al-Hajjal from Hammad: in Medina"),
+        ])
+        report = ProcessingReport()
+        add_chapter_content(chapter, filepath, report=report)
+        assert chapter.verses[0].translations[SARWAR_TRANSLATION_ID][0].startswith("1.")
+        assert chapter.verses[1].translations[SARWAR_TRANSLATION_ID][0].startswith("2.")
+        # preamble logged, not attached
+        assert any("preamble" in e for e in report.sequence_errors)
+
+    def test_mismatched_content_not_attached(self, tmp_path):
+        from app.kafi_sarwar import add_chapter_content
+        from app.lib_model import ProcessingReport
+
+        # Section numbered 1 whose Arabic is UNRELATED text (no shared isnad)
+        # - e.g. a preamble mislabeled with a number, or wrong-chapter drift.
+        # (Adjacent hadith sharing a chain stay above the floor by design; the
+        # number prefix, not similarity, is what fixes adjacency.)
+        chapter = _make_chapter([self.AR1])
+        filepath = _write_sections(tmp_path, [
+            ("ولد النبي صلى الله عليه وآله في الثاني عشر من شهر ربيع الاول في عام الفيل يوم الجمعة مع الزوال",
+             "1. Something translated"),
+        ])
+        report = ProcessingReport()
+        add_chapter_content(chapter, filepath, report=report)
+        assert SARWAR_TRANSLATION_ID not in chapter.verses[0].translations
+        assert any("NOT attached" in e for e in report.sequence_errors)
+
+    def test_positional_fallback_when_numbering_not_from_one(self, tmp_path):
+        from app.kafi_sarwar import add_chapter_content
+        from app.lib_model import ProcessingReport
+
+        # Volume-8 style: prefixes are volume-global (start > 1) -> positional.
+        chapter = _make_chapter([self.AR1])
+        filepath = _write_sections(tmp_path, [
+            (self.AR1, "313. Volume-global numbered hadith text"),
+        ])
+        report = ProcessingReport()
+        add_chapter_content(chapter, filepath, report=report)
+        assert chapter.verses[0].translations[SARWAR_TRANSLATION_ID][0].startswith("313.")

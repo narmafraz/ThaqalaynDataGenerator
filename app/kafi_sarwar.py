@@ -32,6 +32,44 @@ V8_HADITH_CUMSUM = [1, 3, 4, 6, 7, 15, 16, 20, 21, 22, 23, 26, 28, 29, 30, 32, 4
 def we_dont_care(html: str) -> bool:
 	return '<body>' in html or '</body>' in html
 
+# Sarwar's English texts carry the hadith number from thaqalayn.net as a
+# leading prefix ("5. Ali has narrated..."). Inside a chapter whose numbering
+# starts at 1, that prefix is the authoritative position — unlike blind
+# positional matching, it survives unnumbered chapter preambles (the N8 bug:
+# 245 verses in 24 chapters carried the neighboring hadith's translation
+# because a preamble section consumed position 0).
+HADITH_NUM_RE = re.compile(r'^\s*(\d{1,4})\s*[.\-–:)]\s')
+
+# Arabic diacritics + tatweel for normalization before comparing the two
+# sources' Arabic of what should be the SAME hadith.
+_AR_DIACRITICS = re.compile(r'[ً-ْٰـ]')
+_AR_NORM = str.maketrans({'أ': 'ا', 'إ': 'ا', 'آ': 'ا', 'ٱ': 'ا', 'ى': 'ي', 'ة': 'ه', 'ؤ': 'و', 'ئ': 'ي', 'ء': ''})
+
+# Same-hadith Arabic from the two sites typically overlaps > 0.5 after
+# normalization; two DIFFERENT hadith rarely exceed ~0.3 (shared isnad names
+# only). Below this we refuse to attach rather than risk a wrong pairing.
+MIN_ARABIC_SIMILARITY = 0.25
+
+
+def extract_hadith_number(english_text: str):
+	"""The hadith number thaqalayn.net embeds at the start of Sarwar's text."""
+	m = HADITH_NUM_RE.match(english_text or '')
+	return int(m.group(1)) if m else None
+
+
+def _arabic_tokens(texts):
+	joined = ' '.join(t for t in (texts or []) if t)
+	joined = _AR_DIACRITICS.sub('', joined).translate(_AR_NORM)
+	return {t for t in re.findall(r'[؀-ۿ]+', joined) if len(t) > 1}
+
+
+def arabic_similarity(texts_a, texts_b) -> float:
+	"""Token Jaccard between two Arabic renderings of (supposedly) one hadith."""
+	a, b = _arabic_tokens(texts_a), _arabic_tokens(texts_b)
+	if not a or not b:
+		return -1.0  # not comparable (one side has no Arabic)
+	return len(a & b) / len(a | b)
+
 def sitepath_from_filepath(filepath: str) -> str:
 	normalized = filepath.replace('\\', '/')
 	return normalized[normalized.index('/chapter/')+9:].replace('.html', '')
@@ -70,12 +108,14 @@ def add_chapter_content(chapter: Chapter, filepath: str, hadith_index: int = 0, 
 
 		hadith_htmls = re.split('<hr/?>', file_html)
 
+		# Pass 1: parse every <hr>-separated section (Arabic paras, English
+		# text, grading paras) before assigning anything.
+		sections = []
 		for hadith_html in hadith_htmls:
 			if we_dont_care(hadith_html):
 				continue
-			
-			soup = BeautifulSoup(hadith_html, 'html.parser')
 
+			soup = BeautifulSoup(hadith_html, 'html.parser')
 			all_paras = soup.find_all('p')
 
 			para_index = 0
@@ -87,58 +127,89 @@ def add_chapter_content(chapter: Chapter, filepath: str, hadith_index: int = 0, 
 			hadith_en = get_contents(all_paras[para_index])
 			para_index += 1
 
-			if hadith_index >= len(verses) - heading_count:
-				# hubeali rightly splits first chapter in book of inheritance into two 
+			gradings = None
+			if len(all_paras) > para_index + 1:
+				grading_title = get_contents(all_paras[para_index])
+				para_index += 1
+				if grading_title.startswith('Grading:'):
+					gradings = [get_contents(p) for p in all_paras[para_index:-3]]
+
+			sections.append((hadith_ar, hadith_en, gradings))
+
+		# Prefix mode: inside a chapter whose Sarwar numbering starts at 1, the
+		# embedded hadith number is authoritative. It survives unnumbered
+		# preamble sections that used to shift every following hadith by one
+		# (the al-kafi 1:4 birth-history chapters). Volume-8 continuation files
+		# (hadith_index > 0) keep positional matching — their prefixes are
+		# volume-global.
+		section_numbers = [extract_hadith_number(en) for _, en, _ in sections]
+		numbered = [n for n in section_numbers if n is not None]
+		use_prefix = hadith_index == 0 and bool(numbered) and min(numbered) == 1
+		hadith_verses = [v for v in verses if v.part_type == PartType.Hadith]
+
+		site_path = sitepath_from_filepath(filepath)
+		if chapter.crumbs:
+			my_site_path = chapter.crumbs[-1].path
+		else:
+			my_site_path = site_path.replace('/', ':')
+
+		for (hadith_ar, hadith_en, gradings), number in zip(sections, section_numbers):
+			if use_prefix:
+				if number is None:
+					# Chapter preamble / unnumbered note: it has no HubeAli
+					# verse to live on. Attaching it positionally is exactly
+					# the bug this mode fixes.
+					msg = (f"Skipping unnumbered Sarwar section (chapter preamble) in "
+						   f"https://thaqalayn.net/chapter/{site_path}: {hadith_en[:60]!r}")
+					logger.info(msg)
+					report.add_sequence_error(msg)
+					SEQUENCE_ERRORS.append(msg)
+					continue
+				target = number - 1
+				hadith_index = max(hadith_index, number)
+			else:
+				target = hadith_index
+				hadith_index += 1
+
+			if target >= len(hadith_verses):
+				# hubeali rightly splits first chapter in book of inheritance into two
 				# but thaqalayn.net has it as one chapter, so we'll skip adding ahadith
 				if chapter.path == '/books/al-kafi:7:2:1':
 					break
-				
+
 				verse = Verse()
 				verse.text = hadith_ar
 				verse.part_type = PartType.Hadith
 				verse.translations = {}
 
 				verses.append(verse)
+				hadith_verses.append(verse)
 
-				site_path = sitepath_from_filepath(filepath)
-				if chapter.crumbs:
-					my_site_path = chapter.crumbs[-1].path
-				else:
-					my_site_path = site_path.replace('/', ':')
-				error_msg = f"Appending new hadith from Sarwar to hubeali, hadith #{hadith_index+1} from https://thaqalayn.net/chapter/{site_path} to https://thaqalayn.netlify.app/#{my_site_path}"
+				error_msg = f"Appending new hadith from Sarwar to hubeali, hadith #{target+1} from https://thaqalayn.net/chapter/{site_path} to https://thaqalayn.netlify.app/#{my_site_path}"
 				logger.warning(error_msg)
 				report.add_sequence_error(error_msg)
 				SEQUENCE_ERRORS.append(error_msg)
 			else:
-				# TODO: create new verse if the verse at this index doesn't match the one being inserted
-				# perhaps use https://github.com/ztane/python-Levenshtein or https://pypi.org/project/jellyfish/
-				verse = verses[hadith_index]
+				verse = hadith_verses[target]
 
-				if verse.part_type == PartType.Heading:
-					hadith_index += 1
-					verse = verses[hadith_index]
-				
-				if verse.part_type != PartType.Hadith:
-					error_msg = f"Hadith index {hadith_index} is of part_type {verse.part_type} in https://thaqalayn.netlify.app/#{chapter.crumbs[-1].path}"
+				# Content verification: both sites carry the SAME hadith's
+				# Arabic, so a low overlap means the pairing is wrong (source
+				# segmentation drift). Refuse to attach rather than show a
+				# reader the neighboring hadith's translation.
+				sim = arabic_similarity(hadith_ar, verse.text)
+				if 0 <= sim < MIN_ARABIC_SIMILARITY:
+					error_msg = (f"Sarwar hadith {'#%d' % number if number else '?'} does not match "
+								 f"hubeali verse at index {target} (arabic similarity {sim:.2f}) in "
+								 f"https://thaqalayn.net/chapter/{site_path} vs "
+								 f"https://thaqalayn.netlify.app/#{my_site_path} — NOT attached")
 					logger.warning(error_msg)
 					report.add_sequence_error(error_msg)
 					SEQUENCE_ERRORS.append(error_msg)
-
+					continue
 
 			verse.translations[SARWAR_TRANSLATION_ID] = [hadith_en]
-
-			if len(all_paras) > para_index + 1:
-				grading_title = get_contents(all_paras[para_index])
-				para_index += 1
-				if grading_title.startswith('Grading:'):
-					grading = []
-					# if len(all_paras[3:-3]) != 2 and len(all_paras[3:-3]) != 1:
-					# 	raise Exception("We are in " + filepath + " and all_paras is " + str(all_paras))
-					for grading_para in all_paras[para_index:-3]:
-						grading.append(get_contents(grading_para))
-					verse.gradings = grading
-
-			hadith_index += 1
+			if gradings:
+				verse.gradings = gradings
 
 	# Volume 8 of al-kafi is one file per hadith on thaqalayn.net and it'll warn on every page 
 	# since there is always more ahadith on hubeali's chapter
