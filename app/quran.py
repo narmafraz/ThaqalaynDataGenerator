@@ -158,7 +158,7 @@ def build_quran() -> Chapter:
 	insert_quran_translation(verses, verse_translations, get_path("tanzil_net/translations/en.qarai.txt"), "qarai", "en", "Ali Quli Qarai", "")
 	insert_quran_translation(verses, verse_translations, get_path("tanzil_net/translations/en.qaribullah.txt"), "qaribullah", "en", "Hasan al-Fatih Qaribullah and Ahmad Darwish", "")
 	insert_quran_translation(verses, verse_translations, get_path("tanzil_net/translations/en.sahih.txt"), "sahih", "en", "Saheeh International", "http://www.saheehinternational.com/")
-	insert_quran_translation(verses, verse_translations, get_path("tanzil_net/translations/en.sarwar.txt"), "sarwar", "en", "Muhammad Sarwar", "https://en.wikipedia.org/wiki/Shaykh_Muhammad_Sarwar")
+	insert_quran_translation(verses, verse_translations, get_path("tanzil_net/translations/en.sarwar.txt"), "sarwar", "en", "Shaykh Muhammad Sarwar (from Thaqalayn.net)", "https://en.wikipedia.org/wiki/Shaykh_Muhammad_Sarwar")
 	insert_quran_translation(verses, verse_translations, get_path("tanzil_net/translations/en.shakir.txt"), "shakir", "en", "Mohammad Habib Shakir", "https://en.wikipedia.org/wiki/Muhammad_Habib_Shakir")
 	insert_quran_translation(verses, verse_translations, get_path("tanzil_net/translations/en.transliteration.txt"), "transliteration", "en", "English Transliteration", "")
 	insert_quran_translation(verses, verse_translations, get_path("tanzil_net/translations/en.wahiduddin.txt"), "wahiduddin", "en", "Wahiduddin Khan", "https://en.wikipedia.org/wiki/Wahiduddin_Khan")
