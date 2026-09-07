@@ -684,8 +684,12 @@ class TestDataCompleteness:
 
     def test_alkafi_total_verse_count(self):
         data = _load_json("books/al-kafi.json")["data"]
-        assert data["verse_count"] == 15385, \
-            f"Expected Al-Kafi to have 15385 verses/headings, got {data['verse_count']}"
+        # 15,385 -> 15,369 on 2026-09-07: the kafi_sarwar N8 fix stopped the
+        # positional-matching bug from APPENDING phantom duplicate hadith at
+        # the end of 16 preamble-shifted chapters (net -16: 17 phantoms gone,
+        # +1 genuine hadith now correctly placed in 1:4:13).
+        assert data["verse_count"] == 15369, \
+            f"Expected Al-Kafi to have 15369 verses/headings, got {data['verse_count']}"
 
     def test_alkafi_has_8_volumes(self):
         data = _load_json("books/al-kafi.json")["data"]
