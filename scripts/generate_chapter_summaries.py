@@ -125,8 +125,8 @@ def _schema():
     }
 
 
-def _validate(ch, points):
-    valid_ns = {it["n"] for it in ch["items"]}
+def _validate_seq(n_items, points):
+    valid_ns = set(range(1, n_items + 1))
     if not points:
         return False, "no points"
     for p in points:
@@ -153,9 +153,14 @@ async def _run(chapters, workers, model):
             stats["skipped"] += 1
             return
         async with sem:
+            # Present narrations renumbered 1..N: some chapters' local_index
+            # values aren't 1-based/contiguous and the model then cites
+            # positional numbers anyway ("supports outside chapter" failures,
+            # e.g. al-istibsar 3:18). Map back to local_index on save.
+            seq_to_n = {i + 1: it["n"] for i, it in enumerate(ch["items"])}
             lines = [f"Chapter with {len(ch['items'])} narrations:", ""]
-            for it in ch["items"]:
-                lines.append(f"[{it['n']}] {it['text']}")
+            for i, it in enumerate(ch["items"]):
+                lines.append(f"[{i + 1}] {it['text']}")
                 lines.append("")
             fmt = {"type": "json_schema", "json_schema": {
                 "name": "chapter_points", "schema": _schema(), "strict": True}}
@@ -173,8 +178,10 @@ async def _run(chapters, workers, model):
                 except (json.JSONDecodeError, ValueError) as e:
                     last = f"parse: {e}"
                     continue
-                ok, last = _validate(ch, points)
+                ok, last = _validate_seq(len(ch["items"]), points)
                 if ok:
+                    for p in points:  # map sequential numbers -> local_index
+                        p["supports"] = sorted(seq_to_n[s] for s in p["supports"])
                     with open(out, "w", encoding="utf-8") as f:
                         json.dump({"chapter_path": ch["path"],
                                    "kind": "chapter_summary", "model": model,
